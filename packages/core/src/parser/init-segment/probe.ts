@@ -1,6 +1,13 @@
-import MP4Box from "mp4box";
 import type { VideoCodec, AudioCodec } from "../../types/codec";
 import { parseVideoCodec, parseAudioCodec } from "../../classifier/codec-registry";
+
+// mp4box references `window` at module load. We're imported from the
+// MV3 service worker (via @savemedia/core's index re-exports) where
+// `window` is undefined — a top-level import would crash the SW with
+// `ReferenceError: window is not defined` before any handler runs.
+// Lazy-loading defers the module evaluation to the only context that
+// actually calls probeInitSegment (the offscreen engine document or a
+// node test runner), neither of which lacks `window`/`globalThis`.
 
 export interface InitProbeResult {
   readonly videoCodec: VideoCodec | null;
@@ -16,6 +23,7 @@ interface MP4BoxInfo {
 }
 
 export async function probeInitSegment(bytes: Uint8Array): Promise<InitProbeResult> {
+  const { default: MP4Box } = await import("mp4box");
   return new Promise(resolve => {
     const mp4 = MP4Box.createFile();
     let resolved = false;

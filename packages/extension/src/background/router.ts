@@ -66,16 +66,50 @@ export function createRouter(deps: RouterDeps): Router {
     return `${d.source.kind}:${d.protocol}:${src}`;
   }
 
+  /**
+   * Tube sites often serve a video as N sequential `.mp4` fragments at
+   * URLs that differ only by a numeric component (segment-1.mp4,
+   * segment-2.mp4, ...). Without a master playlist we can't stitch them,
+   * but we MUST stop surfacing each fragment as a separate "download
+   * this video" entry — otherwise the popup fills with junk and the
+   * user gets N partial files when they click around.
+   *
+   * Heuristic: collapse any contiguous run of 2+ digits in the URL to
+   * `#` and use that as the segment-family key. The first URL in a
+   * family is kept; siblings are suppressed.
+   */
+  function segmentFamilyKey(d: StreamDescriptor): string | null {
+    if (d.source.kind !== "direct-url") return null;
+    const url = d.source.url;
+    const normalised = url.replace(/\d{2,}/g, "#");
+    if (normalised === url) return null; // no numeric component → not segment-shaped
+    return `direct-family:${d.protocol}:${normalised}`;
+  }
+
   function addDescriptor(tabId: number, descriptor: StreamDescriptor): boolean {
     const state = getTab(tabId);
     const key = descriptorKey(descriptor);
     if (state.descriptors.has(key)) return false;
+    const family = segmentFamilyKey(descriptor);
+    if (family && state.descriptors.has(family)) {
+      // A sibling segment from this URL family is already on file; drop.
+      return false;
+    }
     state.descriptors.set(key, descriptor);
+    if (family) state.descriptors.set(family, descriptor);
     return true;
   }
 
   function listDescriptors(tabId: number): readonly StreamDescriptor[] {
-    return Array.from(tabs.get(tabId)?.descriptors.values() ?? []);
+    const all = Array.from(tabs.get(tabId)?.descriptors.values() ?? []);
+    // De-dupe identity in case the same descriptor was indexed under both
+    // its primary key AND a segment-family key.
+    const seen = new Set<string>();
+    return all.filter(d => {
+      if (seen.has(d.id)) return false;
+      seen.add(d.id);
+      return true;
+    });
   }
 
   function findDescriptor(id: StreamDescriptor["id"]): StreamDescriptor | null {

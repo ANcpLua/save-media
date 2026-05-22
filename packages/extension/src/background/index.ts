@@ -80,8 +80,13 @@ async function handleCapture(
 function updateBadge(tabId: number): void {
   const count = router.listDescriptors(tabId).length;
   const text = count > 0 ? String(count) : "";
-  void chrome.action.setBadgeText({ tabId, text });
-  if (count > 0) void chrome.action.setBadgeBackgroundColor({ tabId, color: "#2563eb" });
+  // Tab can vanish between an in-flight async classify and this badge
+  // update. chrome.action.setBadge* rejects with "No tab with id: N";
+  // we don't care — the tab is gone, the badge is moot. Catch and drop.
+  chrome.action.setBadgeText({ tabId, text }).catch(() => undefined);
+  if (count > 0) {
+    chrome.action.setBadgeBackgroundColor({ tabId, color: "#2563eb" }).catch(() => undefined);
+  }
 }
 
 /**
