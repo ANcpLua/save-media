@@ -3,6 +3,14 @@ import type { DownloadJob, JobResult, ProgressFn } from "./job";
 import { runDirectJob } from "./jobs/direct";
 import { runHlsJob } from "./jobs/hls";
 import { runDashJob } from "./jobs/dash";
+import { runTranscodeJob } from "./jobs/transcode";
+import type { FFmpegLoaderDeps } from "./transcode/ffmpeg-loader";
+
+function defaultFFmpegDeps(): FFmpegLoaderDeps {
+  return {
+    getURL: (path) => chrome.runtime.getURL(path),
+  };
+}
 
 export const downloadJob: DownloadJob = async (descriptor, choice, onProgress, signal) => {
   const plan = dispatch(descriptor, choice);
@@ -20,14 +28,35 @@ export const downloadJob: DownloadJob = async (descriptor, choice, onProgress, s
     case "dash":
       return runDashJob(plan, descriptor, onProgress, signal);
     case "remux":
-    case "transcode":
-      throw {
-        code: "no_remux_path",
-        severity: "terminal",
-        from: descriptor.container,
-        to: plan.outputContainer,
-        reason: "container-not-supported-by-mediabunny",
-      } satisfies JobError;
+    case "transcode": {
+      if (descriptor.source.kind !== "direct-url") {
+        throw {
+          code: "no_remux_path",
+          severity: "terminal",
+          from: descriptor.container,
+          to: plan.outputContainer,
+          reason: "container-not-supported-by-mediabunny",
+        } satisfies JobError;
+      }
+      onProgress(0, null, "fetching-source");
+      const resp = await fetch(descriptor.source.url, { signal });
+      if (!resp.ok) {
+        throw {
+          code: "manifest_404",
+          severity: "terminal",
+          url: descriptor.source.url,
+          httpStatus: resp.status,
+        } satisfies JobError;
+      }
+      const sourceBytes = new Uint8Array(await resp.arrayBuffer());
+      return runTranscodeJob(
+        plan,
+        { sourceBytes, sourceFilename: choice.filename },
+        onProgress,
+        signal,
+        defaultFFmpegDeps(),
+      );
+    }
   }
 };
 

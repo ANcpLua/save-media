@@ -1,6 +1,8 @@
 # Node
 node_modules/
 .pnpm-store/
+# Build-time-bundled ffmpeg core (copied from node_modules @ffmpeg/core)
+packages/extension/public/vendor/ffmpeg/
 dist/
 dist-build/
 dist-chrome/
