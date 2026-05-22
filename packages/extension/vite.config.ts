@@ -18,6 +18,7 @@ export default defineConfig({
         "content-main": resolve(here, "src/content/main.ts"),
         "content-bridge": resolve(here, "src/content/bridge.ts"),
         popup: resolve(here, "src/popup/index.html"),
+        offscreen: resolve(here, "src/engine/offscreen.html"),
       },
       output: {
         entryFileNames: "[name].js",
