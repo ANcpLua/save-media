@@ -22,9 +22,10 @@ __pycache__/
 .venv/
 venv/
 build/
-*.spec
 native-host/dist/
 native-host/build/
+native-host/*.egg-info/
+native-host/.pytest_cache/
 
 # PyInstaller outputs
 savemedia-host-darwin-*
