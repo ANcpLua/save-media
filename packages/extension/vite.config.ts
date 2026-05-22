@@ -43,6 +43,13 @@ export default defineConfig(() => {
           // content-main and content-bridge self-contained by inlining
           // their dynamic imports and never sharing chunks with them.
           manualChunks(id) {
+            // Force the SW window-shim into its own chunk. Otherwise
+            // rollup inlines it into background.js and the side effect
+            // ends up AFTER the hoisted `import` statements that pull
+            // in m3u8-parser / mpd-parser — by then it's too late.
+            // As a dedicated chunk it's a top-of-file `import` and
+            // ESM evaluation order guarantees it runs first.
+            if (id.endsWith("/src/sw-globals-polyfill.ts")) return "sw-globals-polyfill";
             if (id.includes("/src/content/")) return undefined;
             return undefined;
           },

@@ -1,3 +1,8 @@
+// MUST be the first import. Shims window→globalThis so transitively
+// loaded videojs parsers (m3u8-parser, mpd-parser) don't crash the SW
+// at module-load with `ReferenceError: window is not defined`.
+import "../sw-globals-polyfill";
+
 import { classify, type StreamDescriptor } from "@savemedia/core";
 import type {
   BridgeToBackgroundMessage,
