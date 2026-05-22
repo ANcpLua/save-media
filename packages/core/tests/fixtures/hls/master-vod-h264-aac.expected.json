@@ -1,0 +1,10 @@
+{
+  "kind": "hls-master",
+  "variantCount": 3,
+  "variants": [
+    { "height": 720,  "videoCodecRfc6381": "avc1.4d401f", "audioCodecRfc6381": "mp4a.40.2", "bitrate": 2500000 },
+    { "height": 1080, "videoCodecRfc6381": "avc1.640028", "audioCodecRfc6381": "mp4a.40.2", "bitrate": 5200000 },
+    { "height": 2160, "videoCodecRfc6381": "avc1.640033", "audioCodecRfc6381": "mp4a.40.2", "bitrate": 12000000 }
+  ],
+  "encryption": null
+}

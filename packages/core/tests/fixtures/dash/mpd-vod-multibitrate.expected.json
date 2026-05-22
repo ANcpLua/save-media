@@ -1,0 +1,11 @@
+{
+  "kind": "dash",
+  "videoRepresentations": [
+    { "id": "720p",  "height": 720,  "videoCodecRfc6381": "avc1.4d401f", "bitrate": 2500000 },
+    { "id": "1080p", "height": 1080, "videoCodecRfc6381": "avc1.640028", "bitrate": 5200000 }
+  ],
+  "audioRepresentations": [
+    { "id": "audio", "audioCodecRfc6381": "mp4a.40.2", "bitrate": 128000 }
+  ],
+  "drm": null
+}

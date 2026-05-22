@@ -1,0 +1,51 @@
+# Node
+node_modules/
+.pnpm-store/
+dist/
+dist-chrome/
+dist-edge/
+dist-firefox/
+*.zip
+.vite/
+coverage/
+.nyc_output/
+.tsbuildinfo
+
+# Python (native host)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+build/
+*.spec
+native-host/dist/
+native-host/build/
+
+# PyInstaller outputs
+savemedia-host-darwin-*
+savemedia-host-linux-*
+savemedia-host-windows-*.exe
+
+# macOS
+.DS_Store
+*.swp
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.iml
+.history/
+
+# Logs
+*.log
+host.log
+
+# Local environment
+.env
+.env.local
+
+# Test artifacts
+playwright-report/
+test-results/
+e2e/fixtures/**/*.tmp

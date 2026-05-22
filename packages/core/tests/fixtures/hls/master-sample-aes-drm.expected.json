@@ -1,0 +1,3 @@
+{
+  "encryption": { "method": "SAMPLE-AES", "keyUri": "https://license.test/key", "treatedAs": "drm-blocked" }
+}

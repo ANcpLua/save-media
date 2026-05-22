@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT1H" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period>
+    <AdaptationSet contentType="video">
+      <ContentProtection schemeIdUri="urn:uuid:e2719d58-a985-b3c9-781a-b030af78d30e" value="ClearKey1.0"/>
+      <Representation id="v1" bandwidth="2500000" width="1280" height="720" codecs="avc1.4d401f">
+        <SegmentTemplate timescale="1000" initialization="init.m4s" media="seg-$Number$.m4s" startNumber="1" duration="6000"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

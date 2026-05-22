@@ -1,0 +1,8 @@
+{
+  "kind": "dash",
+  "drm": {
+    "reason": "cdm_required",
+    "detectedVia": ["dash-content-protection"],
+    "keySystem": "com.widevine.alpha"
+  }
+}

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT10M" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period>
+    <AdaptationSet contentType="video" segmentAlignment="true" startWithSAP="1">
+      <Representation id="720p" bandwidth="2500000" width="1280" height="720" codecs="avc1.4d401f">
+        <SegmentTemplate timescale="1000" initialization="init-$RepresentationID$.m4s" media="seg-$RepresentationID$-$Number$.m4s" startNumber="1" duration="6000"/>
+      </Representation>
+      <Representation id="1080p" bandwidth="5200000" width="1920" height="1080" codecs="avc1.640028">
+        <SegmentTemplate timescale="1000" initialization="init-$RepresentationID$.m4s" media="seg-$RepresentationID$-$Number$.m4s" startNumber="1" duration="6000"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet contentType="audio" segmentAlignment="true">
+      <Representation id="audio" bandwidth="128000" audioSamplingRate="48000" codecs="mp4a.40.2">
+        <SegmentTemplate timescale="1000" initialization="init-audio.m4s" media="seg-audio-$Number$.m4s" startNumber="1" duration="6000"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

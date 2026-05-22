@@ -1,0 +1,8 @@
+#EXTM3U
+#EXT-X-VERSION:5
+#EXT-X-TARGETDURATION:6
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-KEY:METHOD=SAMPLE-AES,URI="https://license.test/key",KEYFORMAT="com.apple.streamingkeydelivery"
+#EXTINF:5.0,
+seg0.ts
+#EXT-X-ENDLIST
