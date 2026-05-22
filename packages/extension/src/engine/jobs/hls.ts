@@ -13,6 +13,7 @@ import {
 } from "../parsers/hls";
 import { fetchWithRetry } from "../net/fetch-with-retry";
 import { InMemorySink, type JobSink } from "../sink";
+import { remuxTsToMp4 } from "../remux/ts-to-mp4";
 
 /**
  * Engine-side HLS job runner.
@@ -164,7 +165,7 @@ async function fetchSegments(
     throw new DOMException("user-cancelled", "AbortError");
   }
 
-  if (!sink || openedFilename === null) {
+  if (!sink || openedFilename === null || firstBytes === null) {
     throw {
       code: "manifest_malformed",
       severity: "terminal",
@@ -173,10 +174,55 @@ async function fetchSegments(
     };
   }
 
+  // MPEG-TS source + caller wants MP4 → run a real container remux.
+  // Concatenating .ts bytes and calling them .mp4 is a lie that breaks
+  // QuickTime / iOS. mediabunny copies the H.264/AAC packets into an
+  // MP4 box structure (no re-encode) and we ship that instead.
+  const sniff = sniffContainer(firstBytes, segments[0]?.uri);
+  if (sniff === "mpegts" && plan.outputContainer === "mp4") {
+    onProgress(bytesWritten, bytesWritten, "remuxing-ts-to-mp4");
+    const tsBytes = concatBlobParts((sink as InMemorySink).partsForProbe());
+    await sink.abort();
+    const mp4Bytes = await remuxTsToMp4(tsBytes, (fraction) => {
+      onProgress(bytesWritten, bytesWritten, `remuxing ${Math.round(fraction * 100)}%`);
+    });
+    const mp4Blob = new Blob([mp4Bytes as BlobPart], { type: "video/mp4" });
+    onProgress(bytesWritten, bytesWritten, "finalizing");
+    return {
+      blobUrl: URL.createObjectURL(mp4Blob),
+      filename: replaceExt(openedFilename, "mp4"),
+      checksum: "",
+    };
+  }
+
   onProgress(bytesWritten, bytesWritten, "muxing");
   const result = await sink.close();
   onProgress(bytesWritten, bytesWritten, "finalizing");
   return result;
+}
+
+function concatBlobParts(parts: readonly BlobPart[]): Uint8Array {
+  let total = 0;
+  const u8s: Uint8Array[] = [];
+  for (const p of parts) {
+    if (p instanceof Uint8Array) {
+      u8s.push(p);
+      total += p.byteLength;
+    } else if (p instanceof ArrayBuffer) {
+      const u = new Uint8Array(p);
+      u8s.push(u);
+      total += u.byteLength;
+    } else {
+      throw new Error(`unsupported BlobPart type for remux: ${typeof p}`);
+    }
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const u of u8s) {
+    out.set(u, off);
+    off += u.byteLength;
+  }
+  return out;
 }
 
 function isTerminalThrown(err: unknown): boolean {
