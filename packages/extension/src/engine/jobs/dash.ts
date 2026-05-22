@@ -3,6 +3,7 @@ import { RETRY_POLICY } from "@savemedia/core";
 import type { JobResult, ProgressFn } from "../job";
 import { fetchWithRetry } from "../net/fetch-with-retry";
 import { parseDashJobInputs, type DashTrack } from "../parsers/dash";
+import { InMemorySink, type JobSink } from "../sink";
 
 /**
  * DASH job runner. Fetches the MPD, resolves init+media URLs for the
@@ -18,6 +19,7 @@ export async function runDashJob(
   descriptor: StreamDescriptor,
   onProgress: ProgressFn,
   signal: AbortSignal,
+  externalSink?: JobSink,
 ): Promise<JobResult> {
   if (descriptor.source.kind !== "dash-manifest") {
     throw {
@@ -56,7 +58,7 @@ export async function runDashJob(
     };
   }
 
-  return downloadTrack(inputs.video, plan, onProgress, signal);
+  return downloadTrack(inputs.video, plan, onProgress, signal, externalSink);
 }
 
 async function downloadTrack(
@@ -64,24 +66,31 @@ async function downloadTrack(
   plan: DashPlan,
   onProgress: ProgressFn,
   signal: AbortSignal,
+  externalSink: JobSink | undefined,
 ): Promise<JobResult> {
-  const parts: BlobPart[] = [];
   let bytesWritten = 0;
+  const mime = plan.outputContainer === "webm" ? "video/webm" : "video/mp4";
+  const sink: JobSink = externalSink ?? new InMemorySink(mime);
+  await sink.open(plan.outputFilename, plan.estimatedBytes);
 
   onProgress(0, null, "fetching-init");
   const initResp = await fetchWithRetry(track.initUrl, signal, "segment");
   const initBytes = new Uint8Array(await initResp.arrayBuffer());
-  parts.push(initBytes as BlobPart);
+  await assertContainerValid(initBytes, plan.outputContainer);
+  await sink.write(initBytes);
   bytesWritten += initBytes.byteLength;
 
   const failed: number[] = [];
   let consecutive = 0;
   for (let i = 0; i < track.mediaUrls.length; i++) {
-    if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
+    if (signal.aborted) {
+      await sink.abort();
+      throw new DOMException("user-cancelled", "AbortError");
+    }
     try {
       const resp = await fetchWithRetry(track.mediaUrls[i]!, signal, "segment");
       const body = new Uint8Array(await resp.arrayBuffer());
-      parts.push(body as BlobPart);
+      await sink.write(body);
       bytesWritten += body.byteLength;
       consecutive = 0;
       onProgress(bytesWritten, null, `segment ${i + 1}/${track.mediaUrls.length}`);
@@ -92,6 +101,7 @@ async function downloadTrack(
       const over = failed.length / track.mediaUrls.length > RETRY_POLICY.job.maxFailedSegmentRatio;
       const tooMany = consecutive >= RETRY_POLICY.job.maxConsecutiveFailures;
       if (over || tooMany) {
+        await sink.abort();
         throw {
           code: "segment_budget_exhausted",
           severity: "terminal",
@@ -102,32 +112,24 @@ async function downloadTrack(
     }
   }
 
-  if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
+  if (signal.aborted) {
+    await sink.abort();
+    throw new DOMException("user-cancelled", "AbortError");
+  }
 
   onProgress(bytesWritten, bytesWritten, "muxing");
-  // The DASH init segment is always fMP4/CMAF → concatenated output is a
-  // valid MP4. The plan's outputContainer is honoured (mp4 by default;
-  // webm only when explicitly requested and source is WebM CMAF).
-  const mime = plan.outputContainer === "webm" ? "video/webm" : "video/mp4";
-  const blob = new Blob(parts, { type: mime });
-  await assertContainerValid(parts[0], plan.outputContainer);
+  const result = await sink.close();
   onProgress(bytesWritten, bytesWritten, "finalizing");
-  return {
-    blobUrl: URL.createObjectURL(blob),
-    filename: plan.outputFilename,
-    checksum: "",
-  };
+  return result;
 }
 
-async function assertContainerValid(initPart: BlobPart | undefined, expected: DashPlan["outputContainer"]): Promise<void> {
+async function assertContainerValid(
+  initBytes: Uint8Array,
+  expected: DashPlan["outputContainer"],
+): Promise<void> {
   const { verify } = await import("@savemedia/core");
-  const head = initPart instanceof Uint8Array
-    ? initPart.subarray(0, 32)
-    : initPart instanceof ArrayBuffer
-      ? new Uint8Array(initPart).subarray(0, 32)
-      : undefined;
   const result = await verify(
-    { path: "memory", bytes: 0, checksum: "", head },
+    { path: "memory", bytes: 0, checksum: "", head: initBytes.subarray(0, 32) },
     [{ kind: "container-validity", via: "magic-bytes", expected }],
   );
   if (result.kind === "failure") throw result.error;

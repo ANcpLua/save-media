@@ -5,17 +5,18 @@ import { runHlsJob } from "./jobs/hls";
 import { runDashJob } from "./jobs/dash";
 import { runTranscodeJob } from "./jobs/transcode";
 import type { FFmpegLoaderDeps } from "./transcode/ffmpeg-loader";
-import { streamLargeOutputToNative } from "../native/escalation";
+import { type JobSink, NativeStreamingSink } from "./sink";
+import { createNativeBridge } from "../native/bridge";
 
-async function escalateToNative(
-  inputResult: JobResult,
-  onProgress: ProgressFn,
-  signal: AbortSignal,
-): Promise<JobResult> {
-  // We received a blob URL from the in-browser job; re-hydrate the bytes
-  // and forward to the native sink so >2 GB outputs don't OOM the engine.
-  const blob = await fetch(inputResult.blobUrl).then(r => r.blob());
-  return streamLargeOutputToNative(inputResult.filename, blob, signal, onProgress);
+function nativeSinkFactory(): { sink: JobSink; cleanup: () => void } {
+  const bridge = createNativeBridge();
+  const sink = new NativeStreamingSink(bridge);
+  return {
+    sink,
+    cleanup: () => {
+      try { bridge.disconnect(); } catch { /* ignore */ }
+    },
+  };
 }
 
 function defaultFFmpegDeps(): FFmpegLoaderDeps {
@@ -36,18 +37,26 @@ export const downloadJob: DownloadJob = async (descriptor, choice, onProgress, s
       return runDirectJob(plan, onProgress, signal);
     case "hls-plain":
     case "hls-aes": {
-      const result = await runHlsJob(plan, descriptor, onProgress, signal);
       if (plan.useNativeSink) {
-        return escalateToNative(result, onProgress, signal);
+        const { sink, cleanup } = nativeSinkFactory();
+        try {
+          return await runHlsJob(plan, descriptor, onProgress, signal, sink);
+        } finally {
+          cleanup();
+        }
       }
-      return result;
+      return runHlsJob(plan, descriptor, onProgress, signal);
     }
     case "dash": {
-      const result = await runDashJob(plan, descriptor, onProgress, signal);
       if (plan.useNativeSink) {
-        return escalateToNative(result, onProgress, signal);
+        const { sink, cleanup } = nativeSinkFactory();
+        try {
+          return await runDashJob(plan, descriptor, onProgress, signal, sink);
+        } finally {
+          cleanup();
+        }
       }
-      return result;
+      return runDashJob(plan, descriptor, onProgress, signal);
     }
     case "remux":
     case "transcode": {

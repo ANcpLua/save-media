@@ -12,6 +12,7 @@ import {
   type RuntimeEncryption,
 } from "../parsers/hls";
 import { fetchWithRetry } from "../net/fetch-with-retry";
+import { InMemorySink, type JobSink } from "../sink";
 
 /**
  * Engine-side HLS job runner.
@@ -34,6 +35,7 @@ export async function runHlsJob(
   descriptor: StreamDescriptor,
   onProgress: ProgressFn,
   signal: AbortSignal,
+  externalSink?: JobSink,
 ): Promise<JobResult> {
   const variant = findVariant(descriptor, plan.variantId);
   if (!variant) {
@@ -72,7 +74,7 @@ export async function runHlsJob(
   // Runtime-authoritative encryption decision. The plan kind is advisory.
   const cryptoKey = await resolveDecryptionKey(media.encryption, signal);
 
-  return fetchSegments(media.segments, plan, onProgress, signal, cryptoKey);
+  return fetchSegments(media.segments, plan, onProgress, signal, cryptoKey, externalSink);
 }
 
 async function resolveDecryptionKey(
@@ -100,14 +102,21 @@ async function fetchSegments(
   onProgress: ProgressFn,
   signal: AbortSignal,
   cryptoKey: CryptoKey | null,
+  externalSink: JobSink | undefined,
 ): Promise<JobResult> {
   const failed: number[] = [];
   let consecutiveFailures = 0;
   let bytesWritten = 0;
-  const parts: BlobPart[] = [];
+  // Sniff the first segment to pick the honest mime/filename; until we
+  // see the first decrypted segment we can't open the in-memory sink
+  // either (the mime depends on the sniff).
+  let firstBytes: Uint8Array | null = null;
+  let sink: JobSink | null = externalSink ?? null;
+  let openedFilename: string | null = null;
 
   for (let i = 0; i < segments.length; i++) {
     if (signal.aborted) {
+      if (sink) await sink.abort();
       throw new DOMException("user-cancelled", "AbortError");
     }
     const seg = segments[i]!;
@@ -117,20 +126,29 @@ async function fetchSegments(
       if (cryptoKey) {
         body = await decryptAes128(body, cryptoKey, seg, i);
       }
-      parts.push(body as BlobPart);
+      if (firstBytes === null) {
+        firstBytes = body;
+        const { mime, filename } = honestOutput(body, seg.uri, plan);
+        if (!sink) sink = new InMemorySink(mime);
+        await sink.open(filename, plan.estimatedBytes);
+        openedFilename = filename;
+      }
+      await sink!.write(body);
       bytesWritten += body.byteLength;
       consecutiveFailures = 0;
       onProgress(bytesWritten, null, `segment ${i + 1}/${segments.length}`);
     } catch (err) {
       if (signal.aborted) throw err;
-      // Decrypt failures and cdm_required must terminate the job — they're
-      // not retryable, so don't fold them into the segment-budget logic.
-      if (isTerminalThrown(err)) throw err;
+      if (isTerminalThrown(err)) {
+        if (sink && openedFilename) await sink.abort();
+        throw err;
+      }
       failed.push(i);
       consecutiveFailures += 1;
       const overBudget = failed.length / segments.length > RETRY_POLICY.job.maxFailedSegmentRatio;
       const tooManyInARow = consecutiveFailures >= RETRY_POLICY.job.maxConsecutiveFailures;
       if (overBudget || tooManyInARow) {
+        if (sink && openedFilename) await sink.abort();
         throw {
           code: "segment_budget_exhausted",
           severity: "terminal",
@@ -142,18 +160,23 @@ async function fetchSegments(
   }
 
   if (signal.aborted) {
+    if (sink && openedFilename) await sink.abort();
     throw new DOMException("user-cancelled", "AbortError");
   }
 
+  if (!sink || openedFilename === null) {
+    throw {
+      code: "manifest_malformed",
+      severity: "terminal",
+      url: "",
+      parserError: "no segments produced bytes",
+    };
+  }
+
   onProgress(bytesWritten, bytesWritten, "muxing");
-  const { mime, filename } = honestOutput(parts, plan, segments);
-  const blob = new Blob(parts, { type: mime });
+  const result = await sink.close();
   onProgress(bytesWritten, bytesWritten, "finalizing");
-  return {
-    blobUrl: URL.createObjectURL(blob),
-    filename,
-    checksum: "",
-  };
+  return result;
 }
 
 function isTerminalThrown(err: unknown): boolean {
@@ -223,27 +246,23 @@ function playlistUrlOf(v: Variant): string | null {
  * the ffmpeg.wasm transcode path.
  */
 function honestOutput(
-  parts: readonly BlobPart[],
+  firstSegment: Uint8Array,
+  firstSegmentUri: string | undefined,
   plan: HlsPlainPlan | HlsAesPlan,
-  segments: readonly RuntimeSegment[],
 ): { mime: string; filename: string } {
-  const sniff = sniffContainer(parts[0], segments[0]?.uri);
+  const sniff = sniffContainer(firstSegment, firstSegmentUri);
   const requested = plan.outputContainer;
-  // fMP4/CMAF concatenation produces a valid MP4 → honour the request.
   if (sniff === "fmp4" && requested === "mp4") return { mime: "video/mp4", filename: plan.outputFilename };
   if (sniff === "webm" && requested === "webm") return { mime: "video/webm", filename: plan.outputFilename };
-  // MPEG-TS concatenation is NOT a valid MP4. Force .ts so the file plays.
   if (sniff === "mpegts") {
     return { mime: "video/mp2t", filename: replaceExt(plan.outputFilename, "ts") };
   }
-  // Unknown sniff: trust the request but flag with a generic mime.
   return { mime: mimeForContainer(requested), filename: plan.outputFilename };
 }
 
 type ContainerSniff = "fmp4" | "mpegts" | "webm" | "unknown";
 
-function sniffContainer(part: BlobPart | undefined, segmentUri: string | undefined): ContainerSniff {
-  const bytes = partToHead(part);
+function sniffContainer(bytes: Uint8Array | undefined, segmentUri: string | undefined): ContainerSniff {
   if (bytes && bytes.length > 0) {
     if (bytes.length >= 8 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return "fmp4"; // ftyp
     if (bytes.length >= 8 && bytes[4] === 0x6D && bytes[5] === 0x6F && bytes[6] === 0x6F && bytes[7] === 0x66) return "fmp4"; // moof
@@ -258,13 +277,6 @@ function sniffContainer(part: BlobPart | undefined, segmentUri: string | undefin
     if (/\.(m4s|mp4|m4v)(\?|#|$)/i.test(segmentUri)) return "fmp4";
   }
   return "unknown";
-}
-
-function partToHead(part: BlobPart | undefined): Uint8Array | null {
-  if (!part) return null;
-  if (part instanceof Uint8Array) return part.subarray(0, 32);
-  if (part instanceof ArrayBuffer) return new Uint8Array(part).subarray(0, 32);
-  return null;
 }
 
 function replaceExt(filename: string, ext: string): string {
