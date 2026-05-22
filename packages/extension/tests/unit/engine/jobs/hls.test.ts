@@ -193,16 +193,22 @@ describe("runHlsJob — runtime authority over encryption", () => {
       .rejects.toMatchObject({ code: "cdm_required", keySystem: "SAMPLE-AES" });
   });
 
-  it("renames .mp4 → .ts when the segments are actually MPEG-TS (no false MP4 labels)", async () => {
+  it("invokes the TS→MP4 remuxer when source is MPEG-TS and plan wants MP4 (rejects malformed TS rather than shipping it as .mp4)", async () => {
+    // 0x47 sync byte triggers MPEG-TS detection → engine attempts the
+    // mediabunny remux. These 4-byte fixtures aren't a valid TS stream
+    // so the remuxer throws. The KEY assertion is that we never silently
+    // ship raw TS bytes under a .mp4 filename — either real remux works
+    // and we get .mp4, or it fails loudly. A "valid MPEG-TS in, valid
+    // MP4 out" smoke test is best covered by the e2e suite where real
+    // segments are available.
     patchFetch(async url => {
       if (url.endsWith(".m3u8")) return textResponse(MEDIA_PLAYLIST);
-      // TS sync byte 0x47 at the start → engine should detect MPEG-TS.
       if (url.endsWith("seg1.ts")) return bytesResponse(new Uint8Array([0x47, 0x40, 0x00, 0x10]));
       if (url.endsWith("seg2.ts")) return bytesResponse(new Uint8Array([0x47, 0x40, 0x00, 0x11]));
       throw new Error(`unexpected ${url}`);
     });
-    const result = await runHlsJob(plainPlan(), hlsDescriptor(), vi.fn(), new AbortController().signal);
-    expect(result.filename).toBe("out.ts");
+    await expect(runHlsJob(plainPlan(), hlsDescriptor(), vi.fn(), new AbortController().signal))
+      .rejects.toThrow(/unsupported|format/i);
   });
 
   it("keeps the .mp4 filename when segments are fMP4 (init box ftyp / moof)", async () => {
