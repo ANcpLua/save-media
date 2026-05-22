@@ -20,6 +20,9 @@ jobs:
           node-version: 22.11.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # @savemedia/core's dist/ is gitignored. The extension imports its
+      # .d.ts at typecheck time, so core must be built first.
+      - run: pnpm --filter @savemedia/core build
       - run: pnpm -r typecheck
       - run: pnpm -r test
 
@@ -55,6 +58,7 @@ jobs:
           node-version: 22.11.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @savemedia/core build
       - run: pnpm --filter @savemedia/extension build:${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
@@ -80,6 +84,7 @@ jobs:
           node-version: 22.11.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @savemedia/core build
       - run: pnpm --filter @savemedia/extension exec playwright install --with-deps ${{ matrix.browser }}
       - run: pnpm --filter @savemedia/extension build:chrome
       - run: pnpm --filter @savemedia/extension exec playwright test --project=${{ matrix.browser }}
