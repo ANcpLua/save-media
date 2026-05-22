@@ -16,6 +16,8 @@ def make_target(tmp_path: Path, flavor: str = "chromium") -> installer.BrowserTa
         manifest_dir_macos=tmp_path / "macos/Library/Application Support/Test/NativeMessagingHosts",
         manifest_dir_linux=tmp_path / "linux/.config/test/NativeMessagingHosts",
         windows_registry_key=r"Software\Test\NativeMessagingHosts\com.savemedia.host",
+        presence_paths_macos=(tmp_path / "Applications/Test.app",),
+        presence_paths_linux=(tmp_path / "linux-app",),
     )
 
 
@@ -62,16 +64,32 @@ def test_remove_manifest_round_trip(tmp_path: Path, fake_host: Path, monkeypatch
     assert installer.remove_manifest(target) is False
 
 
-def test_detect_browsers_filters_by_existing_support_dir(tmp_path: Path, monkeypatch):
+def test_detect_browsers_filters_by_presence_paths(monkeypatch):
     monkeypatch.setattr(installer.platform, "system", lambda: "Darwin")
-    # Only Chrome's directory exists; Edge + Firefox should be filtered out.
-    chrome_only = installer.TARGETS[0].manifest_dir_macos.parent
-    seen: list[Path] = []
+    # Only Chrome's presence path exists; Edge + Firefox should be filtered out.
+    chrome_paths = set(installer.TARGETS[0].presence_paths_macos)
     def exists(p: Path) -> bool:
-        seen.append(p)
-        return p == chrome_only
+        return p in chrome_paths
     found = installer.detect_browsers(target_dir_exists=exists)
     assert [t.short for t in found] == ["chrome"]
+
+
+def test_detect_browsers_finds_firefox_when_only_app_bundle_exists(monkeypatch):
+    """Regression: on macOS the Mozilla/NativeMessagingHosts parent dir
+    doesn't exist until something registers a native host. Detection must
+    use the Firefox app bundle (or profile dir) as the presence probe,
+    not the manifest parent dir.
+    """
+    monkeypatch.setattr(installer.platform, "system", lambda: "Darwin")
+    firefox = next(t for t in installer.TARGETS if t.short == "firefox")
+    only_firefox_app = {Path("/Applications/Firefox.app")}
+    def exists(p: Path) -> bool:
+        return p in only_firefox_app
+    found = installer.detect_browsers(target_dir_exists=exists)
+    assert "firefox" in [t.short for t in found]
+    # And critically, the Mozilla/NativeMessagingHosts parent dir is NOT
+    # the path we probed — the test would have failed if it were.
+    assert firefox.manifest_dir_macos.parent not in only_firefox_app
 
 
 def test_smoketest_ping_pong_against_real_host(tmp_path: Path):

@@ -48,6 +48,14 @@ class BrowserTarget:
     manifest_dir_macos: Path
     manifest_dir_linux: Path
     windows_registry_key: str | None  # HKCU subkey path; None on POSIX-only
+    # Where to look for evidence that this browser is actually installed.
+    # ANY of these paths existing means we register the host. We separate
+    # presence-probe paths from manifest-target paths because the manifest
+    # parent dir often doesn't exist until the first native host is
+    # registered — that's the chicken/egg the original detection logic
+    # tripped on for Firefox on macOS.
+    presence_paths_macos: tuple[Path, ...]
+    presence_paths_linux: tuple[Path, ...]
 
     @property
     def is_chromium(self) -> bool:
@@ -62,6 +70,14 @@ TARGETS: tuple[BrowserTarget, ...] = (
         manifest_dir_macos=Path.home() / "Library/Application Support/Google/Chrome/NativeMessagingHosts",
         manifest_dir_linux=Path.home() / ".config/google-chrome/NativeMessagingHosts",
         windows_registry_key=r"Software\Google\Chrome\NativeMessagingHosts\\" + HOST_NAME,
+        presence_paths_macos=(
+            Path("/Applications/Google Chrome.app"),
+            Path.home() / "Library/Application Support/Google/Chrome",
+        ),
+        presence_paths_linux=(
+            Path("/usr/bin/google-chrome"),
+            Path.home() / ".config/google-chrome",
+        ),
     ),
     BrowserTarget(
         vendor="Microsoft Edge",
@@ -70,6 +86,14 @@ TARGETS: tuple[BrowserTarget, ...] = (
         manifest_dir_macos=Path.home() / "Library/Application Support/Microsoft Edge/NativeMessagingHosts",
         manifest_dir_linux=Path.home() / ".config/microsoft-edge/NativeMessagingHosts",
         windows_registry_key=r"Software\Microsoft\Edge\NativeMessagingHosts\\" + HOST_NAME,
+        presence_paths_macos=(
+            Path("/Applications/Microsoft Edge.app"),
+            Path.home() / "Library/Application Support/Microsoft Edge",
+        ),
+        presence_paths_linux=(
+            Path("/usr/bin/microsoft-edge"),
+            Path.home() / ".config/microsoft-edge",
+        ),
     ),
     BrowserTarget(
         vendor="Mozilla Firefox",
@@ -78,6 +102,17 @@ TARGETS: tuple[BrowserTarget, ...] = (
         manifest_dir_macos=Path.home() / "Library/Application Support/Mozilla/NativeMessagingHosts",
         manifest_dir_linux=Path.home() / ".mozilla/native-messaging-hosts",
         windows_registry_key=r"Software\Mozilla\NativeMessagingHosts\\" + HOST_NAME,
+        # Firefox stores its profile under Application Support/Firefox/
+        # (NOT under Mozilla/). The Mozilla/NativeMessagingHosts dir is
+        # created on demand by us, so don't use it as a presence probe.
+        presence_paths_macos=(
+            Path("/Applications/Firefox.app"),
+            Path.home() / "Library/Application Support/Firefox",
+        ),
+        presence_paths_linux=(
+            Path("/usr/bin/firefox"),
+            Path.home() / ".mozilla/firefox",
+        ),
     ),
 )
 
@@ -106,17 +141,29 @@ def manifest_payload(host_path: Path, target: BrowserTarget) -> dict[str, object
 
 
 def detect_browsers(target_dir_exists: callable[[Path], bool] = Path.exists) -> list[BrowserTarget]:
-    """Return browsers whose vendor support directory exists on this machine."""
+    """Return browsers actually installed on this machine.
+
+    Detection uses the per-OS `presence_paths` on each BrowserTarget — if
+    ANY of those paths exists, the browser counts as present. We then
+    write to the standard manifest location regardless of whether that
+    parent dir existed yet (write_manifest creates it).
+    """
     system = platform.system()
     found: list[BrowserTarget] = []
     for t in TARGETS:
         if system == "Darwin":
-            parent = t.manifest_dir_macos.parent
+            candidates: tuple[Path, ...] = t.presence_paths_macos
         elif system == "Linux":
-            parent = t.manifest_dir_linux.parent
+            candidates = t.presence_paths_linux
         else:
-            parent = Path(t.windows_registry_key) if t.windows_registry_key else Path(".")
-        if target_dir_exists(parent):
+            # Windows: presence probe is the HKCU registry key existence.
+            # Until we ship a real Windows installer path we just keep the
+            # old behaviour (manifest parent dir check via target_dir_exists).
+            candidates = ()
+            if t.windows_registry_key and target_dir_exists(Path(t.windows_registry_key)):
+                found.append(t)
+            continue
+        if any(target_dir_exists(p) for p in candidates):
             found.append(t)
     return found
 
