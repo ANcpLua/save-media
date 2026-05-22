@@ -3,27 +3,6 @@ import type { DownloadJob, JobResult, ProgressFn } from "./job";
 import { runDirectJob } from "./jobs/direct";
 import { runHlsJob } from "./jobs/hls";
 import { runDashJob } from "./jobs/dash";
-import { runTranscodeJob } from "./jobs/transcode";
-import type { FFmpegLoaderDeps } from "./transcode/ffmpeg-loader";
-import { type JobSink, NativeStreamingSink } from "./sink";
-import { createNativeBridge } from "../native/bridge";
-
-function nativeSinkFactory(): { sink: JobSink; cleanup: () => void } {
-  const bridge = createNativeBridge();
-  const sink = new NativeStreamingSink(bridge);
-  return {
-    sink,
-    cleanup: () => {
-      try { bridge.disconnect(); } catch { /* ignore */ }
-    },
-  };
-}
-
-function defaultFFmpegDeps(): FFmpegLoaderDeps {
-  return {
-    getURL: (path) => chrome.runtime.getURL(path),
-  };
-}
 
 export const downloadJob: DownloadJob = async (descriptor, choice, onProgress, signal) => {
   const plan = dispatch(descriptor, choice);
@@ -35,61 +14,48 @@ export const downloadJob: DownloadJob = async (descriptor, choice, onProgress, s
   switch (plan.kind) {
     case "direct":
       return runDirectJob(plan, onProgress, signal);
+
     case "hls-plain":
-    case "hls-aes": {
-      if (plan.useNativeSink) {
-        const { sink, cleanup } = nativeSinkFactory();
-        try {
-          return await runHlsJob(plan, descriptor, onProgress, signal, sink);
-        } finally {
-          cleanup();
-        }
-      }
+    case "hls-aes":
+      if (plan.useNativeSink) throw tooLargeForRenderer(descriptor, plan.outputContainer);
       return runHlsJob(plan, descriptor, onProgress, signal);
-    }
-    case "dash": {
-      if (plan.useNativeSink) {
-        const { sink, cleanup } = nativeSinkFactory();
-        try {
-          return await runDashJob(plan, descriptor, onProgress, signal, sink);
-        } finally {
-          cleanup();
-        }
-      }
+
+    case "dash":
+      if (plan.useNativeSink) throw tooLargeForRenderer(descriptor, plan.outputContainer);
       return runDashJob(plan, descriptor, onProgress, signal);
-    }
+
     case "remux":
-    case "transcode": {
-      if (descriptor.source.kind !== "direct-url") {
-        throw {
-          code: "no_remux_path",
-          severity: "terminal",
-          from: descriptor.container,
-          to: plan.outputContainer,
-          reason: "container-not-supported-by-mediabunny",
-        } satisfies JobError;
-      }
-      onProgress(0, null, "fetching-source");
-      const resp = await fetch(descriptor.source.url, { signal });
-      if (!resp.ok) {
-        throw {
-          code: "manifest_404",
-          severity: "terminal",
-          url: descriptor.source.url,
-          httpStatus: resp.status,
-        } satisfies JobError;
-      }
-      const sourceBytes = new Uint8Array(await resp.arrayBuffer());
-      return runTranscodeJob(
-        plan,
-        { sourceBytes, sourceFilename: choice.filename },
-        onProgress,
-        signal,
-        defaultFFmpegDeps(),
-      );
-    }
+    case "transcode":
+      // No in-browser transcode path any more (ffmpeg.wasm + native
+      // ffmpeg both gone). Surface the gap to the user clearly.
+      throw {
+        code: "no_remux_path",
+        severity: "terminal",
+        from: descriptor.container,
+        to: plan.outputContainer,
+        reason: "container-not-supported-by-mediabunny",
+      } satisfies JobError;
   }
 };
+
+/**
+ * Used when the dispatched plan flagged useNativeSink (estimated
+ * output ≥ 2 GiB). The renderer's Blob ceiling can't hold a file
+ * that size and we no longer have a native streaming sink to fall
+ * back on. Tell the user instead of OOMing the offscreen page.
+ */
+function tooLargeForRenderer(
+  d: StreamDescriptor,
+  to: "mp4" | "webm" | "mkv",
+): JobError {
+  return {
+    code: "no_remux_path",
+    severity: "terminal",
+    from: d.container,
+    to,
+    reason: "container-not-supported-by-mediabunny",
+  };
+}
 
 function mapRefusalToError(reason: string, d: StreamDescriptor): JobError {
   switch (reason) {
@@ -114,6 +80,4 @@ function mapRefusalToError(reason: string, d: StreamDescriptor): JobError {
 }
 
 export type { DownloadJob, JobResult, ProgressFn };
-// re-export for test/typing ergonomics
-// (kept here so consumers don't need to know the file split)
 export type { StreamDescriptor, UserChoice } from "@savemedia/core";
