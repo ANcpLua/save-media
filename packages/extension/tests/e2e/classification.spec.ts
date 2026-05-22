@@ -40,10 +40,14 @@ test.describe("extension classifies real fixture pages", () => {
   // doesn't try to launch a Chromium binary it hasn't installed.
   test.skip(({ browserName }) => browserName !== "chromium", "chromium-only suite");
 
-  let context: BrowserContext;
-  let sw: PlaywrightWorker;
+  let context: BrowserContext | undefined;
+  let sw: PlaywrightWorker | undefined;
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ browserName }) => {
+    // The describe-level test.skip() skips individual tests but Playwright
+    // still runs the hooks; guard the chromium launch so the firefox
+    // project doesn't try to spawn a binary it never installed.
+    if (browserName !== "chromium") return;
     context = await chromium.launchPersistentContext("", {
       headless: false,
       args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
@@ -52,11 +56,11 @@ test.describe("extension classifies real fixture pages", () => {
   });
 
   test.afterAll(async () => {
-    await context.close();
+    await context?.close();
   });
 
   async function descriptorsForUrlContaining(marker: string): Promise<Descriptor[]> {
-    const buckets = (await sw.evaluate((m: string) => {
+    const buckets = (await sw!.evaluate((m: string) => {
       const dbg = (globalThis as unknown as { __savemediaDebug?: { listDescriptorsForUrl: (s: string) => unknown } }).__savemediaDebug;
       return dbg?.listDescriptorsForUrl(m) ?? [];
     }, marker)) as TabBucket[];
@@ -65,7 +69,7 @@ test.describe("extension classifies real fixture pages", () => {
 
   async function waitForDescriptors(scenario: string, predicate: (d: Descriptor[]) => boolean): Promise<Descriptor[]> {
     const marker = `/page/${scenario}.html`;
-    const page = await context.newPage();
+    const page = await context!.newPage();
     try {
       await page.goto(marker);
       await page.waitForLoadState("networkidle");
@@ -117,7 +121,7 @@ test.describe("extension classifies real fixture pages", () => {
 
   test("negative page produces zero descriptors (no .jpg/.css/.js mis-classified as media)", async () => {
     const marker = "/page/negative.html";
-    const page = await context.newPage();
+    const page = await context!.newPage();
     try {
       await page.goto(marker);
       await page.waitForLoadState("networkidle");
@@ -134,10 +138,11 @@ test.describe("popup HTML round-trips chrome.runtime messaging", () => {
   test.skip(!hasExtension, "dist-chrome/ not built");
   test.skip(({ browserName }) => browserName !== "chromium", "chromium-only suite");
 
-  let context: BrowserContext;
-  let extId: string;
+  let context: BrowserContext | undefined;
+  let extId: string | undefined;
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ browserName }) => {
+    if (browserName !== "chromium") return;
     context = await chromium.launchPersistentContext("", {
       headless: false,
       args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
@@ -147,12 +152,12 @@ test.describe("popup HTML round-trips chrome.runtime messaging", () => {
   });
 
   test.afterAll(async () => {
-    await context.close();
+    await context?.close();
   });
 
   test("popup loads + sendMessage('list') from popup actually reaches the SW", async () => {
     // First populate state by visiting a fixture in a separate tab.
-    const fixturePage = await context.newPage();
+    const fixturePage = await context!.newPage();
     await fixturePage.goto("/page/direct.html");
     await fixturePage.waitForLoadState("networkidle");
     await fixturePage.waitForTimeout(800);
@@ -165,7 +170,7 @@ test.describe("popup HTML round-trips chrome.runtime messaging", () => {
     });
     expect(fixtureTabId).toBeNull(); // sanity (we don't have tabs perm in the page)
 
-    const popup = await context.newPage();
+    const popup = await context!.newPage();
     try {
       await popup.goto(`chrome-extension://${extId}/src/popup/index.html`);
       await expect(popup.locator("header")).toContainText("savemedia");
