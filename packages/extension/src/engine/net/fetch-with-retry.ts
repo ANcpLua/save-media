@@ -8,8 +8,9 @@ export interface RetryableHttpError {
 
 /**
  * fetch wrapper that retries network / 5xx / 429-style failures using the
- * retry-policy table from @savemedia/core. Throws a structured object on the
- * final failure so the caller can build a JobError with the right code.
+ * retry-policy table from @savemedia/core. Non-retryable HTTP statuses
+ * fast-fail with a RetryableHttpError. Final attempt failures throw the
+ * same shape so callers can build a JobError with the right code.
  */
 export async function fetchWithRetry(
   url: string,
@@ -19,32 +20,33 @@ export async function fetchWithRetry(
 ): Promise<Response> {
   const policy = RETRY_POLICY[cls];
   const maxAttempts = "maxAttempts" in policy ? policy.maxAttempts : 1;
-  let attempt = 0;
   let lastStatus = 0;
-  while (attempt < maxAttempts) {
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
+
+    let response: Response | undefined;
     try {
-      const response = await fetch(url, { ...init, signal });
+      response = await fetch(url, { ...init, signal });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      // Network error — fall through to the retry/exit branch below.
+    }
+
+    if (response) {
       if (response.ok) return response;
       lastStatus = response.status;
       if (!isRetryableStatus(cls, response.status)) {
         throw { url, status: response.status, attemptsRemaining: 0 } satisfies RetryableHttpError;
       }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") throw err;
-      if (attempt === maxAttempts - 1) {
-        if (err && typeof err === "object" && "status" in err) throw err;
-        throw {
-          url,
-          status: lastStatus || 0,
-          attemptsRemaining: 0,
-        } satisfies RetryableHttpError;
-      }
     }
-    attempt += 1;
-    const backoff = computeBackoffMs(cls, attempt, Math.random());
+
+    const isLast = attempt === maxAttempts - 1;
+    if (isLast) break;
+    const backoff = computeBackoffMs(cls, attempt + 1, Math.random());
     await sleep(backoff, signal);
   }
+
   throw { url, status: lastStatus, attemptsRemaining: 0 } satisfies RetryableHttpError;
 }
 
