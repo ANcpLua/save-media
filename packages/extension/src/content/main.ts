@@ -1,11 +1,49 @@
-import { MAIN_BRIDGE_TAG, type MainToBridgeMessage, type CaptureKind } from "../types/messages";
+// Content scripts in MV3 are injected as classic scripts — `import` is
+// a syntax error. We intentionally duplicate this constant (also defined
+// in src/types/messages.ts) so this file has no module dependencies and
+// can ship as a standalone JS file.
+//
+// The `export {}` below is a TypeScript-only marker that makes tsc treat
+// this file as a module (so its top-level const doesn't clash with the
+// twin declaration in bridge.ts); Vite/rollup elides it at build time
+// because nothing is actually exported, leaving the output as a plain
+// classic-script-compatible JS file.
+export {};
+const BRIDGE_TAG = "__savemedia" as const;
 
-const post = (msg: Omit<MainToBridgeMessage, typeof MAIN_BRIDGE_TAG>): void => {
-  window.postMessage({ [MAIN_BRIDGE_TAG]: true, ...msg } as MainToBridgeMessage, "*");
+type CaptureKind = "fetch" | "xhr" | "media-element" | "media-source" | "eme" | "ms-probe";
+interface MainToBridgeMessage {
+  [BRIDGE_TAG]: true;
+  kind: CaptureKind;
+  url: string | null;
+  pageUrl: string;
+  responseHeaders?: Readonly<Record<string, string>>;
+  responseBodyHeadB64?: string;
+  keySystem?: string;
+  mimeType?: string;
+  elementTag?: "video" | "audio";
+  elementSrc?: string;
+}
+
+const post = (msg: Omit<MainToBridgeMessage, typeof BRIDGE_TAG>): void => {
+  window.postMessage({ [BRIDGE_TAG]: true, ...msg } as MainToBridgeMessage, "*");
 };
 
+/**
+ * Canonicalise the captured URL against the page origin BEFORE posting.
+ * The background service worker fetches this URL to classify it, and SW
+ * fetch has no page-relative base — a bare "/hls/master.m3u8" would
+ * resolve against `chrome-extension://<id>/` and 404. Resolving against
+ * `location.href` here gives the SW an absolute URL that hits the
+ * actual content origin.
+ */
+function canonicaliseUrl(url: string | null): string | null {
+  if (!url) return null;
+  try { return new URL(url, location.href).href; } catch { return url; }
+}
+
 const emit = (kind: CaptureKind, url: string | null, extras: Partial<MainToBridgeMessage> = {}): void => {
-  post({ kind, url, pageUrl: location.href, ...extras });
+  post({ kind, url: canonicaliseUrl(url), pageUrl: location.href, ...extras });
 };
 
 function looksLikeMedia(url: string): boolean {

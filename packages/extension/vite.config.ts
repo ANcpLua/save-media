@@ -38,6 +38,14 @@ export default defineConfig(() => {
           entryFileNames: "[name].js",
           chunkFileNames: "chunks/[name]-[hash].js",
           assetFileNames: "assets/[name]-[hash][extname]",
+          // Content scripts in MV3 are injected as classic scripts; ES
+          // module `import` statements would be a syntax error. Keep
+          // content-main and content-bridge self-contained by inlining
+          // their dynamic imports and never sharing chunks with them.
+          manualChunks(id) {
+            if (id.includes("/src/content/")) return undefined;
+            return undefined;
+          },
         },
       },
     },
