@@ -26,21 +26,6 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm -r test
 
-  unit-python:
-    name: Unit (Python native host)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: native-host
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e .[dev]
-      - run: pytest -q
-
   build-extension:
     name: Build extension (${{ matrix.target }})
     needs: unit-typescript
@@ -96,34 +81,3 @@ jobs:
         with:
           name: playwright-report-${{ matrix.browser }}
           path: packages/extension/playwright-report/
-
-  pyinstaller:
-    name: PyInstaller (${{ matrix.os }})
-    needs: unit-python
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            artifact: savemedia-host-darwin-arm64
-          - os: ubuntu-latest
-            artifact: savemedia-host-linux-x64
-          - os: windows-latest
-            artifact: savemedia-host-windows-x64.exe
-    defaults:
-      run:
-        working-directory: native-host
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e .[dev]
-      - run: pyinstaller build.spec --clean --noconfirm
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: native-host/dist/
-          if-no-files-found: error

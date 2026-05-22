@@ -1,40 +1,30 @@
 /**
  * Browser-target abstraction over the engine host context.
  *
- * Chromium MV3 service workers cannot host a Web Worker / DOM, so the engine
- * runs in a chrome.offscreen document. Firefox MV3 event pages still have a
- * DOM, so the engine loads alongside the background script.
+ * Chromium MV3 service workers cannot host a Web Worker / DOM, so the
+ * engine runs in a chrome.offscreen document. Firefox MV3 event pages
+ * still have a DOM, so the engine loads alongside the background script.
  *
- * The build defines `__BROWSER__` (see vite.config.ts) so the static
- * dispatch collapses at build time and each per-target bundle imports only
- * its own implementation. The dev/test fallback is chromium.
+ * Both implementations are STATICALLY imported here. Earlier this file
+ * used `await import("./firefox")`/`await import("./chromium")` to
+ * switch at runtime, but MV3 service workers forbid dynamic `import()`
+ * entirely (HTML spec — see github.com/w3c/ServiceWorker/issues/1356).
+ * The dynamic call crashed every SW startup with
+ * `TypeError: import() is disallowed on ServiceWorkerGlobalScope`.
+ *
+ * Static imports + the `__BROWSER__` define let vite tree-shake the
+ * unused branch at build time, so the chromium bundle never includes
+ * the firefox stub and vice versa.
  */
+
+import * as chromium from "./chromium";
+import * as firefox from "./firefox";
 
 declare const __BROWSER__: "chromium" | "firefox";
 
-export interface ProcessorHost {
-  readonly ensureEngineHost: () => Promise<void>;
-  readonly closeEngineHost: () => Promise<void>;
-}
+const impl = (typeof __BROWSER__ !== "undefined" && __BROWSER__ === "firefox")
+  ? firefox
+  : chromium;
 
-let cached: ProcessorHost | null = null;
-
-async function load(): Promise<ProcessorHost> {
-  if (cached) return cached;
-  const target: "chromium" | "firefox" =
-    typeof __BROWSER__ === "undefined" ? "chromium" : __BROWSER__;
-  cached = target === "firefox"
-    ? await import("./firefox")
-    : await import("./chromium");
-  return cached;
-}
-
-export const ensureEngineHost: ProcessorHost["ensureEngineHost"] = async () => {
-  const impl = await load();
-  return impl.ensureEngineHost();
-};
-
-export const closeEngineHost: ProcessorHost["closeEngineHost"] = async () => {
-  const impl = await load();
-  return impl.closeEngineHost();
-};
+export const ensureEngineHost = impl.ensureEngineHost;
+export const closeEngineHost = impl.closeEngineHost;
