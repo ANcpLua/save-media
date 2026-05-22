@@ -5,6 +5,18 @@ import { runHlsJob } from "./jobs/hls";
 import { runDashJob } from "./jobs/dash";
 import { runTranscodeJob } from "./jobs/transcode";
 import type { FFmpegLoaderDeps } from "./transcode/ffmpeg-loader";
+import { streamLargeOutputToNative } from "../native/escalation";
+
+async function escalateToNative(
+  inputResult: JobResult,
+  onProgress: ProgressFn,
+  signal: AbortSignal,
+): Promise<JobResult> {
+  // We received a blob URL from the in-browser job; re-hydrate the bytes
+  // and forward to the native sink so >2 GB outputs don't OOM the engine.
+  const blob = await fetch(inputResult.blobUrl).then(r => r.blob());
+  return streamLargeOutputToNative(inputResult.filename, blob, signal, onProgress);
+}
 
 function defaultFFmpegDeps(): FFmpegLoaderDeps {
   return {
@@ -23,10 +35,20 @@ export const downloadJob: DownloadJob = async (descriptor, choice, onProgress, s
     case "direct":
       return runDirectJob(plan, onProgress, signal);
     case "hls-plain":
-    case "hls-aes":
-      return runHlsJob(plan, descriptor, onProgress, signal);
-    case "dash":
-      return runDashJob(plan, descriptor, onProgress, signal);
+    case "hls-aes": {
+      const result = await runHlsJob(plan, descriptor, onProgress, signal);
+      if (plan.useNativeSink) {
+        return escalateToNative(result, onProgress, signal);
+      }
+      return result;
+    }
+    case "dash": {
+      const result = await runDashJob(plan, descriptor, onProgress, signal);
+      if (plan.useNativeSink) {
+        return escalateToNative(result, onProgress, signal);
+      }
+      return result;
+    }
     case "remux":
     case "transcode": {
       if (descriptor.source.kind !== "direct-url") {
