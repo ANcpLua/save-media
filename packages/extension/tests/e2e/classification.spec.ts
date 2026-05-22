@@ -35,6 +35,10 @@ interface TabBucket { tabId: number; descriptors: Descriptor[] }
 
 test.describe("extension classifies real fixture pages", () => {
   test.skip(!hasExtension, "dist-chrome/ not built; run `pnpm --filter @savemedia/extension build:chrome`");
+  // Both describes drive an unpacked Chromium extension via the chromium
+  // module directly. The firefox playwright project must skip them so it
+  // doesn't try to launch a Chromium binary it hasn't installed.
+  test.skip(({ browserName }) => browserName !== "chromium", "chromium-only suite");
 
   let context: BrowserContext;
   let sw: PlaywrightWorker;
@@ -128,6 +132,7 @@ test.describe("extension classifies real fixture pages", () => {
 
 test.describe("popup HTML round-trips chrome.runtime messaging", () => {
   test.skip(!hasExtension, "dist-chrome/ not built");
+  test.skip(({ browserName }) => browserName !== "chromium", "chromium-only suite");
 
   let context: BrowserContext;
   let extId: string;
