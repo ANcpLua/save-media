@@ -171,10 +171,16 @@ def detect_browsers(target_dir_exists: callable[[Path], bool] = Path.exists) -> 
 def write_manifest(target: BrowserTarget, host_path: Path) -> Path:
     """Write the native messaging JSON manifest. Returns the file written.
 
+    The caller is responsible for passing an absolute path. We intentionally
+    DO NOT call .resolve() here — when the path is a launcher symlink
+    (`~/.local/bin/savemedia-host`) we want that symlink path to land in
+    the manifest, not its target. .resolve() would follow the symlink and
+    defeat the whole point of having a stable launcher.
+
     On Windows this writes to the registry instead and returns a synthetic
     Path describing the HKCU key for logging purposes.
     """
-    payload = manifest_payload(host_path.resolve(), target)
+    payload = manifest_payload(host_path.absolute(), target)
     system = platform.system()
     if system == "Windows":
         return _windows_register(target, host_path, payload)
@@ -290,38 +296,90 @@ def _print_help() -> int:
     return 1
 
 
+def default_launcher_path() -> Path:
+    """Stable, repo-independent path the browsers actually spawn.
+
+    Browsers can only ever exec an absolute path; the native-messaging
+    spec doesn't expand env vars or follow $PATH. We bridge that by
+    registering a stable launcher location and pointing it at the
+    current host via a symlink (POSIX) or a small .cmd wrapper
+    (Windows). Moving the repo only requires re-running `install`,
+    which rewrites the symlink; the browser manifests never change.
+
+    Override with SAVEMEDIA_LAUNCHER_PATH for testing or system-wide
+    installs (e.g. /usr/local/bin/savemedia-host).
+    """
+    custom = os.environ.get("SAVEMEDIA_LAUNCHER_PATH")
+    if custom:
+        return Path(custom)
+    if platform.system() == "Windows":
+        return Path.home() / "AppData/Local/savemedia/savemedia-host.cmd"
+    return Path.home() / ".local/bin/savemedia-host"
+
+
+def install_launcher(host_path: Path, launcher_path: Path | None = None) -> Path:
+    """Create or update the launcher so it points at `host_path`.
+
+    On POSIX this is an idempotent symlink. On Windows it's a one-line
+    .cmd wrapper that exec's the host with %*. Returns the launcher
+    path that browser manifests should be registered against.
+    """
+    launcher = (launcher_path or default_launcher_path()).resolve() if launcher_path else default_launcher_path()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    if platform.system() == "Windows":
+        # Quoting belt-and-braces: host_path likely has spaces on Windows.
+        body = f'@echo off\r\n"{host_path}" %*\r\n'
+        launcher.write_text(body, encoding="utf-8")
+        return launcher
+    # POSIX: remove any existing symlink or file at the launcher path so
+    # we never silently inherit a stale target.
+    if launcher.is_symlink() or launcher.exists():
+        launcher.unlink()
+    launcher.symlink_to(host_path)
+    return launcher
+
+
+def remove_launcher(launcher_path: Path | None = None) -> bool:
+    launcher = launcher_path or default_launcher_path()
+    if launcher.is_symlink() or launcher.exists():
+        launcher.unlink()
+        return True
+    return False
+
+
 def _cmd_install(host_path: Path) -> int:
-    print(f"[1/5] Detecting browsers")
+    print(f"[1/6] Detecting browsers")
     targets = detect_browsers()
     if not targets:
         print("  no supported browsers found; aborting")
         return 2
     for t in targets:
         print(f"  - {t.vendor}")
-    print(f"[2/5] Checking dependencies")
+    print(f"[2/6] Checking dependencies")
     deps = dependency_status()
     for name, ok in deps.items():
         print(f"  - {name}: {'OK' if ok else 'MISSING'}")
-    # Resolve to an absolute path BEFORE writing manifests or spawning
-    # the smoketest. The manifests need to point at a stable absolute
-    # path (browsers spawn from / not from the installer's cwd), and the
-    # smoketest's Popen also has no cwd-relative search behaviour.
+    # Resolve to an absolute path BEFORE writing the launcher or smoketest.
     host_path = host_path.resolve()
-    print(f"[3/5] Resolving host path: {host_path}")
+    print(f"[3/6] Resolving host path: {host_path}")
     if not host_path.exists():
         print(f"  ! {host_path} does not exist")
         return 3
-    # If the host is a script with a shebang, make sure it's executable
-    # so the browser (which exec()'s it directly) can spawn it.
+    # If the host is a script with a shebang, make sure it's executable.
     if not _is_executable(host_path):
         _add_exec_bit(host_path)
         print(f"  + chmod +x {host_path}")
-    print(f"[4/5] Writing registrations")
+    # Install a stable launcher so browser manifests don't have to
+    # change when the repo moves — re-running install just retargets
+    # this symlink at the new host location.
+    launcher = install_launcher(host_path)
+    print(f"[4/6] Installing launcher: {launcher} -> {host_path}")
+    print(f"[5/6] Writing registrations (manifests point at the launcher)")
     for t in targets:
-        out = write_manifest(t, host_path)
+        out = write_manifest(t, launcher)
         print(f"  - {t.short}: {out}")
-    print(f"[5/5] Smoke-testing host (ping/pong)")
-    ok, detail = smoketest(host_path)
+    print(f"[6/6] Smoke-testing host via launcher (ping/pong)")
+    ok, detail = smoketest(launcher)
     print(f"  - {'OK' if ok else 'FAIL'}: {detail}")
     return 0 if ok else 4
 
@@ -341,6 +399,8 @@ def _cmd_uninstall() -> int:
     for t in TARGETS:
         if remove_manifest(t):
             removed.append(t.short)
+    if remove_launcher():
+        removed.append("launcher")
     print(f"removed: {removed}")
     return 0
 

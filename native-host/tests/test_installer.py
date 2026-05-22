@@ -113,3 +113,58 @@ def test_main_help_when_no_args(capsys):
     out = capsys.readouterr().out
     assert "install" in out
     assert "uninstall" in out
+
+
+def test_install_launcher_creates_symlink_pointing_at_host(tmp_path: Path):
+    host = tmp_path / "host.py"
+    host.write_text("#!/bin/sh\nexec true\n")
+    host.chmod(0o755)
+    launcher = tmp_path / "savemedia-host-launcher"
+    out = installer.install_launcher(host, launcher_path=launcher)
+    assert out == launcher
+    assert launcher.is_symlink()
+    assert launcher.resolve() == host.resolve()
+
+
+def test_install_launcher_is_idempotent_and_retargets_when_host_moves(tmp_path: Path):
+    """Re-running install with a new host location must update the symlink
+    target — the whole point of the stable launcher is that browser
+    manifests never have to change when the repo moves."""
+    host_a = tmp_path / "a/host.py"
+    host_b = tmp_path / "b/host.py"
+    for h in (host_a, host_b):
+        h.parent.mkdir(parents=True)
+        h.write_text("#!/bin/sh\n")
+        h.chmod(0o755)
+    launcher = tmp_path / "launcher"
+    installer.install_launcher(host_a, launcher_path=launcher)
+    assert launcher.resolve() == host_a.resolve()
+    installer.install_launcher(host_b, launcher_path=launcher)
+    assert launcher.resolve() == host_b.resolve()
+
+
+def test_write_manifest_preserves_symlink_path_does_not_resolve(tmp_path: Path, monkeypatch):
+    """Regression: if write_manifest calls .resolve() on the launcher
+    symlink, the manifest ends up pointing at the symlink TARGET (the
+    real host.py) instead of the stable launcher path. That defeats
+    the entire purpose of having a launcher."""
+    monkeypatch.setattr(installer.platform, "system", lambda: "Darwin")
+    target = make_target(tmp_path, "chromium")
+    real_host = tmp_path / "real-host.py"
+    real_host.write_text("#!/bin/sh\n")
+    real_host.chmod(0o755)
+    launcher = tmp_path / "launcher"
+    launcher.symlink_to(real_host)
+    written = installer.write_manifest(target, launcher)
+    payload = json.loads(written.read_text())
+    assert payload["path"] == str(launcher.absolute()), (
+        f"manifest should reference the launcher symlink, got {payload['path']}"
+    )
+    assert payload["path"] != str(real_host.resolve())
+
+
+def test_default_launcher_path_overridable_via_env(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("SAVEMEDIA_LAUNCHER_PATH", str(tmp_path / "custom"))
+    assert installer.default_launcher_path() == tmp_path / "custom"
+    monkeypatch.delenv("SAVEMEDIA_LAUNCHER_PATH")
+    assert installer.default_launcher_path() == Path.home() / ".local/bin/savemedia-host"
