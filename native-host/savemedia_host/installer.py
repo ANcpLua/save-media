@@ -302,10 +302,20 @@ def _cmd_install(host_path: Path) -> int:
     deps = dependency_status()
     for name, ok in deps.items():
         print(f"  - {name}: {'OK' if ok else 'MISSING'}")
+    # Resolve to an absolute path BEFORE writing manifests or spawning
+    # the smoketest. The manifests need to point at a stable absolute
+    # path (browsers spawn from / not from the installer's cwd), and the
+    # smoketest's Popen also has no cwd-relative search behaviour.
+    host_path = host_path.resolve()
     print(f"[3/5] Resolving host path: {host_path}")
     if not host_path.exists():
         print(f"  ! {host_path} does not exist")
         return 3
+    # If the host is a script with a shebang, make sure it's executable
+    # so the browser (which exec()'s it directly) can spawn it.
+    if not _is_executable(host_path):
+        _add_exec_bit(host_path)
+        print(f"  + chmod +x {host_path}")
     print(f"[4/5] Writing registrations")
     for t in targets:
         out = write_manifest(t, host_path)
@@ -314,6 +324,16 @@ def _cmd_install(host_path: Path) -> int:
     ok, detail = smoketest(host_path)
     print(f"  - {'OK' if ok else 'FAIL'}: {detail}")
     return 0 if ok else 4
+
+
+def _is_executable(p: Path) -> bool:
+    return os.access(p, os.X_OK)
+
+
+def _add_exec_bit(p: Path) -> None:
+    import stat
+    mode = p.stat().st_mode
+    p.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 def _cmd_uninstall() -> int:
