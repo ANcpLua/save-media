@@ -1,45 +1,46 @@
-import {
-  classify,
-  dispatch,
-  type StreamDescriptor,
-  type UserChoice,
-  type JobError,
-} from "@savemedia/core";
+import { classify } from "@savemedia/core";
 import type {
   BridgeToBackgroundMessage,
   PopupToBackgroundMessage,
-  BackgroundToPopupMessage,
-  BackgroundToEngineMessage,
   EngineToBackgroundMessage,
 } from "../types/messages";
-import { ensureEngineHost } from "../platform/processor-host/chromium";
+import { createRouter } from "./router";
+import { ensureEngineHost } from "../platform/processor-host";
+import { consoleLogger } from "../util/logger";
 
-interface TabState {
-  readonly descriptors: Map<string, StreamDescriptor>;
-}
+declare const __BROWSER__: "chromium" | "firefox";
 
-const tabs = new Map<number, TabState>();
-const jobs = new Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice }>();
+const logger = consoleLogger("bg");
 
-function getTab(tabId: number): TabState {
-  let state = tabs.get(tabId);
-  if (!state) {
-    state = { descriptors: new Map() };
-    tabs.set(tabId, state);
-  }
-  return state;
-}
-
-chrome.tabs.onRemoved.addListener(tabId => tabs.delete(tabId));
-chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === "loading" && info.url) tabs.delete(tabId);
+const router = createRouter({
+  runtime: {
+    sendMessage: (msg, cb) => {
+      chrome.runtime.sendMessage(msg, () => {
+        void chrome.runtime.lastError;
+        cb?.(undefined);
+      });
+    },
+  },
+  downloads: {
+    download: async (opts) => chrome.downloads.download(opts as chrome.downloads.DownloadOptions),
+  },
+  ensureEngineHost,
+  logger,
 });
 
-async function handleCapture(tabId: number, msg: Extract<BridgeToBackgroundMessage, { type: "capture" }>): Promise<void> {
+chrome.tabs.onRemoved.addListener(tabId => router.clearTab(tabId));
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === "loading" && info.url) router.clearTab(tabId);
+});
+
+async function handleCapture(
+  tabId: number,
+  msg: Extract<BridgeToBackgroundMessage, { type: "capture" }>,
+): Promise<void> {
   const cap = msg.payload;
   if (!cap.url && cap.kind !== "eme") return;
 
-  let headers: Record<string, string> = cap.responseHeaders ? { ...cap.responseHeaders } : {};
+  const headers: Record<string, string> = cap.responseHeaders ? { ...cap.responseHeaders } : {};
   let bodyBytes: Uint8Array | null = null;
   let manifestText: string | null = null;
 
@@ -54,8 +55,8 @@ async function handleCapture(tabId: number, msg: Extract<BridgeToBackgroundMessa
         const buf = await r.clone().arrayBuffer();
         bodyBytes = new Uint8Array(buf.slice(0, 4096));
       }
-    } catch {
-      // CORS / network — proceed with what we have.
+    } catch (err) {
+      logger.debug("capture fetch failed", { url: cap.url, err: String(err) });
     }
   }
 
@@ -72,79 +73,15 @@ async function handleCapture(tabId: number, msg: Extract<BridgeToBackgroundMessa
     manifestText,
   });
 
-  const key = `${descriptor.source.kind}:${descriptor.protocol}:${cap.url ?? cap.pageUrl}`;
-  const state = getTab(tabId);
-  if (!state.descriptors.has(key)) {
-    state.descriptors.set(key, descriptor);
-    updateBadge(tabId);
-  }
+  const added = router.addDescriptor(tabId, descriptor);
+  if (added) updateBadge(tabId);
 }
 
 function updateBadge(tabId: number): void {
-  const count = getTab(tabId).descriptors.size;
+  const count = router.listDescriptors(tabId).length;
   const text = count > 0 ? String(count) : "";
   void chrome.action.setBadgeText({ tabId, text });
   if (count > 0) void chrome.action.setBadgeBackgroundColor({ tabId, color: "#2563eb" });
-}
-
-function findDescriptor(streamId: StreamDescriptor["id"]): StreamDescriptor | null {
-  for (const state of tabs.values()) {
-    for (const d of state.descriptors.values()) if (d.id === streamId) return d;
-  }
-  return null;
-}
-
-async function startDownload(streamId: StreamDescriptor["id"], choice: UserChoice): Promise<JobError | null> {
-  const descriptor = findDescriptor(streamId);
-  if (!descriptor) {
-    return { code: "manifest_404", severity: "terminal", url: "", httpStatus: 0 };
-  }
-
-  const plan = dispatch(descriptor, choice);
-
-  if (plan.kind === "refuse") {
-    return drmRefusalToError(plan.reason, descriptor);
-  }
-
-  if (plan.kind === "direct") {
-    try {
-      await chrome.downloads.download({
-        url: plan.url,
-        filename: plan.filename,
-        conflictAction: "uniquify",
-      });
-      return null;
-    } catch (err) {
-      return {
-        code: "native_sink_io_error",
-        severity: "terminal",
-        errno: String((err as Error)?.message ?? err),
-        path: plan.filename,
-      };
-    }
-  }
-
-  jobs.set(streamId, { descriptor, choice });
-  await ensureEngineHost();
-  const engineMsg: BackgroundToEngineMessage = { type: "start-job", streamId, descriptor, choice };
-  chrome.runtime.sendMessage(engineMsg, () => void chrome.runtime.lastError);
-  return null;
-}
-
-function drmRefusalToError(reason: NonNullable<StreamDescriptor["drm"]>["reason"], d: StreamDescriptor): JobError {
-  const drm = d.drm;
-  switch (reason) {
-    case "encrypted_media_detected":
-      return { code: "encrypted_media_detected", severity: "terminal", detectedVia: drm?.detectedVia ?? [], keySystem: drm?.keySystem ?? null };
-    case "cdm_required":
-      return { code: "cdm_required", severity: "terminal", keySystem: drm?.keySystem ?? "unknown" };
-    case "clear_segments_unavailable":
-      return { code: "clear_segments_unavailable", severity: "terminal", manifestUrl: d.pageUrl };
-    case "license_bound_stream":
-      return { code: "license_bound_stream", severity: "terminal", keyUri: "", httpStatus: 0 };
-    case "clearkey_deferred":
-      return { code: "clearkey_deferred", severity: "terminal", manifestUrl: d.pageUrl };
-  }
 }
 
 chrome.runtime.onMessage.addListener((
@@ -158,61 +95,29 @@ chrome.runtime.onMessage.addListener((
     return false;
   }
 
-  if (msg.type === "list") {
-    const state = tabs.get(msg.tabId);
-    const descriptors = state ? Array.from(state.descriptors.values()) : [];
-    const response: BackgroundToPopupMessage = { type: "descriptors", tabId: msg.tabId, descriptors };
-    sendResponse(response);
-    return false;
-  }
+  if (msg.type === "ready") return false;
 
-  if (msg.type === "download") {
-    void startDownload(msg.streamId, msg.choice).then(err => {
-      if (err) {
-        const failMsg: BackgroundToPopupMessage = { type: "job-failed", streamId: msg.streamId, error: err };
-        chrome.runtime.sendMessage(failMsg, () => void chrome.runtime.lastError);
-      }
+  if (msg.type === "list" || msg.type === "download" || msg.type === "cancel") {
+    void router.handlePopupMessage(msg).then(response => {
+      if (response) sendResponse(response);
     });
-    sendResponse({ ok: true });
-    return false;
+    return true; // keep channel open
   }
 
-  if (msg.type === "cancel") {
-    jobs.delete(msg.streamId);
-    sendResponse({ ok: true });
-    return false;
-  }
-
-  if (msg.type === "progress") {
-    const fwd: BackgroundToPopupMessage = {
-      type: "job-progress",
-      streamId: msg.streamId,
-      bytesWritten: msg.bytesWritten,
-      bytesTotal: msg.bytesTotal,
-      phase: msg.phase,
-    };
-    chrome.runtime.sendMessage(fwd, () => void chrome.runtime.lastError);
-    return false;
-  }
-
-  if (msg.type === "complete") {
-    jobs.delete(msg.streamId);
-    void chrome.downloads.download({ url: msg.blobUrl, filename: msg.filename, conflictAction: "uniquify" });
-    const fwd: BackgroundToPopupMessage = { type: "job-complete", streamId: msg.streamId, path: msg.filename };
-    chrome.runtime.sendMessage(fwd, () => void chrome.runtime.lastError);
-    return false;
-  }
-
-  if (msg.type === "failed") {
-    jobs.delete(msg.streamId);
-    const fwd: BackgroundToPopupMessage = { type: "job-failed", streamId: msg.streamId, error: msg.error };
-    chrome.runtime.sendMessage(fwd, () => void chrome.runtime.lastError);
-    return false;
-  }
-
-  if (msg.type === "ready") {
+  if (msg.type === "progress" || msg.type === "complete" || msg.type === "failed") {
+    const forward = router.handleEngineMessage(msg);
+    if (forward) {
+      chrome.runtime.sendMessage(forward, () => void chrome.runtime.lastError);
+    }
     return false;
   }
 
   return false;
 });
+
+// On Firefox, the engine runs in the background event page; on Chromium the
+// offscreen document loads engine/host.ts via offscreen.html. The dynamic
+// import collapses at build time because `__BROWSER__` is a literal define.
+if (__BROWSER__ === "firefox") {
+  void import("../engine/host");
+}

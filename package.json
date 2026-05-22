@@ -9,9 +9,11 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "build:all": "pnpm -r build && pnpm --filter @savemedia/extension build:firefox",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "verify": "node scripts/verify.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

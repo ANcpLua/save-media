@@ -1,0 +1,44 @@
+import { Parser } from "m3u8-parser";
+
+/**
+ * Runtime media-playlist parser used by the engine after the master is
+ * resolved to a variant. The core `@savemedia/core` parser produces typed
+ * StreamDescriptors; this lighter helper is just the URL list + per-segment
+ * IV/sequence the engine needs to fetch and decrypt.
+ */
+
+export interface RuntimeSegment {
+  readonly uri: string;
+  readonly duration: number;
+  readonly iv: Uint8Array | null;
+  readonly mediaSequence: number | null;
+}
+
+export interface RuntimePlaylist {
+  readonly segments: readonly RuntimeSegment[];
+  readonly targetDuration: number | null;
+}
+
+export function parseHlsMediaPlaylistRuntime(text: string, playlistUrl: string): RuntimePlaylist {
+  const parser = new Parser();
+  parser.push(text);
+  parser.end();
+  const m = parser.manifest;
+  const startSeq = (m.mediaSequence ?? 0) as number;
+  const segs: RuntimeSegment[] = (m.segments ?? []).map((s, i) => ({
+    uri: new URL(s.uri, playlistUrl).href,
+    duration: s.duration,
+    iv: s.key?.iv ? copyToUint8(s.key.iv) : null,
+    mediaSequence: startSeq + i,
+  }));
+  return {
+    segments: segs,
+    targetDuration: typeof m.targetDuration === "number" ? m.targetDuration : null,
+  };
+}
+
+function copyToUint8(view: ArrayBufferView): Uint8Array {
+  const dst = new Uint8Array(view.byteLength);
+  dst.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+  return dst;
+}

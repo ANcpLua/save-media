@@ -1,9 +1,21 @@
+/**
+ * Chromium offscreen-document engine host bootstrap.
+ *
+ * Chromium MV3 service workers cannot hold a Web Worker, DOM, or Blob URLs
+ * across restarts. We create an offscreen document the first time an engine
+ * job needs to run; the offscreen page loads the engine runner module which
+ * registers its own runtime.onMessage listener.
+ */
+
 const OFFSCREEN_DOCUMENT_PATH = "src/engine/offscreen.html";
 
 let creating: Promise<void> | null = null;
 
 interface OffscreenContext { readonly documentUrl?: string }
-type GetContextsFn = (filter: { contextTypes: string[]; documentUrls?: string[] }) => Promise<OffscreenContext[]>;
+type GetContextsFn = (filter: {
+  contextTypes: string[];
+  documentUrls?: string[];
+}) => Promise<OffscreenContext[]>;
 
 export async function ensureEngineHost(): Promise<void> {
   const url = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);

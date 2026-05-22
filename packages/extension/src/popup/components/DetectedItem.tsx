@@ -1,15 +1,26 @@
 import { useState } from "react";
-import type { StreamDescriptor, OutputMode } from "@savemedia/core";
-import { friendlyVideoCodec, friendlyAudioCodec } from "@savemedia/core";
+import type { StreamDescriptor, OutputMode, JobError } from "@savemedia/core";
+import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
 import type { PopupToBackgroundMessage } from "../../types/messages";
+import { suggestFilename } from "../../util/filename";
+
+export interface JobStatus {
+  readonly phase: "queued" | "active" | "complete" | "failed";
+  readonly bytesWritten?: number;
+  readonly bytesTotal?: number | null;
+  readonly stage?: string;
+  readonly error?: JobError;
+}
 
 interface Props {
   readonly descriptor: StreamDescriptor;
+  readonly status?: JobStatus | undefined;
+  readonly onCancel?: ((streamId: StreamDescriptor["id"]) => void) | undefined;
 }
 
 const OUTPUT_MODES: readonly OutputMode[] = ["Original", "MP4 Compatible", "Best Quality", "Small File", "Manual"];
 
-export function DetectedItem({ descriptor }: Props) {
+export function DetectedItem({ descriptor, status, onCancel }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<OutputMode>("Original");
 
@@ -20,6 +31,7 @@ export function DetectedItem({ descriptor }: Props) {
   const acodec = variant?.audioCodec ?? descriptor.codecs.audio;
   const isDrmBlocked = descriptor.capabilities.drmBlocked;
   const isDeferred = descriptor.drm?.reason === "clearkey_deferred";
+  const action = outputActionLabel(descriptor);
 
   function download() {
     if (isDrmBlocked) return;
@@ -28,7 +40,7 @@ export function DetectedItem({ descriptor }: Props) {
       streamId: descriptor.id,
       choice: {
         outputMode: mode,
-        filename: filenameFor(descriptor),
+        filename: suggestFilename(descriptor),
         variantId: variant?.id ?? null,
         audioRenditionId: null,
       },
@@ -36,11 +48,20 @@ export function DetectedItem({ descriptor }: Props) {
     chrome.runtime.sendMessage(msg);
   }
 
+  function cancel() {
+    if (onCancel) {
+      onCancel(descriptor.id);
+      return;
+    }
+    const msg: PopupToBackgroundMessage = { type: "cancel", streamId: descriptor.id };
+    chrome.runtime.sendMessage(msg);
+  }
+
   if (isDrmBlocked) {
     return (
-      <li className="p-3 text-xs">
+      <li className="p-3 text-xs" data-testid="drm-card" data-deferred={isDeferred}>
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-red-400">🔒</span>
+          <span className="text-red-400" aria-hidden="true">🔒</span>
           <span className="font-medium truncate">{descriptor.title ?? "Protected stream"}</span>
         </div>
         <p className="text-neutral-500 leading-relaxed">
@@ -79,8 +100,38 @@ export function DetectedItem({ descriptor }: Props) {
           <Row label="container" value={descriptor.container} />
           {variant?.bitrate && <Row label="bitrate" value={`${(variant.bitrate / 1e6).toFixed(1)} Mbps`} />}
           {variant?.estimatedSize && <Row label="size (est.)" value={`${(variant.estimatedSize / 1e6).toFixed(1)} MB`} />}
-          <Row label="output action" value={descriptor.capabilities.directDownload ? "direct" : "remux"} />
+          <Row label="output action" value={action} />
         </div>
+      )}
+
+      {status && status.phase === "active" && (
+        <div className="mt-2 ml-5" data-testid="progress">
+          <div className="flex items-center justify-between text-neutral-400">
+            <span>{status.stage ?? "downloading"}</span>
+            <span>{formatBytes(status.bytesWritten ?? 0)}{status.bytesTotal ? ` / ${formatBytes(status.bytesTotal)}` : ""}</span>
+          </div>
+          <div className="mt-1 h-1 rounded bg-neutral-800 overflow-hidden">
+            <div
+              className="h-full bg-blue-600 transition-all"
+              style={{
+                width: status.bytesTotal && status.bytesTotal > 0
+                  ? `${Math.min(100, Math.round(((status.bytesWritten ?? 0) / status.bytesTotal) * 100))}%`
+                  : "30%",
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {status?.phase === "failed" && status.error && (
+        <div className="mt-2 ml-5 text-red-400" data-testid="job-error">
+          <p className="font-medium">{userMessage(status.error).title}</p>
+          <p className="text-neutral-500 mt-0.5">{userMessage(status.error).body}</p>
+        </div>
+      )}
+
+      {status?.phase === "complete" && (
+        <p className="mt-2 ml-5 text-emerald-400" data-testid="job-complete">✓ Saved.</p>
       )}
 
       <div className="mt-2 ml-5 flex items-center gap-2">
@@ -88,18 +139,43 @@ export function DetectedItem({ descriptor }: Props) {
           value={mode}
           onChange={e => setMode(e.target.value as OutputMode)}
           className="bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-xs"
+          aria-label="Output mode"
+          disabled={status?.phase === "active"}
         >
           {OUTPUT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
-        <button
-          onClick={download}
-          className="ml-auto bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-xs"
-        >
-          ⬇ Download
-        </button>
+        {status?.phase === "active" ? (
+          <button
+            onClick={cancel}
+            className="ml-auto bg-neutral-700 hover:bg-neutral-600 text-white px-2.5 py-1 rounded text-xs"
+          >
+            Cancel
+          </button>
+        ) : (
+          <button
+            onClick={download}
+            className="ml-auto bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-xs"
+          >
+            ⬇ Download
+          </button>
+        )}
       </div>
     </li>
   );
+}
+
+function outputActionLabel(d: StreamDescriptor): string {
+  if (d.capabilities.directDownload) return "direct";
+  if (d.protocol === "hls") return "hls";
+  if (d.protocol === "dash") return "dash";
+  return "remux";
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 function Row({ label, value }: { readonly label: string; readonly value: string }) {
@@ -109,9 +185,4 @@ function Row({ label, value }: { readonly label: string; readonly value: string 
       <code className="truncate max-w-[60%] text-right">{value}</code>
     </div>
   );
-}
-
-function filenameFor(d: StreamDescriptor): string {
-  const base = (d.title ?? "video").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80);
-  return `${base}.mp4`;
 }
