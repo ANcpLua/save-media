@@ -43,7 +43,7 @@ transcoding, DASH assembly, AES decryption, or "download anything" behavior.
 | Browser target | Evidence | Submission status |
 | --- | --- | --- |
 | Chrome | `pnpm verify`; headed Chromium Playwright extension suite; direct and HLS downloads verified with `ffprobe`; refusal fixtures covered. | Ready for a Chrome Web Store submission package within the product boundary above. |
-| Edge | Chromium-compatible zip builds as `savemedia-edge-0.0.1.zip`; `smoke:edge` exists but needs an installed Microsoft Edge executable. Local Playwright Edge install was blocked by `sudo` password requirements. | Not ready to claim Edge runtime support until `smoke:edge` or the manual checklist below passes on real Edge. |
+| Edge | `smoke:edge` launches Microsoft Edge with the unpacked Chromium build, opens the popup, checks `download-best` command registration, downloads direct MP4, remuxes plain HLS VOD, and checks DASH/encrypted-HLS/live-HLS/fMP4 refusals. | Ready for Microsoft Edge Add-ons submission within the product boundary above. |
 | Firefox Desktop 140+ | `smoke:firefox` temporarily installs `dist-firefox` into Firefox, opens the popup, checks `download-best` command registration, downloads direct MP4, remuxes plain HLS VOD, and checks DASH/encrypted-HLS/live-HLS/fMP4 refusals. | Ready for AMO review within the product boundary above after `web-ext lint` and source/build notes are included with the upload. |
 
 Chrome passing is not Edge or Firefox evidence. Firefox fixture-only Playwright
@@ -148,7 +148,7 @@ Current `web-ext lint` warnings are React bundle `innerHTML` warnings in
 `popup.js`; lint reports zero errors. Upload the source package and build notes
 above so reviewers can inspect the React/Vite source behind the bundled popup.
 
-Edge package:
+Edge package and runtime smoke:
 
 ```sh
 pnpm --filter @savemedia/extension smoke:edge
@@ -161,10 +161,9 @@ SAVEMEDIA_EDGE_EXECUTABLE="/Applications/Microsoft Edge.app/Contents/MacOS/Micro
   pnpm --filter @savemedia/extension smoke:edge
 ```
 
-Do not submit or advertise Edge runtime support until that command passes on a
-real Microsoft Edge installation.
+The local verified Edge install was Microsoft Edge `148.0.3967.83`.
 
-Manual Edge checklist when automation is unavailable:
+Manual Edge checklist if automation is unavailable in another environment:
 
 ```sh
 pnpm --filter @savemedia/extension build:chrome

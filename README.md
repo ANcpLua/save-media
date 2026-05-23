@@ -48,7 +48,7 @@ bytes as final video.
 | Browser target | Current evidence | Claim level |
 | --- | --- | --- |
 | Chrome | Automated unpacked-extension Playwright suite, including real downloads verified with `ffprobe`. | Supported for the capabilities above. |
-| Edge | Chromium zip is built as `savemedia-edge-0.0.1.zip`; `smoke:edge` exists but requires a real Microsoft Edge executable and has not passed locally. | Build exists; runtime parity is not claimed. |
+| Edge | Edge zip builds; `smoke:edge` launches Microsoft Edge, opens the popup, checks `Alt+S`, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. | Supported for the capabilities above. |
 | Firefox | Firefox zip builds for Firefox Desktop 140+; `smoke:firefox` temporarily installs `dist-firefox`, opens the popup, checks `Alt+S`, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. | Supported on Firefox Desktop for the capabilities above. |
 
 Store-readiness drafts live in `docs/privacy-policy.md` and
@@ -88,6 +88,7 @@ pnpm -r typecheck
 pnpm -r test
 pnpm --filter @savemedia/extension build:chrome
 pnpm --filter @savemedia/extension exec playwright test --project=chromium
+pnpm --filter @savemedia/extension smoke:edge
 pnpm --filter @savemedia/extension smoke:firefox
 pnpm --filter @savemedia/extension zip
 ```
