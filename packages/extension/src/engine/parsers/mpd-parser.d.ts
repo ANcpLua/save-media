@@ -1,9 +1,10 @@
 declare module "mpd-parser" {
   export interface ParsedSegment {
     uri: string;
+    resolvedUri?: string;
     timeline?: number;
     duration?: number;
-    map?: { uri: string };
+    map?: { uri: string; resolvedUri?: string };
     number?: number;
     presentationTime?: number;
   }

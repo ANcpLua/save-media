@@ -24,7 +24,6 @@ export function directDescriptor(
     capabilities: {
       directDownload: true,
       remuxableTo: ["mp4"],
-      transcodeableTo: ["mp4"],
       drmBlocked: false,
     },
     confidence: { protocol: "probable", container: "probable", codecs: "guessed" },
@@ -68,7 +67,6 @@ export function hlsDescriptor(
     capabilities: {
       directDownload: false,
       remuxableTo: ["mp4"],
-      transcodeableTo: ["mp4"],
       drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
@@ -88,7 +86,6 @@ export function drmDescriptor(reason: DrmReason = "cdm_required"): StreamDescrip
     capabilities: {
       directDownload: false,
       remuxableTo: [],
-      transcodeableTo: [],
       drmBlocked: true,
     },
   };

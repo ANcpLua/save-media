@@ -18,7 +18,7 @@ describe("DetectedItem — DRM/ClearKey cards", () => {
     const { container } = render(<ul>{<DetectedItem descriptor={clearKeyDescriptor()} />}</ul>);
     const card = container.querySelector('[data-testid="drm-card"]');
     expect(card?.getAttribute("data-deferred")).toBe("true");
-    expect(screen.getByText(/ClearKey decryption deferred to v2/i)).toBeTruthy();
+    expect(screen.getByText(/ClearKey \/ CENC decryption is not implemented/i)).toBeTruthy();
     expect(screen.getByText("clearkey_deferred")).toBeTruthy();
   });
 

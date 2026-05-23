@@ -1,12 +1,7 @@
 import type { DrmReason, OutputContainer } from "./stream";
-import type { VariantId, AudioRenditionId, VideoCodec, ByteRange, HlsEncryption } from "./codec";
+import type { VariantId, AudioRenditionId, ByteRange, HlsEncryption } from "./codec";
 
-export type OutputMode =
-  | "Original"
-  | "MP4 Compatible"
-  | "Best Quality"
-  | "Small File"
-  | "Manual";
+export type OutputMode = "Original";
 
 export interface UserChoice {
   readonly outputMode: OutputMode;
@@ -17,8 +12,14 @@ export interface UserChoice {
 
 export interface DispatchRefusal {
   readonly kind: "refuse";
-  readonly reason: DrmReason;
+  readonly reason: DispatchRefusalReason;
 }
+
+export type DispatchRefusalReason =
+  | DrmReason
+  | "no_usable_variant"
+  | "unsupported_output"
+  | "output_too_large_for_browser";
 
 declare const KEY_HANDLE_BRAND: unique symbol;
 export type KeyHandle = string & { readonly [KEY_HANDLE_BRAND]: true };
@@ -31,10 +32,9 @@ export type JobStep =
   | { readonly op: "fetch-key"; readonly url: string }
   | { readonly op: "fetch-segment"; readonly index: number; readonly url: string; readonly range?: ByteRange; readonly iv?: Uint8Array }
   | { readonly op: "decrypt-aes-128"; readonly segmentIndex: number; readonly keyHandle: KeyHandle }
-  | { readonly op: "remux"; readonly engine: "mediabunny"; readonly toContainer: OutputContainer }
-  | { readonly op: "transcode"; readonly engine: "ffmpeg-wasm" | "native-ffmpeg"; readonly from: VideoCodec; readonly to: VideoCodec }
+  | { readonly op: "remux"; readonly toContainer: OutputContainer }
   | { readonly op: "verify"; readonly checks: readonly VerifyCheckKind[] }
-  | { readonly op: "finalize"; readonly sink: "downloads" | "native-streaming-sink" };
+  | { readonly op: "finalize"; readonly sink: "downloads" };
 
 export interface DirectPlan {
   readonly kind: "direct";
@@ -49,7 +49,6 @@ export interface HlsPlainPlan {
   readonly outputFilename: string;
   readonly variantId: VariantId;
   readonly estimatedBytes: number | null;
-  readonly useNativeSink: boolean;
 }
 
 export interface HlsAesPlan {
@@ -59,7 +58,6 @@ export interface HlsAesPlan {
   readonly outputFilename: string;
   readonly variantId: VariantId;
   readonly estimatedBytes: number | null;
-  readonly useNativeSink: boolean;
   readonly keyUri: string;
   readonly encryption: HlsEncryption;
 }
@@ -72,26 +70,6 @@ export interface DashPlan {
   readonly variantId: VariantId;
   readonly audioRenditionId: AudioRenditionId | null;
   readonly estimatedBytes: number | null;
-  readonly useNativeSink: boolean;
 }
 
-export interface RemuxPlan {
-  readonly kind: "remux";
-  readonly steps: readonly JobStep[];
-  readonly fromContainer: OutputContainer;
-  readonly outputContainer: OutputContainer;
-  readonly outputFilename: string;
-  readonly estimatedBytes: number | null;
-}
-
-export interface TranscodePlan {
-  readonly kind: "transcode";
-  readonly steps: readonly JobStep[];
-  readonly outputContainer: OutputContainer;
-  readonly outputFilename: string;
-  readonly fromVideoCodec: VideoCodec;
-  readonly toVideoCodec: VideoCodec;
-  readonly engine: "ffmpeg-wasm" | "native-ffmpeg";
-}
-
-export type JobPlan = DirectPlan | HlsPlainPlan | HlsAesPlan | DashPlan | RemuxPlan | TranscodePlan;
+export type JobPlan = DirectPlan | HlsPlainPlan | HlsAesPlan | DashPlan;

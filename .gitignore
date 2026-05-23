@@ -1,8 +1,6 @@
 # Node
 node_modules/
 .pnpm-store/
-# Build-time-bundled ffmpeg core (copied from node_modules @ffmpeg/core)
-packages/extension/public/vendor/ffmpeg/
 dist/
 dist-build/
 dist-chrome/
@@ -14,23 +12,6 @@ dist-firefox-build/
 coverage/
 .nyc_output/
 .tsbuildinfo
-
-# Python (native host)
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-build/
-native-host/dist/
-native-host/build/
-native-host/*.egg-info/
-native-host/.pytest_cache/
-
-# PyInstaller outputs
-savemedia-host-darwin-*
-savemedia-host-linux-*
-savemedia-host-windows-*.exe
 
 # macOS
 .DS_Store

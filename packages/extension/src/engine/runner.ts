@@ -99,9 +99,9 @@ function toJobError(err: unknown, descriptor: StreamDescriptor): JobError {
   }
   const message = err instanceof Error ? err.message : String(err);
   return {
-    code: "mediabunny_demux_failed",
+    code: "engine_job_failed",
     severity: "terminal",
-    at: "header",
+    at: "segment",
     detail: `${descriptor.protocol}/${descriptor.container}: ${message}`,
   };
 }

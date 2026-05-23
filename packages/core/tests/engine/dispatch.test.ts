@@ -42,7 +42,6 @@ function makeDirect(): StreamDescriptor {
     capabilities: {
       directDownload: true,
       remuxableTo: ["mp4"],
-      transcodeableTo: ["mp4", "webm"],
       drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "confirmed", codecs: "guessed" },
@@ -75,7 +74,6 @@ function makeHls(encryption: HlsEncryption | null = null): StreamDescriptor {
     capabilities: {
       directDownload: false,
       remuxableTo: ["mp4"],
-      transcodeableTo: ["mp4", "webm"],
       drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
@@ -98,7 +96,6 @@ function makeDash(): StreamDescriptor {
     capabilities: {
       directDownload: false,
       remuxableTo: ["mp4"],
-      transcodeableTo: ["mp4"],
       drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
@@ -160,7 +157,6 @@ describe("dispatch — HLS", () => {
       expect(r.steps.find(s => s.op === "remux")).toBeDefined();
       expect(r.steps.find(s => s.op === "verify")).toBeDefined();
       expect(r.steps.find(s => s.op === "finalize")).toBeDefined();
-      expect(r.useNativeSink).toBe(false);
     }
   });
 
@@ -185,23 +181,21 @@ describe("dispatch — HLS", () => {
     if (r.kind === "refuse") expect(r.reason).toBe("cdm_required");
   });
 
-  it("HLS with no variants → refuses with clear_segments_unavailable", () => {
+  it("HLS with no variants → refuses with no_usable_variant", () => {
     const d = { ...makeHls(), variants: [] };
     const r = dispatch(d, originalChoice);
     expect(r.kind).toBe("refuse");
-    if (r.kind === "refuse") expect(r.reason).toBe("clear_segments_unavailable");
+    if (r.kind === "refuse") expect(r.reason).toBe("no_usable_variant");
   });
 
-  it("HLS estimatedSize above 2 GiB toggles useNativeSink=true", () => {
+  it("HLS estimatedSize above 2 GiB refuses before risking a corrupt browser Blob", () => {
     const base = makeHls();
     const huge: StreamDescriptor = {
       ...base,
       variants: [variant({ estimatedSize: 3 * 1024 * 1024 * 1024 })],
     };
     const r = dispatch(huge, originalChoice);
-    if (r.kind !== "hls-plain") throw new Error("expected hls-plain");
-    expect(r.useNativeSink).toBe(true);
-    expect(r.steps.find(s => s.op === "finalize")).toMatchObject({ sink: "native-streaming-sink" });
+    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser" });
   });
 });
 
@@ -216,7 +210,7 @@ describe("dispatch — DASH", () => {
   });
 });
 
-describe("dispatch — remux / transcode for progressive containers", () => {
+describe("dispatch — progressive containers", () => {
   it("progressive WebM + Original mode (output stays webm) → direct plan", () => {
     const d: StreamDescriptor = {
       ...makeDirect(),
@@ -225,7 +219,6 @@ describe("dispatch — remux / transcode for progressive containers", () => {
       capabilities: {
         directDownload: true,
         remuxableTo: ["webm", "mp4"],
-        transcodeableTo: ["mp4", "webm"],
         drmBlocked: false,
       },
     };
@@ -233,7 +226,7 @@ describe("dispatch — remux / transcode for progressive containers", () => {
     expect(r.kind).toBe("direct");
   });
 
-  it("progressive MKV + MP4 Compatible → remux plan when remux is supported", () => {
+  it("progressive MKV + Original mode → direct plan", () => {
     const d: StreamDescriptor = {
       ...makeDirect(),
       container: "mkv",
@@ -241,47 +234,26 @@ describe("dispatch — remux / transcode for progressive containers", () => {
       capabilities: {
         directDownload: true,
         remuxableTo: ["mp4", "mkv"],
-        transcodeableTo: ["mp4"],
         drmBlocked: false,
       },
     };
-    const r = dispatch(d, { ...originalChoice, outputMode: "MP4 Compatible" });
-    expect(r.kind).toBe("remux");
-    if (r.kind === "remux") {
-      expect(r.fromContainer).toBe("mkv");
-      expect(r.outputContainer).toBe("mp4");
-    }
+    const r = dispatch(d, originalChoice);
+    expect(r.kind).toBe("direct");
   });
 
-  it("progressive AVI + MP4 Compatible (no remux path) → transcode plan when transcode supports it", () => {
+  it("progressive direct-url without direct-download capability refuses instead of inventing a conversion", () => {
     const d: StreamDescriptor = {
       ...makeDirect(),
-      container: "avi",
-      source: { kind: "direct-url", url: "https://x/v.avi", headers: {} },
+      container: "mp4",
+      source: { kind: "direct-url", url: "https://x/v.mp4", headers: {} },
       capabilities: {
-        directDownload: true,
+        directDownload: false,
         remuxableTo: [],
-        transcodeableTo: ["mp4"],
         drmBlocked: false,
       },
     };
-    const r = dispatch(d, { ...originalChoice, outputMode: "MP4 Compatible" });
-    expect(r.kind).toBe("transcode");
-    if (r.kind === "transcode") {
-      expect(r.outputContainer).toBe("mp4");
-      expect(r.engine).toBe("ffmpeg-wasm");
-    }
-  });
-
-  it("progressive with no remux nor transcode path → refuse", () => {
-    const d: StreamDescriptor = {
-      ...makeDirect(),
-      container: "avi",
-      source: { kind: "direct-url", url: "https://x/v.avi", headers: {} },
-      capabilities: { directDownload: true, remuxableTo: [], transcodeableTo: [], drmBlocked: false },
-    };
-    const r = dispatch(d, { ...originalChoice, outputMode: "MP4 Compatible" });
-    expect(r.kind).toBe("refuse");
+    const r = dispatch(d, originalChoice);
+    expect(r).toEqual({ kind: "refuse", reason: "unsupported_output" });
   });
 });
 

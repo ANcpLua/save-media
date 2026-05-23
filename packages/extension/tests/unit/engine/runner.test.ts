@@ -39,14 +39,14 @@ describe("engine runner — happy path", () => {
 });
 
 describe("engine runner — failure paths", () => {
-  it("wraps unknown errors into mediabunny_demux_failed", async () => {
+  it("wraps unknown errors into a neutral engine failure", async () => {
     const sendMessage = vi.fn();
     const downloadJob = vi.fn(async () => { throw new Error("boom"); });
     const runner = createEngineRunner({ runtime: { sendMessage }, downloadJob });
     await runner.start(hlsDescriptor().id, hlsDescriptor(), choice());
     const failure = sendMessage.mock.calls[0]?.[0] as EngineToBackgroundMessage;
     if (failure.type !== "failed") throw new Error("expected failed");
-    expect(failure.error.code).toBe("mediabunny_demux_failed");
+    expect(failure.error.code).toBe("engine_job_failed");
   });
 
   it("translates AbortError into user_cancelled", async () => {

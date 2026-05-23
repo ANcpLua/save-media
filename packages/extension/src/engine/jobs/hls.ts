@@ -4,7 +4,6 @@ import type {
   StreamDescriptor,
   Variant,
 } from "@savemedia/core";
-import { RETRY_POLICY } from "@savemedia/core";
 import type { JobResult, ProgressFn } from "../job";
 import {
   parseHlsMediaPlaylistRuntime,
@@ -12,6 +11,7 @@ import {
   type RuntimeEncryption,
 } from "../parsers/hls";
 import { fetchWithRetry } from "../net/fetch-with-retry";
+import { classifyNetworkFailure } from "../net/error-classification";
 import { InMemorySink, type JobSink } from "../sink";
 import { remuxTsToMp4 } from "../remux/ts-to-mp4";
 
@@ -59,7 +59,9 @@ export async function runHlsJob(
   }
 
   onProgress(0, null, "fetching-playlist");
-  const playlistResp = await fetchWithRetry(playlistUrl, signal, "manifest");
+  const playlistResp = await fetchWithRetry(playlistUrl, signal, "manifest").catch(err => {
+    throw classifyNetworkFailure(err, "manifest", playlistUrl) ?? err;
+  });
   const playlistText = await playlistResp.text();
   const media = parseHlsMediaPlaylistRuntime(playlistText, playlistUrl);
 
@@ -107,7 +109,6 @@ async function fetchSegments(
 ): Promise<JobResult> {
   const { initSegmentUrl, segments } = media;
   const failed: number[] = [];
-  let consecutiveFailures = 0;
   let bytesWritten = 0;
   // Sniff the first segment to pick the honest mime/filename; until we
   // see the first decrypted segment we can't open the in-memory sink
@@ -115,16 +116,20 @@ async function fetchSegments(
   let firstBytes: Uint8Array | null = null;
   let sink: JobSink | null = externalSink ?? null;
   let openedFilename: string | null = null;
+  const writtenParts: Uint8Array[] = [];
 
   if (initSegmentUrl) {
     onProgress(0, null, "fetching-init");
-    const initResp = await fetchWithRetry(initSegmentUrl, signal, "segment");
+    const initResp = await fetchWithRetry(initSegmentUrl, signal, "segment").catch(err => {
+      throw classifyNetworkFailure(err, "segment", initSegmentUrl) ?? err;
+    });
     firstBytes = new Uint8Array(await initResp.arrayBuffer());
     const { mime, filename } = honestOutput(firstBytes, initSegmentUrl, plan, true);
     if (!sink) sink = new InMemorySink(mime);
     await sink.open(filename, plan.estimatedBytes);
     openedFilename = filename;
     await sink.write(firstBytes);
+    writtenParts.push(firstBytes);
     bytesWritten += firstBytes.byteLength;
   }
 
@@ -148,8 +153,8 @@ async function fetchSegments(
         openedFilename = filename;
       }
       await sink!.write(body);
+      writtenParts.push(body);
       bytesWritten += body.byteLength;
-      consecutiveFailures = 0;
       onProgress(bytesWritten, null, `segment ${i + 1}/${segments.length}`);
     } catch (err) {
       if (signal.aborted) throw err;
@@ -158,18 +163,13 @@ async function fetchSegments(
         throw err;
       }
       failed.push(i);
-      consecutiveFailures += 1;
-      const overBudget = failed.length / segments.length > RETRY_POLICY.job.maxFailedSegmentRatio;
-      const tooManyInARow = consecutiveFailures >= RETRY_POLICY.job.maxConsecutiveFailures;
-      if (overBudget || tooManyInARow) {
-        if (sink && openedFilename) await sink.abort();
-        throw {
-          code: "segment_budget_exhausted",
-          severity: "terminal",
-          failedSegments: failed,
-          totalSegments: segments.length,
-        };
-      }
+      if (sink && openedFilename) await sink.abort();
+      throw classifyNetworkFailure(err, "segment", seg.uri) ?? {
+        code: "segment_budget_exhausted",
+        severity: "terminal",
+        failedSegments: failed,
+        totalSegments: segments.length,
+      };
     }
   }
 
@@ -194,11 +194,12 @@ async function fetchSegments(
   const sniff = sniffContainer(firstBytes, initSegmentUrl ?? segments[0]?.uri);
   if (sniff === "mpegts" && plan.outputContainer === "mp4") {
     onProgress(bytesWritten, bytesWritten, "remuxing-ts-to-mp4");
-    const tsBytes = concatBlobParts((sink as InMemorySink).partsForProbe());
+    const tsBytes = concatUint8Arrays(writtenParts);
     await sink.abort();
     const mp4Bytes = await remuxTsToMp4(tsBytes, (fraction) => {
       onProgress(bytesWritten, bytesWritten, `remuxing ${Math.round(fraction * 100)}%`);
     });
+    assertMp4Bytes(mp4Bytes);
     const mp4Blob = new Blob([mp4Bytes as BlobPart], { type: "video/mp4" });
     onProgress(bytesWritten, bytesWritten, "finalizing");
     return {
@@ -214,28 +215,26 @@ async function fetchSegments(
   return result;
 }
 
-function concatBlobParts(parts: readonly BlobPart[]): Uint8Array {
+function concatUint8Arrays(parts: readonly Uint8Array[]): Uint8Array {
   let total = 0;
-  const u8s: Uint8Array[] = [];
-  for (const p of parts) {
-    if (p instanceof Uint8Array) {
-      u8s.push(p);
-      total += p.byteLength;
-    } else if (p instanceof ArrayBuffer) {
-      const u = new Uint8Array(p);
-      u8s.push(u);
-      total += u.byteLength;
-    } else {
-      throw new Error(`unsupported BlobPart type for remux: ${typeof p}`);
-    }
-  }
+  for (const p of parts) total += p.byteLength;
   const out = new Uint8Array(total);
   let off = 0;
-  for (const u of u8s) {
+  for (const u of parts) {
     out.set(u, off);
     off += u.byteLength;
   }
   return out;
+}
+
+function assertMp4Bytes(bytes: Uint8Array): void {
+  if (bytes.length < 8 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
+    throw {
+      code: "verification_container",
+      severity: "terminal",
+      probeError: "TS remux did not produce an MP4 ftyp box",
+    };
+  }
 }
 
 function isTerminalThrown(err: unknown): boolean {
@@ -250,7 +249,9 @@ function isTerminalThrown(err: unknown): boolean {
 }
 
 async function loadAesKey(keyUri: string, signal: AbortSignal): Promise<CryptoKey> {
-  const resp = await fetchWithRetry(keyUri, signal, "manifest");
+  const resp = await fetchWithRetry(keyUri, signal, "manifest").catch(err => {
+    throw classifyNetworkFailure(err, "manifest", keyUri) ?? err;
+  });
   const raw = await resp.arrayBuffer();
   if (raw.byteLength !== 16) {
     throw {

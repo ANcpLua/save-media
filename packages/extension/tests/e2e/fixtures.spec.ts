@@ -38,8 +38,8 @@ test.describe("fixture server", () => {
     const media = await page.request.get("/hls-fmp4/media.m3u8");
     const text = await media.text();
     expect(text).toContain("EXT-X-MAP");
-    expect(text).toContain("init-v1-a1.mp4");
-    expect(text).toContain("seg-1-v1-a1.mp4");
+    expect(text).toContain("init.mp4");
+    expect(text).toContain("seg000.m4s");
   });
 
   test("serves the HLS AES-128 fixture with a reachable 16-byte key", async ({ page }) => {
@@ -72,7 +72,15 @@ test.describe("fixture server", () => {
 
   test("negative page returns non-media assets that classification must ignore", async ({ page }) => {
     await page.goto("/page/negative.html");
-    for (const path of ["/negative/asset.jpg", "/negative/asset.css", "/negative/asset.js", "/negative/asset.gif"]) {
+    for (const path of [
+      "/negative/asset.jpg",
+      "/negative/asset.jpeg",
+      "/negative/asset.png",
+      "/negative/page.html",
+      "/negative/asset.css",
+      "/negative/asset.js",
+      "/negative/asset.gif",
+    ]) {
       const r = await page.request.get(path);
       expect(r.status()).toBe(200);
       const ct = r.headers()["content-type"] ?? "";

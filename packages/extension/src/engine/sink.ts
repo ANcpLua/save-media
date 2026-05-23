@@ -2,11 +2,9 @@ import type { JobResult } from "./job";
 
 /**
  * Sink abstraction for engine jobs: HLS/DASH runners write segments
- * through here. After dropping the native-host integration there's
- * only one implementation — InMemorySink — but keeping the interface
- * means the runners stay one swap away from a streaming alternative
- * (e.g. a future Origin Private File System sink) without rewriting
- * job orchestration.
+ * through here. There is deliberately one implementation today:
+ * InMemorySink. Keeping this boundary lets HLS/DASH tests inject a
+ * capturing sink without pretending a production streaming sink exists.
  *
  * write() is monotonic — callers append bytes in the order they
  * should appear in the final file. close() flushes and returns the
@@ -22,7 +20,7 @@ export interface JobSink {
 /**
  * In-renderer-memory sink. Suitable for files up to roughly 2 GB
  * (the renderer Blob ceiling). Above that we now fail with a clear
- * error instead of trying a native streaming path.
+ * error instead of risking a corrupt partial file.
  */
 export class InMemorySink implements JobSink {
   private parts: BlobPart[] = [];
@@ -60,5 +58,4 @@ export class InMemorySink implements JobSink {
   }
 
   byteLength(): number { return this.bytes; }
-  partsForProbe(): readonly BlobPart[] { return this.parts; }
 }

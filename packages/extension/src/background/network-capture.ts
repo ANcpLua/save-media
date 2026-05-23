@@ -33,7 +33,7 @@ export function looksLikeMediaEntryUrl(url: string, requestType?: string): boole
   if (/\.(m3u8|mpd)(\?|#|$)/i.test(url)) return true;
   if (looksLikeFragmentUrl(url)) return false;
   if (requestType === "xmlhttprequest") return false;
-  return /\.(mp4|m4v|webm|mkv|mov|avi|flv|wmv)(\?|#|$)/i.test(url);
+  return /\.(mp4|m4v|webm|mkv|mov)(\?|#|$)/i.test(url);
 }
 
 export function looksLikeFragmentUrl(url: string): boolean {
@@ -46,7 +46,7 @@ export function looksLikeFragmentUrl(url: string): boolean {
   const base = path.split("/").filter(Boolean).at(-1) ?? path;
   if (/\.(m4s|ts|mpegts)$/i.test(base)) return true;
   if (/\.mp4\/[^/]+\.(mp4|m4s)$/i.test(path)) return true;
-  return /^(init|seg|segment|chunk|frag|fragment|part)[._-][a-z0-9._-]*\.(mp4|m4v)$/i.test(base);
+  return /^(init|seg|segment|chunk|frag|fragment|part)(?:[._-][a-z0-9._-]*)?\.(mp4|m4v)$/i.test(base);
 }
 
 async function handleNetworkRequest(

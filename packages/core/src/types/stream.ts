@@ -28,7 +28,6 @@ export interface Confidence {
 export interface OutputCapabilities {
   readonly directDownload: boolean;
   readonly remuxableTo: readonly OutputContainer[];
-  readonly transcodeableTo: readonly OutputContainer[];
   readonly drmBlocked: boolean;
 }
 

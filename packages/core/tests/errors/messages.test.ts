@@ -10,10 +10,11 @@ describe("userMessage", () => {
     expect(msg.action).toBeNull();
   });
 
-  it("clearkey_deferred uses 'deferred' phrasing, not 'protected'", () => {
+  it("clearkey_deferred is distinct from DRM and does not promise future support", () => {
     const err: JobError = { code: "clearkey_deferred", severity: "terminal", manifestUrl: "https://example.com/m.mpd" };
     const msg = userMessage(err);
-    expect(msg.body).toMatch(/deferred|v2/i);
+    expect(msg.title).toMatch(/not implemented/i);
+    expect(msg.body).toMatch(/does not implement/i);
   });
 
   it("verification_checksum returns the retry action", () => {
@@ -28,5 +29,31 @@ describe("userMessage", () => {
   it("user_cancelled mentions discarded bytes", () => {
     const err: JobError = { code: "user_cancelled", severity: "terminal", bytesDiscarded: 12_345_678 };
     expect(userMessage(err).body).toMatch(/12\.3 MB/);
+  });
+
+  it("rate_limited has a distinct retryable user message", () => {
+    const err: JobError = {
+      code: "rate_limited",
+      severity: "terminal",
+      phase: "segment",
+      url: "https://cdn.example/seg.ts",
+      httpStatus: 429,
+      retryAfterSeconds: 10,
+    };
+    const msg = userMessage(err);
+    expect(msg.title).toMatch(/rate-limited/i);
+    expect(msg.action?.kind).toBe("retry-job");
+  });
+
+  it("access_denied does not pretend paid/account-gated content is DRM", () => {
+    const err: JobError = {
+      code: "access_denied",
+      severity: "terminal",
+      phase: "direct",
+      url: "https://cdn.example/private.mp4",
+      httpStatus: 402,
+      explanation: "payment-or-entitlement",
+    };
+    expect(userMessage(err).body).toMatch(/access control, not automatically DRM/i);
   });
 });

@@ -99,7 +99,7 @@ describe("message types", () => {
         codecs: { video: null, audio: null, subtitles: [] },
         variants: [],
         drm: null,
-        capabilities: { directDownload: true, remuxableTo: ["mp4"], transcodeableTo: ["mp4"], drmBlocked: false },
+        capabilities: { directDownload: true, remuxableTo: ["mp4"], drmBlocked: false },
         confidence: { protocol: "guessed", container: "guessed", codecs: "guessed" },
       },
       choice: {

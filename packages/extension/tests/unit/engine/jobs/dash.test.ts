@@ -7,7 +7,6 @@ const MPD = `<?xml version="1.0" encoding="UTF-8"?>
   <Period>
     <AdaptationSet contentType="video" mimeType="video/mp4">
       <Representation id="v1080" bandwidth="5000000" width="1920" height="1080" codecs="avc1.640028">
-        <BaseURL>https://x/</BaseURL>
         <SegmentList duration="10000" timescale="1000">
           <Initialization sourceURL="init.mp4"/>
           <SegmentURL media="m1.mp4"/>
@@ -46,7 +45,7 @@ function dashDescriptor(): StreamDescriptor {
     codecs: { video: null, audio: null, subtitles: [] },
     variants: [variant()],
     drm: null,
-    capabilities: { directDownload: false, remuxableTo: ["mp4"], transcodeableTo: ["mp4"], drmBlocked: false },
+    capabilities: { directDownload: false, remuxableTo: ["mp4"], drmBlocked: false },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
   };
 }
@@ -60,7 +59,6 @@ function plan(): DashPlan {
     variantId: "v1080" as VariantId,
     audioRenditionId: null,
     estimatedBytes: null,
-    useNativeSink: false,
   };
 }
 
@@ -95,11 +93,13 @@ function ftypInit(): Response {
 
 describe("runDashJob", () => {
   it("fetches MPD, init, all media segments → returns Blob URL with the chosen filename", async () => {
+    const fetched: string[] = [];
     patchFetch(async url => {
+      fetched.push(url);
       if (url.endsWith(".mpd")) return new Response(MPD, { status: 200 });
-      if (url.endsWith("init.mp4")) return ftypInit();
-      if (url.endsWith("m1.mp4")) return bytes([1, 2, 3, 4]);
-      if (url.endsWith("m2.mp4")) return bytes([5, 6, 7]);
+      if (url === "https://x/init.mp4") return ftypInit();
+      if (url === "https://x/m1.mp4") return bytes([1, 2, 3, 4]);
+      if (url === "https://x/m2.mp4") return bytes([5, 6, 7]);
       throw new Error(`unexpected url ${url}`);
     });
 
@@ -112,6 +112,12 @@ describe("runDashJob", () => {
     expect(phases).toContain("fetching-init");
     expect(phases.some((p: string) => /segment 2\/2/.test(p))).toBe(true);
     expect(phases).toContain("finalizing");
+    expect(fetched).toEqual([
+      "https://x/clip.mpd",
+      "https://x/init.mp4",
+      "https://x/m1.mp4",
+      "https://x/m2.mp4",
+    ]);
   });
 
   it("refuses to finalize when the init segment is not a valid MP4 init box", async () => {

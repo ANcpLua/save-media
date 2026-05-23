@@ -53,7 +53,7 @@ function mergeConfidence(a: Confidence, b: Confidence): Confidence {
 
 // Direct-download containers are standalone files, not manifests.
 const PROGRESSIVE_CONTAINERS = new Set<Container>([
-  "mp4", "m4v", "mov", "webm", "mkv", "mpegts", "avi", "wmv", "flv",
+  "mp4", "m4v", "mov", "webm", "mkv",
 ]);
 
 function resolveProtocol(
@@ -86,10 +86,10 @@ function computeCapabilities(
   drm: DrmStatus,
 ): OutputCapabilities {
   const drmBlocked = drm !== null;
+  const streaming = protocol === "hls" || protocol === "dash";
   return {
     directDownload: !drmBlocked && protocol === "progressive-http",
-    remuxableTo: drmBlocked ? [] : remuxableTargets(container),
-    transcodeableTo: drmBlocked ? [] : ["mp4", "webm"],
+    remuxableTo: drmBlocked || !streaming ? [] : remuxableTargets(container),
     drmBlocked,
   };
 }

@@ -5,9 +5,10 @@ import {
   type JobError,
   type JobPlan,
   type DispatchRefusal,
-  type DrmReason,
+  type DispatchRefusalReason,
   type OutputContainer,
   type Variant,
+  BROWSER_OUTPUT_LIMIT_BYTES,
 } from "@savemedia/core";
 import type {
   PopupToBackgroundMessage,
@@ -241,7 +242,7 @@ export function createRouter(deps: RouterDeps): Router {
     const plan: JobPlan | DispatchRefusal = dispatch(descriptor, choice);
 
     if (plan.kind === "refuse") {
-      return drmRefusalToError(plan.reason, descriptor);
+      return dispatchRefusalToError(plan.reason, descriptor);
     }
 
     if (plan.kind === "direct") {
@@ -254,10 +255,10 @@ export function createRouter(deps: RouterDeps): Router {
         return null;
       } catch (err) {
         return {
-          code: "native_sink_io_error",
+          code: "browser_download_failed",
           severity: "terminal",
-          errno: String((err as Error)?.message ?? err),
-          path: plan.filename,
+          reason: String((err as Error)?.message ?? err),
+          filename: plan.filename,
         };
       }
     }
@@ -281,12 +282,6 @@ export function createRouter(deps: RouterDeps): Router {
     }
     if (msg.type === "complete") {
       jobs.delete(msg.streamId);
-      // Native paths already wrote the file to disk (blobUrl is a file://
-      // URL there); skip handing it to chrome.downloads, which would fail
-      // on file: schemes anyway.
-      if (msg.blobUrl.startsWith("file://")) {
-        return { type: "job-complete", streamId: msg.streamId, path: msg.filename };
-      }
       try {
         await deps.downloads.download({
           url: msg.blobUrl,
@@ -299,10 +294,10 @@ export function createRouter(deps: RouterDeps): Router {
           type: "job-failed",
           streamId: msg.streamId,
           error: {
-            code: "native_sink_io_error",
+            code: "browser_download_failed",
             severity: "terminal",
-            errno: err instanceof Error ? err.message : String(err),
-            path: msg.filename,
+            reason: err instanceof Error ? err.message : String(err),
+            filename: msg.filename,
           },
         };
       }
@@ -351,7 +346,7 @@ export function createRouter(deps: RouterDeps): Router {
   };
 }
 
-export function drmRefusalToError(reason: DrmReason, d: StreamDescriptor): JobError {
+export function dispatchRefusalToError(reason: DispatchRefusalReason, d: StreamDescriptor): JobError {
   const drm = d.drm;
   switch (reason) {
     case "encrypted_media_detected":
@@ -369,5 +364,22 @@ export function drmRefusalToError(reason: DrmReason, d: StreamDescriptor): JobEr
       return { code: "license_bound_stream", severity: "terminal", keyUri: "", httpStatus: 0 };
     case "clearkey_deferred":
       return { code: "clearkey_deferred", severity: "terminal", manifestUrl: d.pageUrl };
+    case "no_usable_variant":
+      return { code: "manifest_malformed", severity: "terminal", url: d.pageUrl, parserError: "no usable video variant" };
+    case "unsupported_output":
+      return {
+        code: "unsupported_output",
+        severity: "terminal",
+        from: d.container,
+        to: d.container === "webm" || d.container === "mkv" ? d.container : "mp4",
+        reason: "conversion-not-implemented",
+      };
+    case "output_too_large_for_browser":
+      return {
+        code: "output_too_large_for_browser",
+        severity: "terminal",
+        estimatedBytes: Math.max(...d.variants.map(v => v.estimatedSize ?? 0), 0),
+        limitBytes: BROWSER_OUTPUT_LIMIT_BYTES,
+      };
   }
 }

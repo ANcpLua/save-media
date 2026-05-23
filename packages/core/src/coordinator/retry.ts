@@ -17,25 +17,12 @@ export const RETRY_POLICY = {
     jitterFraction: 0.2,
     retryableStatuses: [408, 425, 429, 500, 502, 503, 504] as readonly number[],
   },
-  ffmpegWasmLoad: {
-    maxAttempts: 3,
-    baseMs: 2000,
-    maxBackoffMs: 2000,
-    jitterFraction: 0.1,
-    retryableStatuses: [] as readonly number[],
-  },
-  nativeHost: {
-    ytdlpTimeoutSeconds: 3600,
-    streamingSinkTimeoutSeconds: 14_400,
-    probeTimeoutSeconds: 30,
-    maxConsecutiveTimeouts: 2,
-  },
 } as const;
 
-export type RetryClass = "segment" | "manifest" | "ffmpegWasmLoad";
+export type RetryClass = "segment" | "manifest";
 
 function isClassWithBackoff(cls: string): cls is RetryClass {
-  return cls === "segment" || cls === "manifest" || cls === "ffmpegWasmLoad";
+  return cls === "segment" || cls === "manifest";
 }
 
 /**

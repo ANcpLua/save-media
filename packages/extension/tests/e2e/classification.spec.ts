@@ -1,5 +1,7 @@
 import { test, expect, chromium, type BrowserContext, type Page } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +25,7 @@ interface Descriptor {
   protocol: string;
   container: string;
   pageUrl: string;
+  variants: Array<{ id: string; height: number | null; bitrate: number | null; audioRenditionId: string | null }>;
   drm: null | { reason: string };
   capabilities: { drmBlocked: boolean; directDownload: boolean };
 }
@@ -37,14 +40,18 @@ test.describe("extension classifies real fixture pages", () => {
   let context: BrowserContext | undefined;
   let extId: string | undefined;
   let probe: Page | undefined;
+  let downloadDir: string | undefined;
 
   test.beforeAll(async ({ browserName }) => {
     // The describe-level test.skip() skips individual tests but Playwright
     // still runs the hooks; guard the chromium launch so the firefox
     // project doesn't try to spawn a binary it never installed.
     if (browserName !== "chromium") return;
+    downloadDir = mkdtempSync(resolve(tmpdir(), "savemedia-downloads-"));
     context = await chromium.launchPersistentContext("", {
       headless: false,
+      acceptDownloads: true,
+      downloadsPath: downloadDir,
       args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
     });
     const sw = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 10_000 });
@@ -56,6 +63,7 @@ test.describe("extension classifies real fixture pages", () => {
   test.afterAll(async () => {
     await probe?.close();
     await context?.close();
+    if (downloadDir) rmSync(downloadDir, { recursive: true, force: true });
   });
 
   async function descriptorsForUrlContaining(marker: string): Promise<Descriptor[]> {
@@ -90,6 +98,88 @@ test.describe("extension classifies real fixture pages", () => {
     }
   }
 
+  async function openFixtureAndWait(scenario: string, predicate: (d: Descriptor[]) => boolean): Promise<Page> {
+    const marker = `/page/${scenario}.html`;
+    const page = await context!.newPage();
+    await page.bringToFront();
+    await page.goto(marker);
+    await page.waitForLoadState("networkidle");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (predicate(await descriptorsForUrlContaining(marker))) return page;
+      await page.waitForTimeout(250);
+    }
+    throw new Error(`${scenario} did not produce expected descriptors: ${JSON.stringify(await descriptorsForUrlContaining(marker))}`);
+  }
+
+  async function clearDownloadHistory(): Promise<void> {
+    await probe!.evaluate(async () => {
+      await chrome.downloads.erase({});
+    });
+  }
+
+  async function waitForCompletedDownload(page: Page, suffix: string): Promise<string> {
+    let lastItems: unknown[] = [];
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const result = await probe!.evaluate(async (s: string) => {
+        const items = await chrome.downloads.search({ orderBy: ["-startTime"], limit: 20 });
+        return {
+          items: items.map(item => ({
+            filename: item.filename,
+            state: item.state,
+            error: item.error,
+            url: item.url,
+            exists: item.exists,
+          })),
+          file: (
+            items.find(item => item.state === "complete" && item.filename.endsWith(s))
+            ?? items.find(item => item.state === "complete" && item.exists)
+          )?.filename ?? null,
+        };
+      }, suffix);
+      lastItems = result.items;
+      if (result.file && existsSync(result.file)) return result.file;
+      await page.waitForTimeout(500);
+    }
+    throw new Error(`no completed ${suffix} download visible in chrome.downloads; last items: ${JSON.stringify(lastItems)}`);
+  }
+
+  function expectPlayable(file: string, expectedFormat: RegExp): void {
+    const raw = execFileSync("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=format_name,duration",
+      "-of", "json",
+      file,
+    ], { encoding: "utf8" });
+    const parsed = JSON.parse(raw) as { format?: { format_name?: string; duration?: string } };
+    expect(parsed.format?.format_name ?? "").toMatch(expectedFormat);
+    expect(Number(parsed.format?.duration ?? 0)).toBeGreaterThan(0);
+  }
+
+  async function startDescriptorDownload(descriptor: Descriptor, filename: string): Promise<void> {
+    const variant = [...(descriptor.variants ?? [])].sort((a, b) => {
+      const height = (b.height ?? 0) - (a.height ?? 0);
+      if (height !== 0) return height;
+      return (b.bitrate ?? 0) - (a.bitrate ?? 0);
+    })[0];
+    await probe!.evaluate(async ({ streamId, name, variantId, audioRenditionId }) => {
+      await new Promise(resolve => chrome.runtime.sendMessage({
+        type: "download",
+        streamId,
+        choice: {
+          outputMode: "Original",
+          filename: name,
+          variantId,
+          audioRenditionId,
+        },
+      }, resolve));
+    }, {
+      streamId: descriptor.id,
+      name: filename,
+      variantId: variant?.id ?? null,
+      audioRenditionId: variant?.audioRenditionId ?? null,
+    });
+  }
+
   test("direct MP4 fixture produces a progressive-http descriptor with directDownload", async () => {
     const descriptors = await waitForDescriptors("direct", ds => ds.some(d => d.protocol === "progressive-http"));
     const direct = descriptors.find(d => d.protocol === "progressive-http");
@@ -105,7 +195,7 @@ test.describe("extension classifies real fixture pages", () => {
     expect(hls?.capabilities.drmBlocked).toBe(false);
   });
 
-  test("HLS fMP4 fixture ignores init/fragment .mp4 requests as standalone videos", async () => {
+  test("HLS fMP4 fixture ignores init/fragment requests as standalone videos", async () => {
     const descriptors = await waitForDescriptors("hls-fmp4", ds => ds.some(d => d.protocol === "hls"));
     const hls = descriptors.find(d => d.protocol === "hls");
     expect(hls, `got ${JSON.stringify(descriptors)}`).toBeDefined();
@@ -165,6 +255,62 @@ test.describe("extension classifies real fixture pages", () => {
       expect(response.ok).toBe(true);
       expect(response.urls.some(u => u.endsWith("/hls/master.m3u8"))).toBe(true);
       expect(response.urls.some(u => u.endsWith("/hls-fmp4/master.m3u8"))).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline saves direct MP4 as a playable MP4", async () => {
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("direct", ds => ds.some(d => d.protocol === "progressive-http"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/direct.html")).find(d => d.protocol === "progressive-http");
+      expect(descriptor).toBeDefined();
+      await startDescriptorDownload(descriptor!, "e2e-direct.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-direct.mp4");
+      expectPlayable(file, /mp4|mov/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline saves HLS MPEG-TS as a playable remuxed MP4", async () => {
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("hls", ds => ds.some(d => d.protocol === "hls"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/hls.html")).find(d => d.protocol === "hls");
+      expect(descriptor).toBeDefined();
+      await startDescriptorDownload(descriptor!, "e2e-hls.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-hls.mp4");
+      expectPlayable(file, /mp4|mov/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline saves HLS AES-128 with reachable key as a playable MP4", async () => {
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("hls-aes", ds => ds.some(d => d.protocol === "hls"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/hls-aes.html")).find(d => d.protocol === "hls");
+      expect(descriptor).toBeDefined();
+      await startDescriptorDownload(descriptor!, "e2e-hls-aes.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-hls-aes.mp4");
+      expectPlayable(file, /mp4|mov/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline saves DASH fMP4 as a playable MP4", async () => {
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("dash", ds => ds.some(d => d.protocol === "dash"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/dash.html")).find(d => d.protocol === "dash");
+      expect(descriptor).toBeDefined();
+      await startDescriptorDownload(descriptor!, "e2e-dash.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-dash.mp4");
+      expectPlayable(file, /mp4|mov/);
     } finally {
       await page.close();
     }

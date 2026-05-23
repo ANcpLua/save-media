@@ -2,8 +2,10 @@ import { RETRY_POLICY, computeBackoffMs, isRetryableStatus, type RetryClass } fr
 
 export interface RetryableHttpError {
   readonly url: string;
-  readonly status: number;
+  readonly status: number | "network-error";
   readonly attemptsRemaining: number;
+  readonly retryAfterSeconds: number | null;
+  readonly detail: string;
 }
 
 /**
@@ -20,7 +22,9 @@ export async function fetchWithRetry(
 ): Promise<Response> {
   const policy = RETRY_POLICY[cls];
   const maxAttempts = "maxAttempts" in policy ? policy.maxAttempts : 1;
-  let lastStatus = 0;
+  let lastStatus: number | "network-error" = "network-error";
+  let lastDetail = "network error";
+  let retryAfterSeconds: number | null = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
@@ -30,14 +34,18 @@ export async function fetchWithRetry(
       response = await fetch(url, { ...init, signal });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
+      lastStatus = "network-error";
+      lastDetail = err instanceof Error ? err.message : String(err);
       // Network error — fall through to the retry/exit branch below.
     }
 
     if (response) {
       if (response.ok) return response;
       lastStatus = response.status;
+      lastDetail = response.statusText || `HTTP ${response.status}`;
+      retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
       if (!isRetryableStatus(cls, response.status)) {
-        throw { url, status: response.status, attemptsRemaining: 0 } satisfies RetryableHttpError;
+        throw { url, status: response.status, attemptsRemaining: 0, retryAfterSeconds, detail: lastDetail } satisfies RetryableHttpError;
       }
     }
 
@@ -47,7 +55,16 @@ export async function fetchWithRetry(
     await sleep(backoff, signal);
   }
 
-  throw { url, status: lastStatus, attemptsRemaining: 0 } satisfies RetryableHttpError;
+  throw { url, status: lastStatus, attemptsRemaining: 0, retryAfterSeconds, detail: lastDetail } satisfies RetryableHttpError;
+}
+
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  const dateMs = Date.parse(value);
+  if (!Number.isFinite(dateMs)) return null;
+  return Math.max(0, Math.ceil((dateMs - Date.now()) / 1000));
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
