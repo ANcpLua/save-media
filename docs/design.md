@@ -315,14 +315,14 @@ Card greyed with `⚠ Source below minimum quality` label. "Download anyway at N
 
 ### 8.5 Settings (separate full-tab page, ~720 px wide)
 
-Sections: Downloads (subfolder under browser Downloads dir, conflict policy, min-quality toggle), Engine (Mediabunny locked primary, transcode strategy toggle between bundled ffmpeg.wasm lite or native ffmpeg via host, worker memory cap), Native host (status, dependency check, reinstall, last-handshake timestamp), Privacy (telemetry off-by-default, debug URL logging toggle), Diagnostics (job log viewer, host log viewer, version).
+Sections: Downloads (subfolder under browser Downloads dir, conflict policy, min-quality toggle), Engine (Mediabunny locked primary, browser-only remux limits, worker memory cap), Privacy (telemetry off-by-default, diagnostic URL logging toggle), Diagnostics (job log viewer, version).
 
 ## 9. Testing strategy
 
 | Tier | Tool | Speed | When |
 |---|---|---|---|
 | Unit | Vitest (Node) | ~2 s | Every save |
-| Integration | Vitest + Express mock server | ~30 s | Pre-commit |
+| Integration | Vitest + fixture server | ~30 s | Pre-commit |
 | E2E | Playwright (real Chrome + Firefox) | ~5 min | Pre-PR + CI |
 | Native host | pytest | ~5 s | Pre-commit |
 

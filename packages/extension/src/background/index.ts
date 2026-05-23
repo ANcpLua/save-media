@@ -3,7 +3,7 @@
 // at module-load with `ReferenceError: window is not defined`.
 import "../sw-globals-polyfill";
 
-import { classify, type StreamDescriptor } from "@savemedia/core";
+import { classify } from "@savemedia/core";
 import type {
   BridgeToBackgroundMessage,
   PopupToBackgroundMessage,
@@ -113,25 +113,6 @@ function updateBadge(tabId: number): void {
     chrome.action.setBadgeBackgroundColor({ tabId, color: "#2563eb" }).catch(() => undefined);
   }
 }
-
-/**
- * Test-only accessor for router state. The service worker can't message
- * itself (chrome.runtime.sendMessage from the SW isn't delivered to its
- * own onMessage listener), so the e2e suite reads this directly via
- * Playwright's serviceworker.evaluate channel. Plain in-memory state on
- * the global — zero overhead, no message round-trip.
- */
-(globalThis as unknown as { __savemediaDebug: { listDescriptorsForUrl: (urlPart: string) => unknown } }).__savemediaDebug = {
-  listDescriptorsForUrl(urlPart: string): unknown {
-    const out: Array<{ tabId: number; descriptors: readonly StreamDescriptor[] }> = [];
-    for (const [tabId, state] of router.tabs.entries()) {
-      const descriptors = Array.from(state.descriptors.values());
-      if (descriptors.some(d => d.pageUrl.includes(urlPart) || d.source.kind !== "media-element"))
-        out.push({ tabId, descriptors });
-    }
-    return out;
-  },
-};
 
 chrome.runtime.onMessage.addListener((
   msg: BridgeToBackgroundMessage | PopupToBackgroundMessage | EngineToBackgroundMessage,

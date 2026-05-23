@@ -13,8 +13,8 @@
  * `TypeError: import() is disallowed on ServiceWorkerGlobalScope`.
  *
  * Static imports + the `__BROWSER__` define let vite tree-shake the
- * unused branch at build time, so the chromium bundle never includes
- * the firefox stub and vice versa.
+ * unused branch at build time, so each browser bundle contains only its
+ * own engine-host implementation.
  */
 
 import * as chromium from "./chromium";

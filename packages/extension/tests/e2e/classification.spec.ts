@@ -1,4 +1,4 @@
-import { test, expect, chromium, type BrowserContext, type Worker as PlaywrightWorker } from "@playwright/test";
+import { test, expect, chromium, type BrowserContext, type Page } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,14 +12,10 @@ const hasExtension = existsSync(dist) && existsSync(resolve(dist, "background.js
  * persistent context, visit each fixture page, and verify the background
  * service worker classified the captured media correctly.
  *
- * **Reading SW state from tests.** `chrome.runtime.sendMessage` called
- * from the SW itself is NOT delivered back to its own onMessage listener
- * (Chrome explicitly excludes that path with "Could not establish
- * connection"). So the test reads via two channels:
- *   1. ServiceWorker.evaluate → globalThis.__savemediaDebug, which the
- *      SW exposes as a direct accessor over its in-memory router state.
- *   2. The popup page, which can roundtrip chrome.runtime.sendMessage
- *      normally because it's a different extension context.
+ * **Reading extension state from tests.** The fixture pages are ordinary
+ * web pages, so they cannot call chrome.runtime. The test opens the real
+ * popup HTML and asks the background service worker through the same
+ * chrome.runtime message path the popup uses in production.
  */
 
 interface Descriptor {
@@ -31,8 +27,6 @@ interface Descriptor {
   capabilities: { drmBlocked: boolean; directDownload: boolean };
 }
 
-interface TabBucket { tabId: number; descriptors: Descriptor[] }
-
 test.describe("extension classifies real fixture pages", () => {
   test.skip(!hasExtension, "dist-chrome/ not built; run `pnpm --filter @savemedia/extension build:chrome`");
   // Both describes drive an unpacked Chromium extension via the chromium
@@ -41,7 +35,8 @@ test.describe("extension classifies real fixture pages", () => {
   test.skip(({ browserName }) => browserName !== "chromium", "chromium-only suite");
 
   let context: BrowserContext | undefined;
-  let sw: PlaywrightWorker | undefined;
+  let extId: string | undefined;
+  let probe: Page | undefined;
 
   test.beforeAll(async ({ browserName }) => {
     // The describe-level test.skip() skips individual tests but Playwright
@@ -52,19 +47,30 @@ test.describe("extension classifies real fixture pages", () => {
       headless: false,
       args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
     });
-    sw = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 10_000 });
+    const sw = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 10_000 });
+    extId = new URL(sw.url()).host;
+    probe = await context.newPage();
+    await probe.goto(`chrome-extension://${extId}/src/popup/index.html`);
   });
 
   test.afterAll(async () => {
+    await probe?.close();
     await context?.close();
   });
 
   async function descriptorsForUrlContaining(marker: string): Promise<Descriptor[]> {
-    const buckets = (await sw!.evaluate((m: string) => {
-      const dbg = (globalThis as unknown as { __savemediaDebug?: { listDescriptorsForUrl: (s: string) => unknown } }).__savemediaDebug;
-      return dbg?.listDescriptorsForUrl(m) ?? [];
-    }, marker)) as TabBucket[];
-    return buckets.flatMap(b => b.descriptors);
+    return await probe!.evaluate(async (m: string) => {
+      const tabs = await chrome.tabs.query({});
+      const matches = tabs.filter(t => t.id && t.url?.includes(m));
+      const descriptors: Descriptor[] = [];
+      for (const tab of matches) {
+        const response = await new Promise<{ descriptors?: Descriptor[] } | undefined>(resolve =>
+          chrome.runtime.sendMessage({ type: "list", tabId: tab.id }, resolve),
+        );
+        descriptors.push(...(response?.descriptors ?? []));
+      }
+      return descriptors;
+    }, marker);
   }
 
   async function waitForDescriptors(scenario: string, predicate: (d: Descriptor[]) => boolean): Promise<Descriptor[]> {
@@ -142,14 +148,11 @@ test.describe("extension classifies real fixture pages", () => {
 
   test("content bridge discovers embedded HLS URLs before playback starts", async () => {
     const page = await context!.newPage();
-    const extId = new URL(sw!.url()).host;
-    const popup = await context!.newPage();
     try {
       await page.goto("/page/embedded-hls.html");
       await page.waitForLoadState("networkidle");
-      await popup.goto(`chrome-extension://${extId}/src/popup/index.html`);
 
-      const response = await popup.evaluate(async () => {
+      const response = await probe!.evaluate(async () => {
         const tabs = await chrome.tabs.query({});
         const fixture = tabs.find(t => t.url?.includes("/page/embedded-hls.html"));
         if (!fixture?.id) return { ok: false, urls: [] as string[] };
@@ -163,7 +166,6 @@ test.describe("extension classifies real fixture pages", () => {
       expect(response.urls.some(u => u.endsWith("/hls/master.m3u8"))).toBe(true);
       expect(response.urls.some(u => u.endsWith("/hls-fmp4/master.m3u8"))).toBe(true);
     } finally {
-      await popup.close();
       await page.close();
     }
   });
@@ -196,14 +198,6 @@ test.describe("popup HTML round-trips chrome.runtime messaging", () => {
     await fixturePage.goto("/page/direct.html");
     await fixturePage.waitForLoadState("networkidle");
     await fixturePage.waitForTimeout(800);
-
-    const fixtureTabId = await fixturePage.evaluate(async () => {
-      // The popup queries by tabId of the active tab; we surface the
-      // current tab's id from chrome via the fixture page's own scripting
-      // permission would be needed — instead we read it from the SW.
-      return null;
-    });
-    expect(fixtureTabId).toBeNull(); // sanity (we don't have tabs perm in the page)
 
     const popup = await context!.newPage();
     try {
