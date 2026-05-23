@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { StreamDescriptor, OutputMode, JobError } from "@savemedia/core";
+import type { StreamDescriptor, JobError } from "@savemedia/core";
 import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
 import type { PopupToBackgroundMessage } from "../../types/messages";
 import { suggestFilename } from "../../util/filename";
@@ -18,11 +18,8 @@ interface Props {
   readonly onCancel?: ((streamId: StreamDescriptor["id"]) => void) | undefined;
 }
 
-const OUTPUT_MODES: readonly OutputMode[] = ["Original", "MP4 Compatible", "Best Quality", "Small File", "Manual"];
-
 export function DetectedItem({ descriptor, status, onCancel }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const [mode, setMode] = useState<OutputMode>("Original");
 
   const visibleVariants = (descriptor.variants ?? []).filter(v => (v.height ?? 0) >= 720);
   const allBelowMin = descriptor.variants.length > 0 && visibleVariants.length === 0;
@@ -39,7 +36,7 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
       type: "download",
       streamId: descriptor.id,
       choice: {
-        outputMode: mode,
+        outputMode: "Original",
         filename: suggestFilename(descriptor),
         variantId: variant?.id ?? null,
         audioRenditionId: null,
@@ -66,7 +63,7 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
         </div>
         <p className="text-neutral-500 leading-relaxed">
           {isDeferred
-            ? "ClearKey decryption deferred to v2."
+            ? "ClearKey / CENC decryption is not implemented."
             : "DRM-protected media. savemedia cannot decrypt this stream."}
         </p>
         <p className="text-neutral-600 mt-1">Reason: <code>{descriptor.drm?.reason}</code></p>
@@ -135,15 +132,6 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
       )}
 
       <div className="mt-2 ml-5 flex items-center gap-2">
-        <select
-          value={mode}
-          onChange={e => setMode(e.target.value as OutputMode)}
-          className="bg-neutral-800 border border-neutral-700 rounded px-1.5 py-1 text-xs"
-          aria-label="Output mode"
-          disabled={status?.phase === "active"}
-        >
-          {OUTPUT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
         {status?.phase === "active" ? (
           <button
             onClick={cancel}
@@ -168,7 +156,7 @@ function outputActionLabel(d: StreamDescriptor): string {
   if (d.capabilities.directDownload) return "direct";
   if (d.protocol === "hls") return "hls";
   if (d.protocol === "dash") return "dash";
-  return "remux";
+  return "unsupported";
 }
 
 function formatBytes(n: number): string {

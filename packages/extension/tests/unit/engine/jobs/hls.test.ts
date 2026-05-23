@@ -13,7 +13,6 @@ function plainPlan(): HlsPlainPlan {
     outputFilename: "out.mp4",
     variantId: "v-1080" as VariantId,
     estimatedBytes: null,
-    useNativeSink: false,
   };
 }
 
@@ -25,7 +24,6 @@ function aesPlan(keyUri = "https://x/key.bin"): HlsAesPlan {
     outputFilename: "out.mp4",
     variantId: "v-1080" as VariantId,
     estimatedBytes: null,
-    useNativeSink: false,
     keyUri,
     encryption: { method: "AES-128", keyUri, iv: null },
   };

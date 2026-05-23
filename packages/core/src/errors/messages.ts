@@ -2,7 +2,7 @@ import type { JobError } from "./taxonomy";
 
 export type ActionKind =
   | "retry-job" | "retry-from-now" | "override-min-quality"
-  | "open-settings" | "escalate-to-native" | "open-installer" | "open-docs";
+  | "open-settings" | "open-docs";
 
 export interface UserMessage {
   readonly title: string;
@@ -36,8 +36,8 @@ export function userMessage(err: JobError): UserMessage {
 
     case "clearkey_deferred":
       return {
-        title: "ClearKey decryption deferred to v2",
-        body: "This stream uses ClearKey / CENC sample-encryption. Full decryption support is deferred to v2. The decryption keys are technically accessible, but savemedia v1 does not implement the per-sample AES-CTR decryptor needed to read ClearKey streams.",
+        title: "ClearKey / CENC decryption is not implemented",
+        body: "This stream uses ClearKey / CENC sample-encryption. The keys may be visible to the browser, but savemedia does not implement the per-sample AES-CTR decryptor needed to save this stream.",
         action: null,
       };
 
@@ -69,13 +69,6 @@ export function userMessage(err: JobError): UserMessage {
         action: null,
       };
 
-    case "missing_audio_track":
-      return {
-        title: "No audio track in source",
-        body: `Output mode ${err.requiredFor} requires an audio track, but none is declared in the ${err.declaredIn}.`,
-        action: null,
-      };
-
     case "no_variant_meets_minimum":
       return {
         title: "Source quality is below 720p",
@@ -86,21 +79,28 @@ export function userMessage(err: JobError): UserMessage {
     case "unsupported_codec":
       return {
         title: "Codec not supported in selected output",
-        body: `${err.codec.rfc6381 ?? err.codec.family} cannot be ${err.where === "source" ? "decoded" : "produced"} by the current engine. Choose a different output format, or use the native host for transcoding (Settings → Native ffmpeg).`,
+        body: `${err.codec.rfc6381 ?? err.codec.family} cannot be ${err.where === "source" ? "decoded" : "produced"} by the current in-browser engine. Choose Original if the browser can save the source container directly.`,
         action: { label: "Open Settings", kind: "open-settings" },
       };
 
     case "no_remux_path":
       return {
         title: "Can't remux to chosen container",
-        body: `Cannot remux from ${err.from} to ${err.to}: ${err.reason}. A transcode will be needed.`,
-        action: { label: "Open Settings", kind: "open-settings" },
+        body: `Cannot remux from ${err.from} to ${err.to}: ${err.reason}. savemedia will not write a misleading file with the wrong extension.`,
+        action: null,
       };
 
-    case "no_transcode_path":
+    case "unsupported_output":
       return {
-        title: "Transcoding not possible",
-        body: `Cannot transcode from ${err.from} to ${err.to}: ${err.reason}`,
+        title: "That conversion is not implemented",
+        body: `This source is ${err.from}, but the selected output is ${err.to}. Only direct saves and tested stream remux paths are enabled; choose Original when available.`,
+        action: null,
+      };
+
+    case "output_too_large_for_browser":
+      return {
+        title: "File is too large for the in-browser saver",
+        body: `Estimated output is ${formatBytes(err.estimatedBytes)}, above the ${formatBytes(err.limitBytes)} browser Blob limit used by this extension. The download was stopped before risking a corrupt partial file.`,
         action: null,
       };
 
@@ -113,8 +113,8 @@ export function userMessage(err: JobError): UserMessage {
 
     case "segment_budget_exhausted":
       return {
-        title: "Too many segment failures",
-        body: `${err.failedSegments.length} of ${err.totalSegments} segments failed after retries. The partial file has been deleted.`,
+        title: "A required segment could not be downloaded",
+        body: `${err.failedSegments.length} of ${err.totalSegments} required segments failed after retries. The partial file has been deleted instead of saving a broken video.`,
         action: { label: "Retry full download", kind: "retry-job" },
       };
 
@@ -123,6 +123,36 @@ export function userMessage(err: JobError): UserMessage {
         title: "Live manifest refresh failed",
         body: `Could not refresh the live playlist at ${err.url} (HTTP ${err.httpStatus}). ${err.attemptsRemaining} retries remaining.`,
         action: null,
+      };
+
+    case "rate_limited":
+      return {
+        title: "Server rate-limited the download",
+        body: err.retryAfterSeconds
+          ? `The server returned HTTP 429 during ${err.phase} download and asked to retry after ${err.retryAfterSeconds}s. Wait a bit, then retry.`
+          : `The server returned HTTP 429 during ${err.phase} download. Wait a bit, then retry.`,
+        action: { label: "Retry full download", kind: "retry-job" },
+      };
+
+    case "server_busy":
+      return {
+        title: "Server is busy or unstable",
+        body: `The server returned HTTP ${err.httpStatus} during ${err.phase} download after retries. This is not DRM; retry later or try a lower-quality variant if one exists.`,
+        action: { label: "Retry full download", kind: "retry-job" },
+      };
+
+    case "access_denied":
+      return {
+        title: "The site denied access",
+        body: accessDeniedBody(err.httpStatus, err.explanation),
+        action: null,
+      };
+
+    case "network_unreachable":
+      return {
+        title: "Network request failed",
+        body: `The browser could not fetch the ${err.phase} URL. This can be network loss, an expired signed URL, or a browser/security restriction. Detail: ${err.detail}`,
+        action: { label: "Retry full download", kind: "retry-job" },
       };
 
     case "cors_blocked":
@@ -149,66 +179,24 @@ export function userMessage(err: JobError): UserMessage {
         action: { label: "Retry full download", kind: "retry-job" },
       };
 
-    case "mediabunny_demux_failed":
+    case "engine_job_failed":
       return {
-        title: "Stream couldn't be demuxed",
-        body: `The remux engine failed at the ${err.at} stage: ${err.detail}. Try yt-dlp via the native host.`,
-        action: { label: "Try with native host", kind: "escalate-to-native" },
-      };
-
-    case "ffmpeg_wasm_load_failed":
-      return {
-        title: "Transcoder couldn't load",
-        body: `ffmpeg.wasm core failed to load (${err.bytesDownloaded}/${err.totalBytes} bytes). Retrying.`,
+        title: "Download engine failed",
+        body: `The browser-side download engine failed at the ${err.at} stage: ${err.detail}. The partial file was discarded.`,
         action: null,
-      };
-
-    case "ffmpeg_transcode_failed":
-      return {
-        title: "Transcode failed",
-        body: `ffmpeg returned an error. Last log line: ${err.ffmpegStderrTail}`,
-        action: { label: "Try with native host", kind: "escalate-to-native" },
       };
 
     case "engine_oom":
       return {
         title: "Out of memory",
-        body: `The download engine exceeded its ${err.budgetMb} MB budget while processing this stream. Try a lower quality variant, or use the native host fallback (Settings → Use yt-dlp).`,
-        action: { label: "Try with native host", kind: "escalate-to-native" },
-      };
-
-    case "native_host_not_registered":
-      return {
-        title: "Native host not installed",
-        body: `The optional native host is not registered. ${err.hint} Most streams work without it, but heavy-duty sites need it.`,
-        action: { label: "Open installer", kind: "open-installer" },
-      };
-
-    case "native_host_dependency":
-      return {
-        title: `Missing dependency: ${err.missing}`,
-        body: `The native host requires ${err.missing}. ${err.installHint}`,
-        action: { label: "Open install instructions", kind: "open-docs" },
-      };
-
-    case "native_host_timeout":
-      return {
-        title: "Native host timed out",
-        body: `Phase '${err.phase}' did not respond within ${err.timeoutSeconds}s. ${err.attemptsRemaining} retries remaining.`,
+        body: `The download engine exceeded its ${err.budgetMb} MB budget while processing this stream. Try a lower quality variant.`,
         action: null,
       };
 
-    case "native_host_protocol":
+    case "browser_download_failed":
       return {
-        title: "Native host protocol error",
-        body: `The native host sent an invalid message: ${err.detail}`,
-        action: null,
-      };
-
-    case "native_sink_io_error":
-      return {
-        title: "Disk write failed",
-        body: `Writing to ${err.path} failed: ${err.errno}. Check disk space and permissions.`,
+        title: "Browser download failed",
+        body: `The browser refused or interrupted saving ${err.filename}: ${err.reason}. Check disk space, Downloads permissions, and browser download settings.`,
         action: null,
       };
 
@@ -219,4 +207,14 @@ export function userMessage(err: JobError): UserMessage {
         action: null,
       };
   }
+}
+
+function accessDeniedBody(status: 401 | 402 | 403, explanation: string): string {
+  if (status === 402 || explanation === "payment-or-entitlement") {
+    return "The server requires an account, entitlement, purchase, or other access token for this URL. This is access control, not automatically DRM; savemedia cannot invent credentials it does not have.";
+  }
+  if (explanation === "login-or-cookie") {
+    return "The server requires a logged-in session or cookie that was not accepted for this request. Open the video page while logged in, then retry.";
+  }
+  return "The server returned forbidden/expired access. This can be an expired signed URL, geo/account restriction, or site-side block. It is not treated as DRM unless an actual DRM signal is detected.";
 }

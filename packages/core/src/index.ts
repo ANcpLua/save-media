@@ -10,7 +10,7 @@ export type {
 } from "./types/codec";
 export type {
   JobPlan, JobStep, DirectPlan, HlsPlainPlan, HlsAesPlan, DashPlan,
-  RemuxPlan, TranscodePlan, OutputMode, UserChoice, DispatchRefusal,
+  OutputMode, UserChoice, DispatchRefusal, DispatchRefusalReason,
   VerifyCheckKind, KeyHandle,
 } from "./types/job";
 export type { JobError, JobErrorCode, JobErrorSeverity } from "./errors/taxonomy";
@@ -20,7 +20,7 @@ export type { ClassifyInput } from "./classifier/classify";
 export type { RetryClass } from "./coordinator/retry";
 
 export { classify } from "./classifier/classify";
-export { dispatch } from "./engine/dispatch";
+export { dispatch, BROWSER_OUTPUT_LIMIT_BYTES } from "./engine/dispatch";
 export { verify } from "./engine/verify";
 export { userMessage } from "./errors/messages";
 export { isTerminal, isRecoverable } from "./errors/taxonomy";

@@ -63,8 +63,9 @@ function pickAudioPlaylist(
 
 function toTrack(playlist: ParsedPlaylist | null): DashTrack | null {
   if (!playlist) return null;
-  const initUrl = playlist.segments?.[0]?.map?.uri ?? "";
-  const mediaUrls = (playlist.segments ?? []).map(s => s.uri);
+  const firstMap = playlist.segments?.[0]?.map;
+  const initUrl = firstMap?.resolvedUri ?? firstMap?.uri ?? "";
+  const mediaUrls = (playlist.segments ?? []).map(s => s.resolvedUri ?? s.uri);
   if (!initUrl || mediaUrls.length === 0) return null;
   return { initUrl, mediaUrls };
 }

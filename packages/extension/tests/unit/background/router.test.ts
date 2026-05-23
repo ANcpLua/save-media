@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createRouter, drmRefusalToError } from "../../../src/background/router";
+import { createRouter, dispatchRefusalToError } from "../../../src/background/router";
 import { directDescriptor, hlsDescriptor, drmDescriptor, clearKeyDescriptor } from "../popup/helpers/descriptors";
 import type { UserChoice, StreamDescriptor, StreamId, VariantId } from "@savemedia/core";
 
@@ -139,13 +139,13 @@ describe("router — startDownload routing", () => {
     expect(err?.code).toBe("manifest_404");
   });
 
-  it("translates chrome.downloads errors into native_sink_io_error", async () => {
+  it("translates chrome.downloads errors into browser_download_failed", async () => {
     const d = deps();
     d.downloads.download.mockRejectedValueOnce(new Error("ENOSPC"));
     const r = createRouter(d);
     r.addDescriptor(1, directDescriptor());
     const err = await r.startDownload(directDescriptor().id, choice());
-    expect(err?.code).toBe("native_sink_io_error");
+    expect(err?.code).toBe("browser_download_failed");
   });
 });
 
@@ -270,7 +270,7 @@ describe("router — engine message handling", () => {
     expect(r.jobs.size).toBe(0);
   });
 
-  it("on complete: a download failure becomes job-failed with native_sink_io_error (no false success)", async () => {
+  it("on complete: a download failure becomes job-failed with browser_download_failed (no false success)", async () => {
     const d = deps();
     d.downloads.download.mockRejectedValueOnce(new Error("ENOSPC: disk full"));
     const r = createRouter(d);
@@ -288,12 +288,13 @@ describe("router — engine message handling", () => {
     });
     expect(out?.type).toBe("job-failed");
     if (out?.type === "job-failed") {
-      expect(out.error.code).toBe("native_sink_io_error");
+      expect(out.error.code).toBe("browser_download_failed");
     }
   });
 
-  it("on complete: a file:// blobUrl (native sink wrote the file directly) skips chrome.downloads", async () => {
+  it("on complete: a file:// blobUrl is still handed to chrome.downloads and can fail honestly", async () => {
     const d = deps();
+    d.downloads.download.mockRejectedValueOnce(new Error("Cannot download file:// URL"));
     const r = createRouter(d);
     r.jobs.set(directDescriptor().id, {
       descriptor: directDescriptor(),
@@ -307,8 +308,8 @@ describe("router — engine message handling", () => {
       filename: "out.mp4",
       checksum: "abc",
     });
-    expect(out?.type).toBe("job-complete");
-    expect(d.downloads.download).not.toHaveBeenCalled();
+    expect(out?.type).toBe("job-failed");
+    expect(d.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: "file:///Users/x/Downloads/out.mp4" }));
   });
 
   it("on failed: removes the job + emits job-failed", async () => {
@@ -357,19 +358,24 @@ describe("router — popup message dispatch", () => {
   });
 });
 
-describe("drmRefusalToError", () => {
+describe("dispatchRefusalToError", () => {
   it("populates encrypted_media_detected with detectedVia from the descriptor", () => {
     const d = drmDescriptor("encrypted_media_detected");
-    const err = drmRefusalToError("encrypted_media_detected", d);
+    const err = dispatchRefusalToError("encrypted_media_detected", d);
     if (err.code !== "encrypted_media_detected") throw new Error("wrong code");
     expect(err.detectedVia).toContain("dash-content-protection");
   });
 
   it("falls back to 'unknown' keySystem when descriptor lacks it", () => {
     const d = { ...drmDescriptor("cdm_required"), drm: null };
-    const err = drmRefusalToError("cdm_required", d);
+    const err = dispatchRefusalToError("cdm_required", d);
     if (err.code !== "cdm_required") throw new Error("wrong code");
     expect(err.keySystem).toBe("unknown");
+  });
+
+  it("maps unsupported output to an honest non-DRM error", () => {
+    const err = dispatchRefusalToError("unsupported_output", directDescriptor({ container: "mkv" }));
+    expect(err).toMatchObject({ code: "unsupported_output", from: "mkv" });
   });
 });
 

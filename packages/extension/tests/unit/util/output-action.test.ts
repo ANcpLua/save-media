@@ -19,7 +19,6 @@ describe("outputActionFromPlan", () => {
       outputFilename: "clip.mp4",
       variantId: varId,
       estimatedBytes: null,
-      useNativeSink: false,
     };
     expect(outputActionFromPlan(p)).toBe("hls-plain");
   });
@@ -32,7 +31,6 @@ describe("outputActionFromPlan", () => {
       outputFilename: "clip.mp4",
       variantId: varId,
       estimatedBytes: null,
-      useNativeSink: false,
       keyUri: "https://x/key",
       encryption: { method: "AES-128", keyUri: "https://x/key", iv: null },
     };
@@ -48,21 +46,8 @@ describe("outputActionFromPlan", () => {
       variantId: varId,
       audioRenditionId: null,
       estimatedBytes: null,
-      useNativeSink: false,
     };
     expect(outputActionFromPlan(p)).toBe("dash");
-  });
-
-  it("maps remux plan to remux", () => {
-    const p: JobPlan = {
-      kind: "remux",
-      steps: [],
-      fromContainer: "mkv",
-      outputContainer: baseMp4,
-      outputFilename: "clip.mp4",
-      estimatedBytes: null,
-    };
-    expect(outputActionFromPlan(p)).toBe("remux");
   });
 
   it("maps refusal to refused", () => {

@@ -18,7 +18,6 @@ describe("StreamDescriptor", () => {
       capabilities: {
         directDownload: true,
         remuxableTo: ["mp4"],
-        transcodeableTo: ["mp4", "webm"],
         drmBlocked: false,
       },
       confidence: { container: "guessed", codecs: "guessed", protocol: "guessed" },

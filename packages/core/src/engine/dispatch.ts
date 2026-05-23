@@ -8,26 +8,15 @@ import type {
   JobStep,
   UserChoice,
   DispatchRefusal,
-  OutputMode,
   DirectPlan,
   HlsPlainPlan,
   HlsAesPlan,
   DashPlan,
-  RemuxPlan,
-  TranscodePlan,
 } from "../types/job";
 import type { Variant, HlsEncryption } from "../types/codec";
 import { interpretHlsEncryption } from "../parser/hls/encryption";
 
-const NATIVE_SINK_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
-
-const OUTPUT_CONTAINER_FOR_MODE: Record<OutputMode, OutputContainer | null> = {
-  "Original": null,
-  "MP4 Compatible": "mp4",
-  "Best Quality": "mp4",
-  "Small File": "mp4",
-  "Manual": null,
-};
+export const BROWSER_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024; // Blob URLs become unreliable above this.
 
 function asOutputContainer(c: Container): OutputContainer {
   if (c === "mp4" || c === "webm" || c === "mkv") return c;
@@ -54,13 +43,12 @@ function estimateSize(variant: Variant | null): number | null {
   return null;
 }
 
-function useNativeSinkFor(estimated: number | null): boolean {
-  return estimated != null && estimated >= NATIVE_SINK_THRESHOLD_BYTES;
+function tooLargeForBrowser(estimated: number | null): boolean {
+  return estimated != null && estimated >= BROWSER_OUTPUT_LIMIT_BYTES;
 }
 
 function resolveOutputContainer(descriptor: StreamDescriptor, choice: UserChoice): OutputContainer {
-  const requested = OUTPUT_CONTAINER_FOR_MODE[choice.outputMode];
-  if (requested) return requested;
+  void choice;
   return asOutputContainer(descriptor.container);
 }
 
@@ -92,9 +80,9 @@ function buildHlsPlainPlan(
   const estimatedBytes = estimateSize(variant);
   const steps: JobStep[] = [
     { op: "fetch-init-segment", url: "" },
-    { op: "remux", engine: "mediabunny", toContainer: outputContainer },
+    { op: "remux", toContainer: outputContainer },
     { op: "verify", checks: ["segment-count", "container-validity"] },
-    { op: "finalize", sink: useNativeSinkFor(estimatedBytes) ? "native-streaming-sink" : "downloads" },
+    { op: "finalize", sink: "downloads" },
   ];
   return {
     kind: "hls-plain",
@@ -103,7 +91,6 @@ function buildHlsPlainPlan(
     outputFilename: choice.filename,
     variantId: variant.id,
     estimatedBytes,
-    useNativeSink: useNativeSinkFor(estimatedBytes),
   };
 }
 
@@ -118,9 +105,9 @@ function buildHlsAesPlan(
   const steps: JobStep[] = [
     { op: "fetch-key", url: encryption.keyUri },
     { op: "decrypt-aes-128", segmentIndex: 0, keyHandle: encryption.keyUri as unknown as Parameters<(k: import("../types/job").KeyHandle) => void>[0] },
-    { op: "remux", engine: "mediabunny", toContainer: outputContainer },
+    { op: "remux", toContainer: outputContainer },
     { op: "verify", checks: ["segment-count", "container-validity"] },
-    { op: "finalize", sink: useNativeSinkFor(estimatedBytes) ? "native-streaming-sink" : "downloads" },
+    { op: "finalize", sink: "downloads" },
   ];
   return {
     kind: "hls-aes",
@@ -129,7 +116,6 @@ function buildHlsAesPlan(
     outputFilename: choice.filename,
     variantId: variant.id,
     estimatedBytes,
-    useNativeSink: useNativeSinkFor(estimatedBytes),
     keyUri: encryption.keyUri,
     encryption,
   };
@@ -144,9 +130,9 @@ function buildDashPlan(
   const estimatedBytes = estimateSize(variant);
   const steps: JobStep[] = [
     { op: "fetch-init-segment", url: "" },
-    { op: "remux", engine: "mediabunny", toContainer: outputContainer },
+    { op: "remux", toContainer: outputContainer },
     { op: "verify", checks: ["segment-count", "container-validity"] },
-    { op: "finalize", sink: useNativeSinkFor(estimatedBytes) ? "native-streaming-sink" : "downloads" },
+    { op: "finalize", sink: "downloads" },
   ];
   return {
     kind: "dash",
@@ -156,61 +142,6 @@ function buildDashPlan(
     variantId: variant.id,
     audioRenditionId: choice.audioRenditionId,
     estimatedBytes,
-    useNativeSink: useNativeSinkFor(estimatedBytes),
-  };
-}
-
-function buildRemuxPlan(
-  descriptor: StreamDescriptor,
-  choice: UserChoice,
-  outputContainer: OutputContainer,
-): RemuxPlan {
-  const steps: JobStep[] = [
-    { op: "remux", engine: "mediabunny", toContainer: outputContainer },
-    { op: "verify", checks: ["container-validity"] },
-    { op: "finalize", sink: "downloads" },
-  ];
-  return {
-    kind: "remux",
-    steps,
-    fromContainer: asOutputContainer(descriptor.container),
-    outputContainer,
-    outputFilename: choice.filename,
-    estimatedBytes: null,
-  };
-}
-
-function buildTranscodePlan(
-  descriptor: StreamDescriptor,
-  choice: UserChoice,
-  outputContainer: OutputContainer,
-): TranscodePlan {
-  // Pick a target H.264 baseline for MP4 Compatible / Small File.
-  const fromVideoCodec = descriptor.codecs.video ?? {
-    rfc6381: "unknown",
-    family: "unknown",
-    profile: null,
-    level: null,
-  };
-  const toVideoCodec = {
-    rfc6381: "avc1.42E01E",
-    family: "h264" as const,
-    profile: "Baseline",
-    level: "3.0",
-  };
-  const steps: JobStep[] = [
-    { op: "transcode", engine: "ffmpeg-wasm", from: fromVideoCodec, to: toVideoCodec },
-    { op: "verify", checks: ["container-validity"] },
-    { op: "finalize", sink: "downloads" },
-  ];
-  return {
-    kind: "transcode",
-    steps,
-    outputContainer,
-    outputFilename: choice.filename,
-    fromVideoCodec,
-    toVideoCodec,
-    engine: "ffmpeg-wasm",
   };
 }
 
@@ -236,7 +167,10 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
   if (descriptor.protocol === "hls") {
     const variant = pickVariant(descriptor, choice);
     if (!variant) {
-      return { kind: "refuse", reason: "clear_segments_unavailable" };
+      return { kind: "refuse", reason: "no_usable_variant" };
+    }
+    if (tooLargeForBrowser(estimateSize(variant))) {
+      return { kind: "refuse", reason: "output_too_large_for_browser" };
     }
     const enc = hlsEncryptionFor(descriptor);
     if (enc.kind === "drm-blocked") {
@@ -251,35 +185,30 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
   if (descriptor.protocol === "dash") {
     const variant = pickVariant(descriptor, choice);
     if (!variant) {
-      return { kind: "refuse", reason: "clear_segments_unavailable" };
+      return { kind: "refuse", reason: "no_usable_variant" };
+    }
+    if (tooLargeForBrowser(estimateSize(variant))) {
+      return { kind: "refuse", reason: "output_too_large_for_browser" };
     }
     return buildDashPlan(descriptor, choice, variant, outputContainer);
   }
 
   // Progressive: pick direct if Original (or the requested output already
-  // matches the on-the-wire container), else remux/transcode based on
-  // container/codec compatibility with the requested output container.
+  // matches the on-the-wire container). Browser-only conversion of
+  // arbitrary progressive files is intentionally disabled until covered
+  // by real golden-media tests.
   if (descriptor.protocol === "progressive-http") {
     const direct = buildDirectPlan(descriptor, choice);
-    const sourceMatchesOutput =
-      (descriptor.container === "mp4" || descriptor.container === "webm" || descriptor.container === "mkv") &&
-      descriptor.container === outputContainer;
-    if (direct && (choice.outputMode === "Original" || sourceMatchesOutput)) {
+    if (direct && descriptor.capabilities.directDownload) {
       return direct;
     }
-    if (descriptor.capabilities.remuxableTo.includes(outputContainer)) {
-      return buildRemuxPlan(descriptor, choice, outputContainer);
-    }
-    if (descriptor.capabilities.transcodeableTo.includes(outputContainer)) {
-      return buildTranscodePlan(descriptor, choice, outputContainer);
-    }
-    return { kind: "refuse", reason: "clear_segments_unavailable" };
+    return { kind: "refuse", reason: "unsupported_output" };
   }
 
   // Unknown protocol with direct URL → fall through to direct as best effort.
   const direct = buildDirectPlan(descriptor, choice);
   if (direct) return direct;
-  return { kind: "refuse", reason: "clear_segments_unavailable" };
+  return { kind: "refuse", reason: "unsupported_output" };
 }
 
-export type { DirectPlan, HlsPlainPlan, HlsAesPlan, DashPlan, RemuxPlan, TranscodePlan };
+export type { DirectPlan, HlsPlainPlan, HlsAesPlan, DashPlan };

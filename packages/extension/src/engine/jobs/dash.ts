@@ -1,18 +1,18 @@
 import type { DashPlan, StreamDescriptor } from "@savemedia/core";
-import { RETRY_POLICY } from "@savemedia/core";
 import type { JobResult, ProgressFn } from "../job";
 import { fetchWithRetry } from "../net/fetch-with-retry";
+import { classifyNetworkFailure } from "../net/error-classification";
 import { parseDashJobInputs, type DashTrack } from "../parsers/dash";
 import { InMemorySink, type JobSink } from "../sink";
 
 /**
  * DASH job runner. Fetches the MPD, resolves init+media URLs for the
  * chosen variant, then concatenates init segment + media segments into a
- * Blob. fMP4/CMAF concatenation produces a valid MP4 for v1; full
- * Mediabunny remux lands later.
+ * Blob. This is intentionally limited to the fMP4 path covered by golden
+ * media tests.
  *
  * Audio is currently merged inline only when the same variant carries it.
- * Separate audio renditions are deferred (single-track output for v1).
+ * Separate audio renditions are not implemented.
  */
 export async function runDashJob(
   plan: DashPlan,
@@ -31,7 +31,9 @@ export async function runDashJob(
   }
 
   onProgress(0, null, "fetching-manifest");
-  const mpdResp = await fetchWithRetry(descriptor.source.manifestUrl, signal, "manifest");
+  const mpdResp = await fetchWithRetry(descriptor.source.manifestUrl, signal, "manifest").catch(err => {
+    throw classifyNetworkFailure(err, "manifest", descriptor.source.kind === "dash-manifest" ? descriptor.source.manifestUrl : descriptor.pageUrl) ?? err;
+  });
   const mpdText = await mpdResp.text();
   let inputs;
   try {
@@ -74,14 +76,15 @@ async function downloadTrack(
   await sink.open(plan.outputFilename, plan.estimatedBytes);
 
   onProgress(0, null, "fetching-init");
-  const initResp = await fetchWithRetry(track.initUrl, signal, "segment");
+  const initResp = await fetchWithRetry(track.initUrl, signal, "segment").catch(err => {
+    throw classifyNetworkFailure(err, "segment", track.initUrl) ?? err;
+  });
   const initBytes = new Uint8Array(await initResp.arrayBuffer());
   await assertContainerValid(initBytes, plan.outputContainer);
   await sink.write(initBytes);
   bytesWritten += initBytes.byteLength;
 
   const failed: number[] = [];
-  let consecutive = 0;
   for (let i = 0; i < track.mediaUrls.length; i++) {
     if (signal.aborted) {
       await sink.abort();
@@ -92,23 +95,17 @@ async function downloadTrack(
       const body = new Uint8Array(await resp.arrayBuffer());
       await sink.write(body);
       bytesWritten += body.byteLength;
-      consecutive = 0;
       onProgress(bytesWritten, null, `segment ${i + 1}/${track.mediaUrls.length}`);
     } catch (err) {
       if (signal.aborted) throw err;
       failed.push(i);
-      consecutive += 1;
-      const over = failed.length / track.mediaUrls.length > RETRY_POLICY.job.maxFailedSegmentRatio;
-      const tooMany = consecutive >= RETRY_POLICY.job.maxConsecutiveFailures;
-      if (over || tooMany) {
-        await sink.abort();
-        throw {
-          code: "segment_budget_exhausted",
-          severity: "terminal",
-          failedSegments: failed,
-          totalSegments: track.mediaUrls.length,
-        };
-      }
+      await sink.abort();
+      throw classifyNetworkFailure(err, "segment", track.mediaUrls[i]!) ?? {
+        code: "segment_budget_exhausted",
+        severity: "terminal",
+        failedSegments: failed,
+        totalSegments: track.mediaUrls.length,
+      };
     }
   }
 

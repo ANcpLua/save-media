@@ -11,6 +11,7 @@ describe("background network capture URL filter", () => {
   it("does not capture HLS/DASH segment URLs as standalone downloads", () => {
     expect(looksLikeMediaEntryUrl("https://cdn.example/video/seg-1.ts")).toBe(false);
     expect(looksLikeMediaEntryUrl("https://cdn.example/video/chunk-1.m4s")).toBe(false);
+    expect(looksLikeMediaEntryUrl("https://video.example/hls/init.mp4")).toBe(false);
     expect(looksLikeMediaEntryUrl("https://video.example/hls/720p.av1.mp4/init-v1-a1.mp4")).toBe(false);
     expect(looksLikeMediaEntryUrl("https://video.example/hls/720p.av1.mp4/seg-22-v1-a1.mp4")).toBe(false);
     expect(looksLikeMediaEntryUrl("https://cdn.example/video/movie.mp4", "xmlhttprequest")).toBe(false);

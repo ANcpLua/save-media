@@ -96,7 +96,7 @@ describe("download-best command helpers", () => {
 
   it("forwards startBestDownload failures to popup listeners", async () => {
     const descriptor = directDescriptor();
-    const error = { code: "native_sink_io_error", severity: "terminal", errno: "ENOSPC", path: "clip.mp4" } as const;
+    const error = { code: "browser_download_failed", severity: "terminal", reason: "ENOSPC", filename: "clip.mp4" } as const;
     const d = deps({
       router: {
         startBestDownload: vi.fn(async () => ({

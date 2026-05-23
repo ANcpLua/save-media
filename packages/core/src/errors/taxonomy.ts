@@ -18,18 +18,22 @@ export type JobError =
 
   // Track availability
   | { code: "missing_video_track";        severity: "terminal";    declaredIn: "manifest" | "init-segment" }
-  | { code: "missing_audio_track";        severity: "terminal";    requiredFor: "Best Quality" | "MP4 Compatible"; declaredIn: "manifest" | "init-segment" }
   | { code: "no_variant_meets_minimum";   severity: "terminal";    minHeightRequired: 720; maxAvailableHeight: number }
 
   // Codec compatibility
   | { code: "unsupported_codec";          severity: "terminal";    codec: VideoCodec | AudioCodec; where: "source" | "target" }
-  | { code: "no_remux_path";              severity: "terminal";    from: Container; to: OutputContainer; reason: "container-not-supported-by-mediabunny" | "codec-incompatible-with-target" }
-  | { code: "no_transcode_path";          severity: "terminal";    from: Container; to: OutputContainer; reason: string }
+  | { code: "no_remux_path";              severity: "terminal";    from: Container; to: OutputContainer; reason: "container-not-supported-by-engine" | "codec-incompatible-with-target" }
+  | { code: "unsupported_output";         severity: "terminal";    from: Container; to: OutputContainer; reason: "conversion-not-implemented" | "container-not-supported" }
+  | { code: "output_too_large_for_browser"; severity: "terminal";  estimatedBytes: number; limitBytes: number }
 
   // Network
   | { code: "segment_fetch_failed";       severity: "recoverable"; segmentIndex: number; url: string; httpStatus: number | "network-error"; attemptsRemaining: number }
   | { code: "segment_budget_exhausted";   severity: "terminal";    failedSegments: readonly number[]; totalSegments: number }
   | { code: "manifest_refresh_failed";    severity: "recoverable"; url: string; httpStatus: number | "network-error"; attemptsRemaining: number }
+  | { code: "rate_limited";               severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 429; retryAfterSeconds: number | null }
+  | { code: "server_busy";                severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: number }
+  | { code: "access_denied";              severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 401 | 402 | 403; explanation: "login-or-cookie" | "payment-or-entitlement" | "forbidden-or-expired-url" }
+  | { code: "network_unreachable";        severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; detail: string }
 
   // Browser security
   | { code: "cors_blocked";               severity: "terminal";    url: string; blockedHeader: "Access-Control-Allow-Origin" | "Access-Control-Allow-Headers" | "credentials" }
@@ -42,17 +46,9 @@ export type JobError =
   | { code: "verification_container";     severity: "terminal";    probeError: string }
 
   // Engine
-  | { code: "mediabunny_demux_failed";    severity: "terminal";    at: "header" | "segment" | "trailer"; detail: string }
-  | { code: "ffmpeg_wasm_load_failed";    severity: "recoverable"; bytesDownloaded: number; totalBytes: number; attemptsRemaining: number }
-  | { code: "ffmpeg_transcode_failed";    severity: "terminal";    ffmpegStderrTail: string }
+  | { code: "engine_job_failed";          severity: "terminal";    at: "manifest" | "init" | "segment" | "finalize"; detail: string }
   | { code: "engine_oom";                 severity: "terminal";    workerMemoryMb: number; budgetMb: 64 }
-
-  // Native host
-  | { code: "native_host_not_registered"; severity: "terminal";    hint: string }
-  | { code: "native_host_dependency";     severity: "terminal";    missing: "python" | "yt-dlp" | "ffmpeg"; installHint: string }
-  | { code: "native_host_timeout";        severity: "recoverable"; timeoutSeconds: number; phase: string; attemptsRemaining: number }
-  | { code: "native_host_protocol";       severity: "terminal";    detail: string }
-  | { code: "native_sink_io_error";       severity: "terminal";    errno: string; path: string }
+  | { code: "browser_download_failed";    severity: "terminal";    reason: string; filename: string }
 
   // Cancellation
   | { code: "user_cancelled";             severity: "terminal";    bytesDiscarded: number };
