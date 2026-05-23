@@ -31,7 +31,16 @@ manifest.permissions = (manifest.permissions ?? []).filter(p => p !== "offscreen
 manifest.browser_specific_settings = {
   gecko: {
     id: "savemedia@ancplua.dev",
-    strict_min_version: "128.0",
+    data_collection_permissions: {
+      required: ["none"],
+    },
+    strict_min_version: "140.0",
+  },
+  gecko_android: {
+    data_collection_permissions: {
+      required: ["none"],
+    },
+    strict_min_version: "142.0",
   },
 };
 

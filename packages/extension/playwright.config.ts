@@ -37,11 +37,13 @@ export default defineConfig({
       },
     },
     {
-      name: "firefox",
+      name: "firefox-fixtures",
+      testMatch: /fixtures\.spec\.ts/,
       use: {
         ...devices["Desktop Firefox"],
-        // Firefox extension loading via web-ext is wired separately. This
-        // project exercises the shared fixture server against baseline Firefox.
+        // Firefox extension runtime coverage lives in scripts/smoke-firefox.mjs.
+        // This Playwright project is fixture-server coverage only and must not
+        // be counted as Firefox extension support evidence.
       },
     },
   ],
