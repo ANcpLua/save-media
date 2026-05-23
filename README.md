@@ -87,6 +87,7 @@ pnpm --filter @savemedia/extension zip
 
 `pnpm verify` runs the type/unit/build gate. The Chromium Playwright suite is
 kept separate because it launches a headed browser with the unpacked extension.
+Install `ffmpeg`/`ffprobe` before running the Chromium e2e media-download tests.
 
 ## Loading Locally
 
