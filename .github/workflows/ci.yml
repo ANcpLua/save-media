@@ -71,6 +71,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @savemedia/core build
       - run: pnpm --filter @savemedia/extension exec playwright install --with-deps ${{ matrix.browser }}
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pnpm --filter @savemedia/extension build:chrome
       # Loading the unpacked MV3 extension via --load-extension requires
       # `headless: false`, which on Linux CI needs an X display. xvfb is
