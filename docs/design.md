@@ -33,8 +33,8 @@ files as video.
 | HLS fMP4/CMAF detection/refusal | Works | Fixture verifies init/fragment URLs are not surfaced as standalone downloads. |
 | DRM detection | Works | Widevine fixture is refused with `cdm_required`. |
 | ClearKey/CENC detection | Works | ClearKey fixture is refused with `clearkey_deferred`. |
-| `Alt+S` best download command | Registered in Chrome and Firefox | Automated tests check command registration; headed Playwright does not reliably fire extension shortcuts. |
-| Edge runtime | Not verified | Chromium zip is built and `smoke:edge` exists, but no real Edge smoke has passed locally. |
+| `Alt+S` best download command | Registered in Chrome, Edge, and Firefox | Automated tests check command registration; headed Playwright does not reliably fire extension shortcuts. |
+| Edge runtime | Works on Microsoft Edge | `smoke:edge` launches Edge with the unpacked Chromium build, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. |
 | Firefox runtime | Works on Firefox Desktop | `smoke:firefox` temporarily installs the extension, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. |
 
 ## Unsupported

@@ -159,10 +159,11 @@ async function waitForDownloadedFile(probe, suffix) {
       error: item.error,
       exists: item.exists,
     }));
-    const hit = items.find(item => item.state === "complete" && item.filename?.endsWith(suffix));
+    const hit = items.find(item => item.state === "complete" && item.filename?.endsWith(suffix))
+      ?? items.find(item => item.state === "complete" && item.exists);
     if (hit?.filename && existsSync(hit.filename)) return hit.filename;
 
-    const onDisk = findDownloadedFile(downloadDir, suffix);
+    const onDisk = findDownloadedFile(downloadDir, suffix) ?? findDownloadedFile(downloadDir, "");
     if (onDisk) return onDisk;
     await new Promise(resolve => setTimeout(resolve, 500));
   }
@@ -175,7 +176,7 @@ function findDownloadedFile(dir, suffix) {
     if (entry.isDirectory()) {
       const nested = findDownloadedFile(path, suffix);
       if (nested) return nested;
-    } else if (entry.name.endsWith(suffix) && !entry.name.endsWith(".crdownload") && statSync(path).size > 0) {
+    } else if ((suffix === "" || entry.name.endsWith(suffix)) && !entry.name.endsWith(".crdownload") && statSync(path).size > 0) {
       return path;
     }
   }
