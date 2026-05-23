@@ -40,9 +40,8 @@ export default defineConfig({
       name: "firefox",
       use: {
         ...devices["Desktop Firefox"],
-        // Firefox extension loading via web-ext is wired separately; this
-        // project is a placeholder that exercises the same fixtures against
-        // baseline Firefox so the test file stays the same.
+        // Firefox extension loading via web-ext is wired separately. This
+        // project exercises the shared fixture server against baseline Firefox.
       },
     },
   ],
