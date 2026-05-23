@@ -5,6 +5,7 @@ import "../sw-globals-polyfill";
 
 import { classify } from "@savemedia/core";
 import type {
+  BackgroundToEngineMessage,
   BridgeToBackgroundMessage,
   PopupToBackgroundMessage,
   EngineToBackgroundMessage,
@@ -13,6 +14,7 @@ import { createRouter } from "./router";
 import { registerDownloadBestCommand } from "./download-best";
 import { registerNetworkCapture } from "./network-capture";
 import { ensureEngineHost } from "../platform/processor-host";
+import { createInProcessEngineHost } from "../engine/in-process-host";
 import { consoleLogger } from "../util/logger";
 import type { StreamDescriptor } from "@savemedia/core";
 
@@ -20,9 +22,24 @@ declare const __BROWSER__: "chromium" | "firefox";
 
 const logger = consoleLogger("bg");
 
-const router = createRouter({
+let router: ReturnType<typeof createRouter>;
+
+const firefoxEngineHost = __BROWSER__ === "firefox"
+  ? createInProcessEngineHost({
+    sendToBackground: msg => {
+      void handleEngineMessage(msg);
+    },
+  })
+  : null;
+
+router = createRouter({
   runtime: {
     sendMessage: (msg, cb) => {
+      if (firefoxEngineHost && isEngineControlMessage(msg)) {
+        firefoxEngineHost.handleMessage(msg);
+        cb?.({ ok: true });
+        return;
+      }
       chrome.runtime.sendMessage(msg, () => {
         void chrome.runtime.lastError;
         cb?.(undefined);
@@ -35,6 +52,11 @@ const router = createRouter({
   ensureEngineHost,
   logger,
 });
+
+function isEngineControlMessage(msg: unknown): msg is BackgroundToEngineMessage {
+  if (!msg || typeof msg !== "object" || !("type" in msg)) return false;
+  return msg.type === "start-job" || msg.type === "cancel-job";
+}
 
 chrome.tabs.onRemoved.addListener(tabId => router.clearTab(tabId));
 chrome.tabs.onUpdated.addListener((tabId, info) => {
@@ -143,20 +165,16 @@ chrome.runtime.onMessage.addListener((
   }
 
   if (msg.type === "progress" || msg.type === "complete" || msg.type === "failed") {
-    void router.handleEngineMessage(msg).then(forward => {
-      if (forward) {
-        chrome.runtime.sendMessage(forward, () => void chrome.runtime.lastError);
-      }
-    });
+    void handleEngineMessage(msg);
     return false;
   }
 
   return false;
 });
 
-// On Firefox, the engine runs in the background event page; on Chromium the
-// offscreen document loads engine/host.ts via offscreen.html. The dynamic
-// import collapses at build time because `__BROWSER__` is a literal define.
-if (__BROWSER__ === "firefox") {
-  void import("../engine/host");
+async function handleEngineMessage(msg: EngineToBackgroundMessage): Promise<void> {
+  const forward = await router.handleEngineMessage(msg);
+  if (forward) {
+    chrome.runtime.sendMessage(forward, () => void chrome.runtime.lastError);
+  }
 }

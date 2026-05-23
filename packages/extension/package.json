@@ -10,6 +10,10 @@
     "build:all": "pnpm build:chrome && pnpm build:firefox",
     "zip": "pnpm build:all && node scripts/package.mjs",
     "dev": "SAVEMEDIA_BROWSER=chromium vite build --watch",
+    "icons": "node scripts/generate-icons.mjs",
+    "lint:firefox": "pnpm build:firefox && web-ext lint --source-dir dist-firefox",
+    "smoke:edge": "pnpm build:chrome && node scripts/smoke-edge.mjs",
+    "smoke:firefox": "pnpm build:firefox && node scripts/smoke-firefox.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -34,8 +38,10 @@
     "autoprefixer": "^10.4.20",
     "jsdom": "^25.0.1",
     "postcss": "^8.4.49",
+    "selenium-webdriver": "^4.44.0",
     "tailwindcss": "^3.4.14",
     "vite": "^5.4.10",
-    "vitest": "^1.6.0"
+    "vitest": "^1.6.0",
+    "web-ext": "^10.2.0"
   }
 }

@@ -21,6 +21,8 @@ Verified in the Chrome Playwright extension suite with real media fixtures:
   segments, and numbered chunk URLs.
 - `Alt+S` command registration in Chrome. Manual Chrome testing confirmed it
   starts the highest-quality supported detected download on the current tab.
+- Firefox Desktop runtime smoke coverage for the same direct, HLS, command, and
+  refusal paths listed in the browser evidence table.
 
 The engine aborts partial in-memory output when a required segment fails. It
 must not save random chunks, fake `.mp4` HTML responses, or mislabeled `.ts`
@@ -46,11 +48,13 @@ bytes as final video.
 | Browser target | Current evidence | Claim level |
 | --- | --- | --- |
 | Chrome | Automated unpacked-extension Playwright suite, including real downloads verified with `ffprobe`. | Supported for the capabilities above. |
-| Edge | Chromium zip is built as `savemedia-edge-0.0.1.zip`; no independent Edge runtime smoke test is checked in. | Build exists; runtime parity is not claimed. |
-| Firefox | Firefox zip builds. CI/Playwright currently exercises fixture pages only; extension behavior is skipped until a Firefox MV3/web-ext harness exists. | Build exists; extension runtime is not claimed. |
+| Edge | Chromium zip is built as `savemedia-edge-0.0.1.zip`; `smoke:edge` exists but requires a real Microsoft Edge executable and has not passed locally. | Build exists; runtime parity is not claimed. |
+| Firefox | Firefox zip builds for Firefox Desktop 140+; `smoke:firefox` temporarily installs `dist-firefox`, opens the popup, checks `Alt+S`, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. | Supported on Firefox Desktop for the capabilities above. |
 
-Browser store submission is outside the verified repository contract. Any store
-listing must match the browser evidence above.
+Store-readiness drafts live in `docs/privacy-policy.md` and
+`docs/store-submission.md`. Any store listing must match the browser evidence
+above and must not imply DRM, paywall, login, protected-stream, or universal
+download bypass.
 
 ## Architecture
 
@@ -84,12 +88,13 @@ pnpm -r typecheck
 pnpm -r test
 pnpm --filter @savemedia/extension build:chrome
 pnpm --filter @savemedia/extension exec playwright test --project=chromium
+pnpm --filter @savemedia/extension smoke:firefox
 pnpm --filter @savemedia/extension zip
 ```
 
 `pnpm verify` runs the type/unit/build gate. The Chromium Playwright suite is
 kept separate because it launches a headed browser with the unpacked extension.
-Install `ffmpeg`/`ffprobe` before running the Chromium e2e media-download tests.
+Install `ffmpeg`/`ffprobe` before running media-download e2e or smoke tests.
 
 ## Loading Locally
 
