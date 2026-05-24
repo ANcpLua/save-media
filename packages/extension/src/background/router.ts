@@ -5,10 +5,8 @@ import {
   type JobError,
   type JobPlan,
   type DispatchRefusal,
-  type DispatchRefusalReason,
   type OutputContainer,
   type Variant,
-  BROWSER_OUTPUT_LIMIT_BYTES,
 } from "@savemedia/core";
 import type {
   PopupToBackgroundMessage,
@@ -18,6 +16,9 @@ import type {
 } from "../types/messages";
 import type { Logger } from "../util/logger";
 import { suggestFilename } from "../util/filename";
+import { dispatchRefusalToError } from "../util/dispatch-refusal";
+
+export { dispatchRefusalToError } from "../util/dispatch-refusal";
 
 type HlsDescriptor = StreamDescriptor & {
   readonly source: { readonly kind: "hls-manifest"; readonly manifestUrl: string; readonly type: "master" | "media" };
@@ -25,6 +26,7 @@ type HlsDescriptor = StreamDescriptor & {
 
 export interface TabState {
   readonly descriptors: Map<string, StreamDescriptor>;
+  readonly hlsCoveredDirectUrls: Set<string>;
 }
 
 export interface RouterDeps {
@@ -60,7 +62,7 @@ export function createRouter(deps: RouterDeps): Router {
   function getTab(tabId: number): TabState {
     let s = tabs.get(tabId);
     if (!s) {
-      s = { descriptors: new Map() };
+      s = { descriptors: new Map(), hlsCoveredDirectUrls: new Set() };
       tabs.set(tabId, s);
     }
     return s;
@@ -93,6 +95,51 @@ export function createRouter(deps: RouterDeps): Router {
     const normalised = url.replace(/\d{2,}/g, "#");
     if (normalised === url) return null; // no numeric component → not segment-shaped
     return `direct-family:${d.protocol}:${normalised}`;
+  }
+
+  function normalizedUrl(url: string): string {
+    try {
+      return new URL(url).href;
+    } catch {
+      return url;
+    }
+  }
+
+  function directUrl(d: StreamDescriptor): string | null {
+    return d.source.kind === "direct-url" ? normalizedUrl(d.source.url) : null;
+  }
+
+  function hlsCoveredDirectUrls(d: StreamDescriptor): readonly string[] {
+    if (d.protocol !== "hls") return [];
+    const urls: string[] = [];
+    for (const v of d.variants) {
+      if (v.segmentRef.kind !== "hls-segments") continue;
+      if (v.segmentRef.initSegmentUrl) urls.push(normalizedUrl(v.segmentRef.initSegmentUrl));
+      for (const url of v.segmentRef.segmentUrls) urls.push(normalizedUrl(url));
+    }
+    return urls;
+  }
+
+  function indexHlsCoveredDirectUrls(state: TabState, d: StreamDescriptor): void {
+    for (const url of hlsCoveredDirectUrls(d)) state.hlsCoveredDirectUrls.add(url);
+  }
+
+  function removeHlsCoveredDirectDescriptors(state: TabState): number {
+    if (state.hlsCoveredDirectUrls.size === 0) return 0;
+    let removed = 0;
+    for (const [key, existing] of state.descriptors.entries()) {
+      const url = directUrl(existing);
+      if (url && state.hlsCoveredDirectUrls.has(url)) {
+        state.descriptors.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  function isHlsCoveredDirectDescriptor(state: TabState, d: StreamDescriptor): boolean {
+    const url = directUrl(d);
+    return url !== null && state.hlsCoveredDirectUrls.has(url);
   }
 
   function hlsVariantPlaylistUrls(d: StreamDescriptor): Set<string> {
@@ -134,8 +181,15 @@ export function createRouter(deps: RouterDeps): Router {
 
   function addDescriptor(tabId: number, descriptor: StreamDescriptor): boolean {
     const state = getTab(tabId);
-    if (hlsMediaCoveredByExistingMaster(state, descriptor)) return false;
+    let removedCoveredDirects = 0;
+    if (descriptor.protocol === "hls") {
+      indexHlsCoveredDirectUrls(state, descriptor);
+      removedCoveredDirects = removeHlsCoveredDirectDescriptors(state);
+    }
+
+    if (hlsMediaCoveredByExistingMaster(state, descriptor)) return removedCoveredDirects > 0;
     if (isHlsMasterPlaylist(descriptor)) removeCoveredHlsMediaDescriptors(state, descriptor);
+    if (isHlsCoveredDirectDescriptor(state, descriptor)) return false;
 
     const key = descriptorKey(descriptor);
     if (state.descriptors.has(key)) return false;
@@ -243,6 +297,7 @@ export function createRouter(deps: RouterDeps): Router {
     if (!descriptor) {
       return { code: "manifest_404", severity: "terminal", url: "", httpStatus: 0 };
     }
+    if (jobs.has(id)) return null;
 
     const plan: JobPlan | DispatchRefusal = dispatch(descriptor, choice);
 
@@ -349,48 +404,4 @@ export function createRouter(deps: RouterDeps): Router {
     handleEngineMessage,
     handlePopupMessage,
   };
-}
-
-export function dispatchRefusalToError(reason: DispatchRefusalReason, d: StreamDescriptor): JobError {
-  const drm = d.drm;
-  switch (reason) {
-    case "encrypted_media_detected":
-      return {
-        code: "encrypted_media_detected",
-        severity: "terminal",
-        detectedVia: drm?.detectedVia ?? [],
-        keySystem: drm?.keySystem ?? null,
-      };
-    case "cdm_required":
-      return { code: "cdm_required", severity: "terminal", keySystem: drm?.keySystem ?? "unknown" };
-    case "clear_segments_unavailable":
-      return { code: "clear_segments_unavailable", severity: "terminal", manifestUrl: d.pageUrl };
-    case "license_bound_stream":
-      return { code: "license_bound_stream", severity: "terminal", keyUri: "", httpStatus: 0 };
-    case "clearkey_deferred":
-      return { code: "clearkey_deferred", severity: "terminal", manifestUrl: d.pageUrl };
-    case "no_usable_variant":
-      return { code: "manifest_malformed", severity: "terminal", url: d.pageUrl, parserError: "no usable video variant" };
-    case "unsupported_output":
-      return {
-        code: "unsupported_output",
-        severity: "terminal",
-        from: d.container,
-        to: d.container === "webm" || d.container === "mkv" ? d.container : "mp4",
-        reason: "conversion-not-implemented",
-      };
-    case "output_too_large_for_browser":
-      return {
-        code: "output_too_large_for_browser",
-        severity: "terminal",
-        estimatedBytes: Math.max(...d.variants.map(v => v.estimatedSize ?? 0), 0),
-        limitBytes: BROWSER_OUTPUT_LIMIT_BYTES,
-      };
-    case "dash_unsupported":
-      return { code: "dash_unsupported", severity: "terminal", manifestUrl: d.source.kind === "dash-manifest" ? d.source.manifestUrl : d.pageUrl };
-    case "hls_encryption_unsupported":
-      return { code: "hls_encryption_unsupported", severity: "terminal", manifestUrl: d.source.kind === "hls-manifest" ? d.source.manifestUrl : d.pageUrl, method: "AES-128" };
-    case "hls_live_unsupported":
-      return { code: "hls_live_unsupported", severity: "terminal", manifestUrl: d.source.kind === "hls-manifest" ? d.source.manifestUrl : d.pageUrl };
-  }
 }

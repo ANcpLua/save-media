@@ -3,16 +3,15 @@
 // in src/types/messages.ts) so this file has no module dependencies and
 // can ship as a standalone JS file.
 //
-// The `export {}` below is a TypeScript-only marker that makes tsc treat
-// this file as a module (so its top-level const doesn't clash with the
-// twin declaration in bridge.ts); Vite/rollup elides it at build time
-// because nothing is actually exported, leaving the output as a plain
-// classic-script-compatible JS file.
+// Keep the runtime code inside an IIFE. This script runs in the page's
+// MAIN world; unscoped helper names can collide with page globals after
+// minification and crash later async observers.
 export {};
+(() => {
 const BRIDGE_TAG = "__savemedia" as const;
 
 type CaptureKind = "media-element" | "media-source" | "eme" | "ms-probe";
-interface MainToBridgeMessage {
+interface PageCaptureMessage {
   [BRIDGE_TAG]: true;
   kind: CaptureKind;
   url: string | null;
@@ -25,8 +24,17 @@ interface MainToBridgeMessage {
   elementSrc?: string;
 }
 
-const post = (msg: Omit<MainToBridgeMessage, typeof BRIDGE_TAG>): void => {
-  window.postMessage({ [BRIDGE_TAG]: true, ...msg } as MainToBridgeMessage, "*");
+interface PageCommandMessage {
+  [BRIDGE_TAG]: true;
+  kind: "download-best-hotkey";
+  pageUrl: string;
+}
+
+type MainToBridgeMessage = PageCaptureMessage | PageCommandMessage;
+type CaptureExtras = Partial<Omit<PageCaptureMessage, typeof BRIDGE_TAG | "kind" | "url" | "pageUrl">>;
+
+const post = (msg: MainToBridgeMessage): void => {
+  window.postMessage(msg, "*");
 };
 
 /**
@@ -42,8 +50,12 @@ function canonicaliseUrl(url: string | null): string | null {
   try { return new URL(url, location.href).href; } catch { return url; }
 }
 
-const emit = (kind: CaptureKind, url: string | null, extras: Partial<MainToBridgeMessage> = {}): void => {
-  post({ kind, url: canonicaliseUrl(url), pageUrl: location.href, ...extras });
+const emit = (kind: CaptureKind, url: string | null, extras: CaptureExtras = {}): void => {
+  post({ [BRIDGE_TAG]: true, kind, url: canonicaliseUrl(url), pageUrl: location.href, ...extras });
+};
+
+const emitDownloadBestHotkey = (): void => {
+  post({ [BRIDGE_TAG]: true, kind: "download-best-hotkey", pageUrl: location.href });
 };
 
 /**
@@ -120,3 +132,26 @@ new MutationObserver(records => {
 }).observe(document.documentElement, { childList: true, subtree: true });
 
 document.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
+
+document.addEventListener("keydown", event => {
+  if (!event.isTrusted || !isDownloadBestHotkey(event) || isEditableTarget(event.target)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  emitDownloadBestHotkey();
+}, true);
+
+function isDownloadBestHotkey(event: KeyboardEvent): boolean {
+  if (event.repeat || event.metaKey || event.shiftKey) return false;
+  const sKey = event.code === "KeyS" || event.key.toLowerCase() === "s";
+  if (!sKey) return false;
+  return (event.altKey && !event.ctrlKey) || (event.ctrlKey && !event.altKey);
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement;
+}
+})();

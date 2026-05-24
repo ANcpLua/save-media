@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { MAIN_BRIDGE_TAG } from "../../../src/types/messages";
+import {
+  MAIN_BRIDGE_TAG,
+  isBackgroundToEngineMessage,
+  isBackgroundToPopupMessage,
+  isBridgeToBackgroundMessage,
+  isEngineToBackgroundMessage,
+  isPopupToBackgroundMessage,
+} from "../../../src/types/messages";
 import type {
   MainToBridgeMessage,
   BridgeToBackgroundMessage,
@@ -40,6 +47,29 @@ describe("message types", () => {
     };
     expect(wrap.type).toBe("capture");
     expect(wrap.payload[MAIN_BRIDGE_TAG]).toBe(true);
+  });
+
+  it("BridgeToBackgroundMessage carries page hotkey download-best requests", () => {
+    const msg: BridgeToBackgroundMessage = {
+      type: "download-best-hotkey",
+      pageUrl: "https://example.com/watch",
+    };
+    expect(msg.type).toBe("download-best-hotkey");
+  });
+
+  it("runtime guards reject page commands disguised as capture payloads", () => {
+    expect(isBridgeToBackgroundMessage({
+      type: "capture",
+      payload: {
+        [MAIN_BRIDGE_TAG]: true,
+        kind: "download-best-hotkey",
+        pageUrl: "https://example.com/watch",
+      },
+    })).toBe(false);
+    expect(isBridgeToBackgroundMessage({
+      type: "download-best-hotkey",
+      pageUrl: "https://example.com/watch",
+    })).toBe(true);
   });
 
   it("BackgroundToContentMessage asks the bridge to discover page media URLs", () => {
@@ -138,5 +168,23 @@ describe("message types", () => {
     expect(p.type).toBe("progress");
     expect(c.type).toBe("complete");
     expect(f.type).toBe("failed");
+  });
+
+  it("runtime guards accept the expected message families", () => {
+    const id = "stream-1" as StreamId;
+    expect(isPopupToBackgroundMessage({ type: "list", tabId: 7 })).toBe(true);
+    expect(isBackgroundToPopupMessage({
+      type: "job-complete",
+      streamId: id,
+      path: "video.mp4",
+    })).toBe(true);
+    expect(isBackgroundToEngineMessage({ type: "cancel-job", streamId: id })).toBe(true);
+    expect(isEngineToBackgroundMessage({
+      type: "progress",
+      streamId: id,
+      bytesWritten: 1,
+      bytesTotal: null,
+      phase: "fetching",
+    })).toBe(true);
   });
 });

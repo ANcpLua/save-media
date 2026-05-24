@@ -2,7 +2,14 @@
   "name": "@savemedia/extension",
   "version": "0.0.1",
   "private": true,
+  "description": "savemedia browser extension package for Chrome, Edge, and Firefox Desktop.",
   "license": "Apache-2.0",
+  "author": "Alexander Nachtmann ANcpLua",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/O-ANcppLua/save-media.git",
+    "directory": "packages/extension"
+  },
   "type": "module",
   "scripts": {
     "build": "node scripts/build-chrome.mjs",
@@ -15,9 +22,14 @@
     "lint:firefox": "pnpm build:firefox && web-ext lint --source-dir dist-firefox",
     "smoke:edge": "pnpm build:chrome && node scripts/smoke-edge.mjs",
     "smoke:firefox": "pnpm build:firefox && node scripts/smoke-firefox.mjs",
+    "lint": "pnpm typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "pnpm test:e2e:chromium",
+    "test:e2e:chromium": "playwright test --project=chromium",
+    "test:e2e:firefox-fixtures": "playwright test --project=firefox-fixtures",
+    "test:e2e:headed": "playwright test --project=chromium --headed",
+    "report:e2e": "playwright show-report playwright-report",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

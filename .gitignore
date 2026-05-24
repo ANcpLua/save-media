@@ -8,6 +8,8 @@ dist-edge/
 dist-firefox/
 dist-firefox-build/
 *.zip
+*.crx
+*.pem
 .vite/
 coverage/
 .nyc_output/

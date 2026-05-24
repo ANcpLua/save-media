@@ -7,7 +7,7 @@
  * page instead of an offscreen document.
  */
 
-import type { BackgroundToEngineMessage } from "../types/messages";
+import { isBackgroundToEngineMessage } from "../types/messages";
 import { createInProcessEngineHost } from "./in-process-host";
 
 const host = createInProcessEngineHost({
@@ -18,12 +18,10 @@ const host = createInProcessEngineHost({
   },
 });
 
-chrome.runtime.onMessage.addListener((msg: BackgroundToEngineMessage, _sender, sendResponse) => {
-  if (msg.type === "start-job" || msg.type === "cancel-job") {
-    host.handleMessage(msg);
-    sendResponse({ ok: true });
-    return false;
-  }
+chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
+  if (!isBackgroundToEngineMessage(msg)) return false;
+  host.handleMessage(msg);
+  sendResponse({ ok: true });
   return false;
 });
 

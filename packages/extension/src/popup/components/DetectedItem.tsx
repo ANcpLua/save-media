@@ -30,6 +30,7 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
   const isDeferred = descriptor.drm?.reason === "clearkey_deferred";
   const action = outputActionLabel(descriptor);
   const isDownloadable = descriptor.capabilities.directDownload || descriptor.protocol === "hls";
+  const activeProgressWidth = status?.phase === "active" ? progressWidth(status) : "30%";
 
   function download() {
     if (isDrmBlocked) return;
@@ -111,11 +112,7 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
           <div className="mt-1 h-1 rounded bg-neutral-800 overflow-hidden">
             <div
               className="h-full bg-blue-600 transition-all"
-              style={{
-                width: status.bytesTotal && status.bytesTotal > 0
-                  ? `${Math.min(100, Math.round(((status.bytesWritten ?? 0) / status.bytesTotal) * 100))}%`
-                  : "30%",
-              }}
+              style={{ width: activeProgressWidth }}
             />
           </div>
         </div>
@@ -172,6 +169,34 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function progressWidth(status: JobStatus): string {
+  if (status.bytesTotal && status.bytesTotal > 0) {
+    return `${clampPercent(((status.bytesWritten ?? 0) / status.bytesTotal) * 100)}%`;
+  }
+
+  const stage = status.stage ?? "";
+  const segment = /^segment\s+(\d+)\/(\d+)/i.exec(stage);
+  if (segment) {
+    const current = Number(segment[1]);
+    const total = Number(segment[2]);
+    if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+      return `${clampPercent((current / total) * 100)}%`;
+    }
+  }
+
+  const percent = /(\d+(?:\.\d+)?)%/.exec(stage);
+  if (percent) {
+    const value = Number(percent[1]);
+    if (Number.isFinite(value)) return `${clampPercent(value)}%`;
+  }
+
+  return "30%";
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function Row({ label, value }: { readonly label: string; readonly value: string }) {

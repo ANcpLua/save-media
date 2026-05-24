@@ -5,7 +5,8 @@
  * Serves:
  *   /direct/clip.mp4 .webm .mkv  — tiny real progressive files
  *   /hls/master.m3u8 + media.m3u8 + segNNN.ts — real clear HLS VOD
- *   /hls-fmp4/master.m3u8 + media.m3u8 + EXT-X-MAP init + m4s fragments — refused layout
+ *   /hls-fmp4/master.m3u8 + media.m3u8 + EXT-X-MAP init + m4s fragments — clear fMP4
+ *   /hls-fmp4-mp4/* .mp4-named init/fragments — verifies chunk suppression
  *   /hls-aes/key + master + media + ciphertext segments — refused encryption
  *   /dash/clip.mpd                         — clear DASH descriptor, refused download
  *   /drm/widevine.mpd                      — DASH with Widevine ContentProtection
@@ -61,6 +62,22 @@ const CLEARKEY_MPD = `<?xml version="1.0" encoding="UTF-8"?>
   </Period>
 </MPD>`;
 
+const HLS_FMP4_MP4_MASTER = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=1280x720,CODECS="avc1.64001f,mp4a.40.2"
+media.m3u8
+`;
+
+const HLS_FMP4_MP4_MEDIA = `#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:4
+#EXT-X-MAP:URI="title-init.mp4"
+#EXTINF:2.000,
+title-part-1.mp4
+#EXTINF:2.000,
+title-part-2.mp4
+#EXT-X-ENDLIST
+`;
+
 function html(scenario, body) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>${scenario}</title></head><body>${body}</body></html>`;
 }
@@ -101,6 +118,13 @@ seg000.ts
   "/hls-fmp4/init.mp4":    { type: "video/mp4", body: fixture("hls-fmp4/init.mp4") },
   "/hls-fmp4/seg000.m4s":  { type: "video/iso.segment", body: fixture("hls-fmp4/seg000.m4s") },
 
+  // HLS fMP4 with segment URLs that look like standalone .mp4 files.
+  "/hls-fmp4-mp4/master.m3u8":    { type: "application/vnd.apple.mpegurl", body: Buffer.from(HLS_FMP4_MP4_MASTER) },
+  "/hls-fmp4-mp4/media.m3u8":     { type: "application/vnd.apple.mpegurl", body: Buffer.from(HLS_FMP4_MP4_MEDIA) },
+  "/hls-fmp4-mp4/title-init.mp4":  { type: "video/mp4", body: fixture("hls-fmp4/init.mp4") },
+  "/hls-fmp4-mp4/title-part-1.mp4": { type: "video/mp4", body: fixture("hls-fmp4/seg000.m4s") },
+  "/hls-fmp4-mp4/title-part-2.mp4": { type: "video/mp4", body: fixture("hls-fmp4/seg000.m4s") },
+
   // HLS AES-128
   "/hls-aes/master.m3u8": { type: "application/vnd.apple.mpegurl", body: fixture("hls-aes/master.m3u8") },
   "/hls-aes/media.m3u8":  { type: "application/vnd.apple.mpegurl", body: fixture("hls-aes/media.m3u8") },
@@ -135,6 +159,13 @@ const pages = {
     fetch("/hls-fmp4/init.mp4").catch(() => {});
     fetch("/hls-fmp4/seg000.m4s").catch(() => {});
   </script><p>hls fmp4 fixture</p>`),
+  "hls-fmp4-mp4": html("hls-fmp4-mp4", `<script>
+    fetch("/hls-fmp4-mp4/master.m3u8");
+    fetch("/hls-fmp4-mp4/media.m3u8");
+    fetch("/hls-fmp4-mp4/title-init.mp4").catch(() => {});
+    fetch("/hls-fmp4-mp4/title-part-1.mp4").catch(() => {});
+    fetch("/hls-fmp4-mp4/title-part-2.mp4").catch(() => {});
+  </script><p>hls fmp4 mp4-named fragment fixture</p>`),
   "embedded-hls": html("embedded-hls", `<script>
     window.__savemediaFixture = {"stream":{"url":"\\/hls\\/master.m3u8","urls":{"1080p":"\\/hls-fmp4\\/master.m3u8"}}};
   </script><p>embedded hls fixture</p>`),

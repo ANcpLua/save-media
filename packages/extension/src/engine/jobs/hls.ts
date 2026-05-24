@@ -23,7 +23,8 @@ import { remuxTsToMp4 } from "../remux/ts-to-mp4";
  *   1. fetches the media playlist
  *   2. requires a fixed VOD playlist (`EXT-X-ENDLIST`)
  *   3. refuses any `EXT-X-KEY` method
- *   4. remuxes MPEG-TS segments to MP4 through mediabunny
+ *   4. remuxes MPEG-TS segments to MP4 through mediabunny, or validates and
+ *      assembles clear fMP4/CMAF init + media fragments into one MP4
  *
  * This is independent of `plan.kind` so an hls-plain dispatch decision
  * cannot leak ciphertext when the media playlist is actually encrypted.
@@ -77,7 +78,7 @@ export async function runHlsJob(
 }
 
 function assertSupportedPlainVod(
-  media: { readonly isVod: boolean; readonly encryption: RuntimeEncryption | null; readonly initSegmentUrl: string | null },
+  media: { readonly isVod: boolean; readonly encryption: RuntimeEncryption | null },
   playlistUrl: string,
 ): void {
   if (!media.isVod) {
@@ -103,14 +104,6 @@ function assertSupportedPlainVod(
       keySystem: method,
     };
   }
-  if (media.initSegmentUrl) {
-    throw {
-      code: "hls_layout_unsupported",
-      severity: "terminal",
-      manifestUrl: playlistUrl,
-      detail: "HLS fMP4/CMAF playlists require structural MP4 validation that is not enabled.",
-    };
-  }
 }
 
 function unsupportedLayout(manifestUrl: string, detail: string): never {
@@ -130,6 +123,10 @@ async function fetchSegments(
   externalSink: JobSink | undefined,
 ): Promise<JobResult> {
   const { initSegmentUrl, segments } = media;
+  if (initSegmentUrl) {
+    return fetchFmp4Segments(initSegmentUrl, segments, plan, onProgress, signal, externalSink);
+  }
+
   const failed: number[] = [];
   let bytesWritten = 0;
   // Sniff the first segment before opening the sink. Unknown bytes are refused
@@ -218,6 +215,70 @@ async function fetchSegments(
   return result;
 }
 
+async function fetchFmp4Segments(
+  initSegmentUrl: string,
+  segments: readonly RuntimeSegment[],
+  plan: HlsPlainPlan,
+  onProgress: ProgressFn,
+  signal: AbortSignal,
+  externalSink: JobSink | undefined,
+): Promise<JobResult> {
+  const failed: number[] = [];
+  let bytesWritten = 0;
+  let sink: JobSink | null = externalSink ?? null;
+  let opened = false;
+  let currentUrl = initSegmentUrl;
+  let currentIndex = -1;
+
+  try {
+    if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
+
+    onProgress(0, null, "fetching-init-segment");
+    const initResp = await fetchWithRetry(initSegmentUrl, signal, "segment");
+    const initBytes = new Uint8Array(await initResp.arrayBuffer());
+    assertFmp4InitSegment(initBytes, initSegmentUrl);
+
+    const filename = replaceExt(plan.outputFilename, "mp4");
+    if (!sink) sink = new InMemorySink("video/mp4");
+    await sink.open(filename, plan.estimatedBytes);
+    opened = true;
+    await sink.write(initBytes);
+    bytesWritten += initBytes.byteLength;
+    onProgress(bytesWritten, null, "init-segment");
+
+    for (let i = 0; i < segments.length; i++) {
+      if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
+      const seg = segments[i]!;
+      currentUrl = seg.uri;
+      currentIndex = i;
+      const resp = await fetchWithRetry(seg.uri, signal, "segment");
+      const body = new Uint8Array(await resp.arrayBuffer());
+      assertFmp4MediaSegment(body, seg.uri);
+      await sink.write(body);
+      bytesWritten += body.byteLength;
+      onProgress(bytesWritten, null, `segment ${i + 1}/${segments.length}`);
+    }
+
+    if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
+
+    onProgress(bytesWritten, bytesWritten, "muxing");
+    const result = await sink.close();
+    onProgress(bytesWritten, bytesWritten, "finalizing");
+    return result;
+  } catch (err) {
+    if (sink && opened) await sink.abort();
+    if (signal.aborted) throw err;
+    if (isTerminalThrown(err)) throw err;
+    failed.push(currentIndex);
+    throw classifyNetworkFailure(err, "segment", currentUrl) ?? {
+      code: "segment_budget_exhausted",
+      severity: "terminal",
+      failedSegments: failed,
+      totalSegments: segments.length + 1,
+    };
+  }
+}
+
 function concatUint8Arrays(parts: readonly Uint8Array[]): Uint8Array {
   let total = 0;
   for (const p of parts) total += p.byteLength;
@@ -238,6 +299,68 @@ function assertMp4Bytes(bytes: Uint8Array): void {
       probeError: "TS remux did not produce an MP4 ftyp box",
     };
   }
+}
+
+function assertFmp4InitSegment(bytes: Uint8Array, url: string): void {
+  const boxes = readIsoBmffBoxes(bytes, url);
+  const missing = ["ftyp", "moov"].filter(type => !boxes.includes(type));
+  if (missing.length > 0) {
+    unsupportedLayout(url, `HLS fMP4 init segment is missing required MP4 box(es): ${missing.join(", ")}.`);
+  }
+}
+
+function assertFmp4MediaSegment(bytes: Uint8Array, url: string): void {
+  const boxes = readIsoBmffBoxes(bytes, url);
+  const missing = ["moof", "mdat"].filter(type => !boxes.includes(type));
+  if (missing.length > 0) {
+    unsupportedLayout(url, `HLS fMP4 media segment is missing required MP4 box(es): ${missing.join(", ")}.`);
+  }
+}
+
+function readIsoBmffBoxes(bytes: Uint8Array, url: string): string[] {
+  if (bytes.byteLength < 8) {
+    unsupportedLayout(url, "HLS fMP4 segment is too small to contain an MP4 box header.");
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const boxes: string[] = [];
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    if (offset + 8 > bytes.byteLength) {
+      unsupportedLayout(url, "HLS fMP4 segment ends with a truncated MP4 box header.");
+    }
+
+    let size = view.getUint32(offset);
+    let headerSize = 8;
+    if (size === 1) {
+      if (offset + 16 > bytes.byteLength) {
+        unsupportedLayout(url, "HLS fMP4 segment has a truncated 64-bit MP4 box size.");
+      }
+      const high = view.getUint32(offset + 8);
+      const low = view.getUint32(offset + 12);
+      const largeSize = high * 2 ** 32 + low;
+      if (!Number.isSafeInteger(largeSize)) {
+        unsupportedLayout(url, "HLS fMP4 segment has an unsafe 64-bit MP4 box size.");
+      }
+      size = largeSize;
+      headerSize = 16;
+    } else if (size === 0) {
+      size = bytes.byteLength - offset;
+    }
+
+    if (size < headerSize || offset + size > bytes.byteLength) {
+      unsupportedLayout(url, "HLS fMP4 segment has an invalid MP4 box size.");
+    }
+
+    boxes.push(String.fromCharCode(
+      bytes[offset + 4]!,
+      bytes[offset + 5]!,
+      bytes[offset + 6]!,
+      bytes[offset + 7]!,
+    ));
+    offset += size;
+  }
+  return boxes;
 }
 
 function isTerminalThrown(err: unknown): boolean {

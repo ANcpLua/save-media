@@ -1,7 +1,8 @@
-import type { StreamDescriptor, UserChoice, JobError, DrmReason } from "@savemedia/core";
+import type { StreamDescriptor, UserChoice, JobError } from "@savemedia/core";
 import type { EngineToBackgroundMessage } from "../types/messages";
 import type { Logger } from "../util/logger";
 import type { DownloadJob } from "./job";
+import { dispatchRefusalToError } from "../util/dispatch-refusal";
 
 export interface EngineDeps {
   readonly runtime: { sendMessage: (msg: unknown, cb?: (resp: unknown) => void) => void };
@@ -32,7 +33,11 @@ export function createEngineRunner(deps: EngineDeps): EngineRunner {
     }
 
     if (descriptor.drm) {
-      send({ type: "failed", streamId, error: drmError(descriptor.drm.reason, descriptor) });
+      send({
+        type: "failed",
+        streamId,
+        error: dispatchRefusalToError(descriptor.drm.reason, descriptor),
+      });
       return;
     }
 
@@ -72,22 +77,6 @@ export function createEngineRunner(deps: EngineDeps): EngineRunner {
     cancel,
     active: () => Array.from(jobs.keys()),
   };
-}
-
-function drmError(reason: DrmReason, d: StreamDescriptor): JobError {
-  const drm = d.drm;
-  switch (reason) {
-    case "encrypted_media_detected":
-      return { code: "encrypted_media_detected", severity: "terminal", detectedVia: drm?.detectedVia ?? [], keySystem: drm?.keySystem ?? null };
-    case "cdm_required":
-      return { code: "cdm_required", severity: "terminal", keySystem: drm?.keySystem ?? "unknown" };
-    case "clear_segments_unavailable":
-      return { code: "clear_segments_unavailable", severity: "terminal", manifestUrl: d.pageUrl };
-    case "license_bound_stream":
-      return { code: "license_bound_stream", severity: "terminal", keyUri: "", httpStatus: 0 };
-    case "clearkey_deferred":
-      return { code: "clearkey_deferred", severity: "terminal", manifestUrl: d.pageUrl };
-  }
 }
 
 function toJobError(err: unknown, descriptor: StreamDescriptor): JobError {

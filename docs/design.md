@@ -11,7 +11,7 @@ required byte and produce one playable final file with tested code.
 It refuses instead of guessing when any of these are true:
 
 - the stream is protected by DRM or ClearKey/CENC sample encryption;
-- the stream is DASH, encrypted HLS, HLS Live/DVR, or HLS fMP4/CMAF;
+- the stream is DASH, encrypted HLS, HLS Live/DVR, or malformed HLS fMP4/CMAF;
 - the server denies access, rate-limits, or is busy after retries;
 - a required manifest or media segment cannot be fetched;
 - the output would exceed the browser in-memory Blob limit;
@@ -23,19 +23,20 @@ files as video.
 
 ## Supported Capabilities
 
-| Capability | Status | Verification |
+| Capability | Status | Verification gate |
 | --- | --- | --- |
-| Direct verified `.mp4` download | Works | Chrome e2e downloads a real fixture and verifies with `ffprobe`. |
-| Direct verified `.webm` / `.mkv` detection | Works | Fixture server and classification tests cover descriptors. |
-| Plain HLS VOD with MPEG-TS segments | Works | Chrome e2e remuxes a real TS fixture to playable MP4. |
-| DASH detection/refusal | Works | DASH fixture produces a descriptor and download refuses with `dash_unsupported`. |
-| HLS AES-128 detection/refusal | Works | AES fixture refuses with `hls_encryption_unsupported` before key/ciphertext download. |
-| HLS fMP4/CMAF detection/refusal | Works | Fixture verifies init/fragment URLs are not surfaced as standalone downloads. |
-| DRM detection | Works | Widevine fixture is refused with `cdm_required`. |
-| ClearKey/CENC detection | Works | ClearKey fixture is refused with `clearkey_deferred`. |
-| `Alt+S` best download command | Registered in Chrome, Edge, and Firefox | Automated tests check command registration; headed Playwright does not reliably fire extension shortcuts. |
-| Edge runtime | Works on Microsoft Edge | `smoke:edge` launches Edge with the unpacked Chromium build, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. |
-| Firefox runtime | Works on Firefox Desktop | `smoke:firefox` temporarily installs the extension, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. |
+| Direct verified `.mp4` download | Implemented | Chrome e2e downloads a real fixture and verifies with `ffprobe`. |
+| Direct verified `.webm` / `.mkv` detection | Implemented | Fixture server and classification tests cover descriptors. |
+| Plain HLS VOD with MPEG-TS segments | Implemented | Chrome e2e remuxes a real TS fixture to playable MP4. |
+| Plain HLS VOD with clear fMP4/CMAF segments | Implemented | Chrome e2e downloads a real `EXT-X-MAP` fixture to playable MP4 after init/fragment validation. |
+| DASH detection/refusal | Implemented | DASH fixture produces a descriptor and download refuses with `dash_unsupported`. |
+| HLS AES-128 detection/refusal | Implemented | AES fixture refuses with `hls_encryption_unsupported` before key/ciphertext download. |
+| HLS fMP4/CMAF internal-piece filtering | Implemented | Fixture verifies init/fragment URLs are not surfaced as standalone downloads. |
+| DRM detection | Implemented | Widevine fixture is refused with `cdm_required`. |
+| ClearKey/CENC detection | Implemented | ClearKey fixture is refused with `clearkey_deferred`. |
+| `Alt+S` best download command | Implemented | Automated tests check command registration; headed Playwright does not reliably fire extension shortcuts. |
+| Edge runtime | Release-gated | `smoke:edge` launches Edge with the unpacked Chromium build, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. |
+| Firefox runtime | Release-gated | `smoke:firefox` temporarily installs the extension, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. |
 
 ## Unsupported
 
@@ -120,13 +121,15 @@ Runtime playlist parsing is authoritative because `EXT-X-KEY`, `EXT-X-MAP`, and
 
 Supported:
 
-- clear MPEG-TS HLS VOD -> MP4 remux.
+- clear MPEG-TS HLS VOD -> MP4 remux;
+- clear fMP4/CMAF HLS VOD -> MP4 assembly after validating `ftyp`/`moov` init
+  boxes and `moof`/`mdat` media-fragment boxes.
 
 Refused:
 
 - missing `EXT-X-ENDLIST`;
 - AES-128, SAMPLE-AES, SAMPLE-AES-CTR, or any `EXT-X-KEY`;
-- `EXT-X-MAP` fMP4/CMAF playlists;
+- malformed `EXT-X-MAP` fMP4/CMAF playlists;
 - unknown first-segment bytes.
 
 ### DASH

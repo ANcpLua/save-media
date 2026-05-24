@@ -86,6 +86,49 @@ describe("router — descriptor de-duplication", () => {
     expect(r.addDescriptor(1, master)).toBe(true);
     expect(r.listDescriptors(1).map(d => d.id)).toEqual([master.id]);
   });
+
+  it("removes direct fMP4 chunk descriptors once their HLS media playlist is known", () => {
+    const r = createRouter(deps());
+    const initUrl = "https://cdn/video/title-init.mp4";
+    const segmentUrl = "https://cdn/video/title-part-1.mp4";
+    const init = directAt(initUrl, "stream-init" as StreamId);
+    const segment = directAt(segmentUrl, "stream-segment" as StreamId);
+    const media = hlsMediaDescriptor("https://cdn/video/720p.m3u8", {
+      initSegmentUrl: initUrl,
+      segmentUrls: [segmentUrl],
+    });
+
+    expect(r.addDescriptor(1, init)).toBe(true);
+    expect(r.addDescriptor(1, segment)).toBe(true);
+    expect(r.listDescriptors(1).map(d => d.id)).toEqual([init.id, segment.id]);
+
+    expect(r.addDescriptor(1, media)).toBe(true);
+    expect(r.listDescriptors(1).map(d => d.id)).toEqual([media.id]);
+  });
+
+  it("suppresses direct chunks from a covered HLS media playlist even when the master is already visible", () => {
+    const r = createRouter(deps());
+    const manifestUrl = "https://cdn/video/720p.m3u8";
+    const segmentUrl = "https://cdn/video/title-part-1.mp4";
+    const master = hlsDescriptor({
+      variants: [{
+        ...hlsDescriptor().variants[0]!,
+        segmentRef: {
+          kind: "hls-segments",
+          playlistUrl: manifestUrl,
+          initSegmentUrl: null,
+          segmentUrls: [],
+          encryption: null,
+        },
+      }],
+    });
+    const media = hlsMediaDescriptor(manifestUrl, { segmentUrls: [segmentUrl] });
+
+    expect(r.addDescriptor(1, master)).toBe(true);
+    expect(r.addDescriptor(1, media)).toBe(false);
+    expect(r.addDescriptor(1, directAt(segmentUrl, "stream-segment" as StreamId))).toBe(false);
+    expect(r.listDescriptors(1).map(d => d.id)).toEqual([master.id]);
+  });
 });
 
 describe("router — startDownload routing", () => {
@@ -403,7 +446,18 @@ describe("dispatchRefusalToError", () => {
   });
 });
 
-function hlsMediaDescriptor(manifestUrl: string): StreamDescriptor {
+function directAt(url: string, id: StreamId): StreamDescriptor {
+  return directDescriptor({
+    id,
+    title: null,
+    source: { kind: "direct-url", url, headers: {} },
+  });
+}
+
+function hlsMediaDescriptor(
+  manifestUrl: string,
+  overrides: { readonly initSegmentUrl?: string | null; readonly segmentUrls?: readonly string[] } = {},
+): StreamDescriptor {
   return hlsDescriptor({
     id: "stream-hls-media" as StreamId,
     source: { kind: "hls-manifest", manifestUrl, type: "media" },
@@ -413,8 +467,8 @@ function hlsMediaDescriptor(manifestUrl: string): StreamDescriptor {
       segmentRef: {
         kind: "hls-segments",
         playlistUrl: manifestUrl,
-        initSegmentUrl: null,
-        segmentUrls: [`${manifestUrl}/seg0.ts`],
+        initSegmentUrl: overrides.initSegmentUrl ?? null,
+        segmentUrls: overrides.segmentUrls ?? [`${manifestUrl}/seg0.ts`],
         encryption: null,
       },
     }],

@@ -36,12 +36,6 @@ manifest.browser_specific_settings = {
     },
     strict_min_version: "140.0",
   },
-  gecko_android: {
-    data_collection_permissions: {
-      required: ["none"],
-    },
-    strict_min_version: "142.0",
-  },
 };
 
 await writeFile(resolve(out, "manifest.json"), JSON.stringify(manifest, null, 2));

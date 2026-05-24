@@ -21,14 +21,16 @@ savemedia saves only browser-visible video that the extension can prove is a
 complete supported file:
 
 - verified direct MP4, WebM, or MKV;
-- plain HLS VOD with MPEG-TS segments, remuxed locally to MP4.
+- plain HLS VOD with MPEG-TS segments, remuxed locally to MP4;
+- plain HLS VOD with clear fMP4/CMAF init + media fragments, assembled locally
+  to MP4 after MP4 box validation.
 
 savemedia refuses:
 
 - DASH downloads;
 - encrypted HLS, SAMPLE-AES, ClearKey/CENC, DRM, Widevine, PlayReady, FairPlay;
 - live or DVR HLS;
-- HLS fMP4/CMAF;
+- malformed HLS fMP4/CMAF;
 - orphan chunks, init segments, standalone audio, images, HTML, CSS, JS, and
   unknown protocols;
 - URL-only guesses and mislabeled responses.
@@ -40,11 +42,11 @@ transcoding, DASH assembly, AES decryption, or "download anything" behavior.
 
 ## Browser Support Matrix
 
-| Browser target | Evidence | Submission status |
+| Browser target | Required evidence | Submission status |
 | --- | --- | --- |
-| Chrome | `pnpm verify`; headed Chromium Playwright extension suite; direct and HLS downloads verified with `ffprobe`; refusal fixtures covered. | Ready for a Chrome Web Store submission package within the product boundary above. |
-| Edge | `smoke:edge` launches Microsoft Edge with the unpacked Chromium build, opens the popup, checks `download-best` command registration, downloads direct MP4, remuxes plain HLS VOD, and checks DASH/encrypted-HLS/live-HLS/fMP4 refusals. | Ready for Microsoft Edge Add-ons submission within the product boundary above. |
-| Firefox Desktop 140+ | `smoke:firefox` temporarily installs `dist-firefox` into Firefox, opens the popup, checks `download-best` command registration, downloads direct MP4, remuxes plain HLS VOD, and checks DASH/encrypted-HLS/live-HLS/fMP4 refusals. | Ready for AMO review within the product boundary above after `web-ext lint` and source/build notes are included with the upload. |
+| Chrome | `pnpm verify`; Chromium Playwright extension suite; direct, HLS MPEG-TS, and HLS fMP4/CMAF downloads verified with `ffprobe`; refusal fixtures covered. | Candidate Chrome Web Store package after the listed gate passes for the release commit. |
+| Edge | `smoke:edge` launches Microsoft Edge with the unpacked Chromium build, opens the popup, checks `download-best` command registration, downloads direct MP4, remuxes plain HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and checks DASH/encrypted-HLS/live-HLS refusals. | Candidate Microsoft Edge Add-ons package after the Edge smoke gate passes for the release commit. |
+| Firefox Desktop 140+ | `smoke:firefox` temporarily installs `dist-firefox` into Firefox, opens the popup, checks `download-best` command registration, downloads direct MP4, remuxes plain HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and checks DASH/encrypted-HLS/live-HLS refusals. | Candidate AMO package after `web-ext lint`, Firefox smoke, source package, and build notes are included with the upload. |
 
 Chrome passing is not Edge or Firefox evidence. Firefox fixture-only Playwright
 tests are not extension runtime evidence; only `smoke:firefox` counts for
@@ -79,11 +81,12 @@ Long description:
 > saves only paths it can finish as one playable file.
 >
 > Supported: direct MP4, WebM, and MKV files verified by headers or bytes; plain
-> HLS VOD with MPEG-TS segments remuxed locally to MP4.
+> HLS VOD with MPEG-TS segments remuxed locally to MP4; clear HLS fMP4/CMAF
+> streams assembled locally after MP4 box validation.
 >
 > Refused: DASH, encrypted HLS, SAMPLE-AES, ClearKey/CENC, DRM-protected media,
-> Widevine, PlayReady, FairPlay, live/DVR HLS, HLS fMP4/CMAF, orphan chunks,
-> init segments, audio-only files, images, HTML/CSS/JS assets, unknown
+> Widevine, PlayReady, FairPlay, live/DVR HLS, malformed HLS fMP4/CMAF, orphan
+> chunks, init segments, audio-only files, images, HTML/CSS/JS assets, unknown
 > protocols, and URL-only guesses.
 >
 > savemedia does not bypass DRM, paywalls, login restrictions, geographic
@@ -100,9 +103,12 @@ Privacy summary:
 
 Screenshot checklist:
 
-- popup on a direct MP4 fixture with one detected item;
-- popup on a plain HLS fixture with one detected item;
-- refusal card for DASH or protected media;
+- `packages/extension/store-assets/screenshots/01-direct-video.png`:
+  popup on a direct MP4 fixture with one detected item;
+- `packages/extension/store-assets/screenshots/02-hls-vod.png`:
+  popup on a plain HLS fixture with one detected item;
+- `packages/extension/store-assets/screenshots/03-refusal-safety.png`:
+  refusal card for protected media;
 - no screenshot should imply DRM, paywall, site-login bypass, or universal
   downloading.
 
@@ -113,6 +119,8 @@ Build from source:
 ```sh
 pnpm install --frozen-lockfile
 pnpm verify
+pnpm --filter @savemedia/extension smoke:edge
+pnpm --filter @savemedia/extension lint:firefox
 pnpm --filter @savemedia/extension smoke:firefox
 pnpm --filter @savemedia/extension zip
 ```
@@ -134,9 +142,11 @@ pnpm --filter @savemedia/extension lint:firefox
 pnpm --filter @savemedia/extension smoke:firefox
 ```
 
-Submit `packages/extension/savemedia-firefox-0.0.1.zip` plus the repository
-source and these build commands to AMO because the extension is bundled with
-Vite and reviewers need reproducible source instructions.
+Submit `packages/extension/savemedia-firefox-0.0.1.zip` plus
+`packages/extension/savemedia-source-0.0.1.zip` and these build commands to AMO
+because the extension is bundled with Vite and reviewers need reproducible
+source instructions. The package script creates the source zip from tracked
+repository files and excludes generated signing artifacts.
 
 The Firefox build sets
 `browser_specific_settings.gecko.data_collection_permissions.required` to
@@ -144,9 +154,9 @@ The Firefox build sets
 developer or to a developer-operated service. The Firefox package requires
 Firefox Desktop 140+ so AMO's built-in data-consent manifest key is supported.
 
-Current `web-ext lint` warnings are React bundle `innerHTML` warnings in
-`popup.js`; lint reports zero errors. Upload the source package and build notes
-above so reviewers can inspect the React/Vite source behind the bundled popup.
+Upload current `web-ext lint` output, source package, and build notes so
+reviewers can inspect the React/Vite source behind the bundled popup. Do not
+reuse stale lint output from an older release candidate.
 
 Edge package and runtime smoke:
 
@@ -160,8 +170,6 @@ If Edge is not in a standard location, set:
 SAVEMEDIA_EDGE_EXECUTABLE="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
   pnpm --filter @savemedia/extension smoke:edge
 ```
-
-The local verified Edge install was Microsoft Edge `148.0.3967.83`.
 
 Manual Edge checklist if automation is unavailable in another environment:
 
@@ -178,9 +186,16 @@ Then in Microsoft Edge:
    direct MP4 candidate, and download must produce a playable MP4.
 3. Visit `http://127.0.0.1:5174/page/hls.html`; the popup must show one HLS
    candidate, and download must produce a playable MP4.
-4. Visit `dash.html`, `hls-aes.html`, `hls-live.html`, and `hls-fmp4.html`;
-   each must show the matching refusal and must not write a media file.
-5. `Alt+S` must invoke the registered best-download command on the active tab.
+4. Visit `http://127.0.0.1:5174/page/hls-fmp4.html`; the popup must show one
+   HLS candidate, and download must produce a playable MP4.
+5. Visit `dash.html`, `hls-aes.html`, and `hls-live.html`; each must show the
+   matching refusal and must not write a media file.
+6. `Alt+S` must invoke the registered best-download command on the active tab.
 
 Record the Edge version, date, zip path, and result before changing the support
 matrix.
+
+All generated release zips must include the repository `LICENSE` and `NOTICE`
+files. The old committed Chrome `.pem` signing key has been removed from the
+source tree and must be treated as exposed; do not reuse it for future store
+identity.

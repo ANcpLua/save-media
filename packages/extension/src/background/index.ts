@@ -4,14 +4,20 @@
 import "../sw-globals-polyfill";
 
 import { classify } from "@savemedia/core";
+import {
+  isBackgroundToEngineMessage,
+  isBridgeToBackgroundMessage,
+  isEngineToBackgroundMessage,
+  isPopupToBackgroundMessage,
+} from "../types/messages";
 import type {
   BackgroundToEngineMessage,
+  BackgroundToPopupMessage,
   BridgeToBackgroundMessage,
-  PopupToBackgroundMessage,
   EngineToBackgroundMessage,
 } from "../types/messages";
 import { createRouter } from "./router";
-import { registerDownloadBestCommand } from "./download-best";
+import { downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { registerNetworkCapture } from "./network-capture";
 import { ensureEngineHost } from "../platform/processor-host";
 import { createInProcessEngineHost } from "../engine/in-process-host";
@@ -53,9 +59,24 @@ router = createRouter({
   logger,
 });
 
+const downloadBestDeps: DownloadBestDeps = {
+  tabs: {
+    query: queryInfo => chrome.tabs.query(queryInfo),
+    sendMessage: (tabId, msg, cb) => chrome.tabs.sendMessage(tabId, msg, cb),
+  },
+  runtime: {
+    lastError: () => chrome.runtime.lastError,
+    sendMessage: (msg, cb) => chrome.runtime.sendMessage(msg, () => {
+      void chrome.runtime.lastError;
+      cb?.();
+    }),
+  },
+  router,
+  handleCapture,
+};
+
 function isEngineControlMessage(msg: unknown): msg is BackgroundToEngineMessage {
-  if (!msg || typeof msg !== "object" || !("type" in msg)) return false;
-  return msg.type === "start-job" || msg.type === "cancel-job";
+  return isBackgroundToEngineMessage(msg);
 }
 
 chrome.tabs.onRemoved.addListener(tabId => router.clearTab(tabId));
@@ -105,7 +126,10 @@ async function handleCapture(
 
   if (!shouldSurfaceDescriptor(descriptor)) return;
   const added = router.addDescriptor(tabId, descriptor);
-  if (added) updateBadge(tabId);
+  if (added) {
+    updateBadge(tabId);
+    broadcastDescriptors(tabId);
+  }
 }
 
 function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {
@@ -116,21 +140,7 @@ function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {
 
 registerNetworkCapture(handleCapture);
 
-registerDownloadBestCommand(chrome.commands, {
-  tabs: {
-    query: queryInfo => chrome.tabs.query(queryInfo),
-    sendMessage: (tabId, msg, cb) => chrome.tabs.sendMessage(tabId, msg, cb),
-  },
-  runtime: {
-    lastError: () => chrome.runtime.lastError,
-    sendMessage: (msg, cb) => chrome.runtime.sendMessage(msg, () => {
-      void chrome.runtime.lastError;
-      cb?.();
-    }),
-  },
-  router,
-  handleCapture,
-});
+registerDownloadBestCommand(chrome.commands, downloadBestDeps);
 
 function updateBadge(tabId: number): void {
   const count = router.listDescriptors(tabId).length;
@@ -144,27 +154,44 @@ function updateBadge(tabId: number): void {
   }
 }
 
+function broadcastDescriptors(tabId: number): void {
+  const msg: BackgroundToPopupMessage = {
+    type: "descriptors",
+    tabId,
+    descriptors: router.listDescriptors(tabId),
+  };
+  chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError);
+}
+
 chrome.runtime.onMessage.addListener((
-  msg: BridgeToBackgroundMessage | PopupToBackgroundMessage | EngineToBackgroundMessage,
+  msg: unknown,
   sender,
   sendResponse,
 ) => {
-  if ("type" in msg && msg.type === "capture") {
-    const tabId = sender.tab?.id;
-    if (tabId !== undefined) void handleCapture(tabId, msg);
+  if (isBridgeToBackgroundMessage(msg)) {
+    if (msg.type === "download-best-hotkey") {
+      const tabId = sender.tab?.id;
+      if (tabId !== undefined) void downloadBestForTab(downloadBestDeps, tabId, msg.pageUrl);
+      return false;
+    }
+
+    if (msg.type === "capture") {
+      const tabId = sender.tab?.id;
+      if (tabId !== undefined) void handleCapture(tabId, msg);
+      return false;
+    }
+
     return false;
   }
 
-  if (msg.type === "ready") return false;
-
-  if (msg.type === "list" || msg.type === "download" || msg.type === "cancel") {
+  if (isPopupToBackgroundMessage(msg)) {
     void router.handlePopupMessage(msg).then(response => {
       if (response) sendResponse(response);
     });
     return true; // keep channel open
   }
 
-  if (msg.type === "progress" || msg.type === "complete" || msg.type === "failed") {
+  if (isEngineToBackgroundMessage(msg)) {
     void handleEngineMessage(msg);
     return false;
   }

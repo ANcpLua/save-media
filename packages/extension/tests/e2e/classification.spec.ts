@@ -1,13 +1,13 @@
 import { test, expect, chromium, type BrowserContext, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(here, "..", "..", "dist-chrome");
-const hasExtension = existsSync(dist) && existsSync(resolve(dist, "background.js"));
+const fixtureBaseURL = `http://127.0.0.1:${process.env.SAVEMEDIA_FIXTURE_PORT ?? 5174}`;
 
 /**
  * End-to-end classification: load the unpacked Chrome extension into a
@@ -30,15 +30,116 @@ interface Descriptor {
   capabilities: { drmBlocked: boolean; directDownload: boolean };
 }
 
+interface ExtensionManifest {
+  manifest_version?: number;
+  background?: { service_worker?: string };
+  action?: { default_popup?: string };
+}
+
+interface ExtensionRuntime {
+  context: BrowserContext;
+  extensionId: string;
+  popupPath: string;
+  userDataDir: string;
+  consoleErrors: string[];
+}
+
+type ExtensionLaunchOptions = Pick<NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>, "acceptDownloads" | "downloadsPath">;
+
+async function launchExtensionRuntime(options: ExtensionLaunchOptions = {}): Promise<ExtensionRuntime> {
+  const manifest = readBuiltManifest();
+  const userDataDir = mkdtempSync(resolve(tmpdir(), "savemedia-chrome-profile-"));
+  let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      baseURL: fixtureBaseURL,
+      ...options,
+      args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
+    });
+
+    const worker = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 10_000 });
+    const workerUrl = new URL(worker.url());
+    const workerPath = normalizeManifestPath(manifest.background!.service_worker!);
+    expect(workerUrl.protocol).toBe("chrome-extension:");
+    expect(workerUrl.pathname).toBe(`/${workerPath}`);
+
+    const runtime: ExtensionRuntime = {
+      context,
+      extensionId: workerUrl.host,
+      popupPath: normalizeManifestPath(manifest.action!.default_popup!),
+      userDataDir,
+      consoleErrors: [],
+    };
+    context.on("page", page => captureFatalExtensionConsoleErrors(runtime, page));
+    for (const page of context.pages()) captureFatalExtensionConsoleErrors(runtime, page);
+    return runtime;
+  } catch (error) {
+    await context?.close().catch(() => undefined);
+    rmSync(userDataDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function closeExtensionRuntime(runtime: ExtensionRuntime | undefined): Promise<void> {
+  await runtime?.context.close().catch(() => undefined);
+  if (runtime) rmSync(runtime.userDataDir, { recursive: true, force: true });
+}
+
+function readBuiltManifest(): ExtensionManifest {
+  const manifestPath = resolve(dist, "manifest.json");
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Chrome extension build missing at ${manifestPath}. Run \`pnpm --filter @savemedia/extension build:chrome\` before Playwright E2E.`);
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExtensionManifest;
+  if (manifest.manifest_version !== 3) {
+    throw new Error(`Expected built Chrome manifest_version 3 in ${manifestPath}.`);
+  }
+  assertBuiltManifestPath("background.service_worker", manifest.background?.service_worker);
+  assertBuiltManifestPath("action.default_popup", manifest.action?.default_popup);
+  return manifest;
+}
+
+function assertBuiltManifestPath(field: string, value: string | undefined): void {
+  if (!value) throw new Error(`Built Chrome manifest is missing ${field}.`);
+  const builtPath = resolve(dist, normalizeManifestPath(value));
+  if (!existsSync(builtPath)) throw new Error(`Built Chrome manifest ${field} points at missing file ${builtPath}.`);
+}
+
+function normalizeManifestPath(value: string): string {
+  return value.replace(/^\/+/, "");
+}
+
+function extensionPageUrl(runtime: ExtensionRuntime): string {
+  return `chrome-extension://${runtime.extensionId}/${runtime.popupPath}`;
+}
+
+function captureFatalExtensionConsoleErrors(runtime: ExtensionRuntime, page: Page): void {
+  page.on("console", message => {
+    if (message.type() === "error" && page.url().startsWith(`chrome-extension://${runtime.extensionId}/`)) {
+      runtime.consoleErrors.push(`${page.url()}: ${message.text()}`);
+    }
+  });
+  page.on("pageerror", error => {
+    if (page.url().startsWith(`chrome-extension://${runtime.extensionId}/`)) {
+      runtime.consoleErrors.push(`${page.url()}: ${error.message}`);
+    }
+  });
+}
+
+function expectNoFatalExtensionConsoleErrors(runtime: ExtensionRuntime | undefined): void {
+  const errors = runtime?.consoleErrors.splice(0) ?? [];
+  expect(errors, "fatal console/page errors emitted by extension pages").toEqual([]);
+}
+
 test.describe("extension classifies real fixture pages", () => {
-  test.skip(!hasExtension, "dist-chrome/ not built; run `pnpm --filter @savemedia/extension build:chrome`");
   // Both describes drive an unpacked Chromium extension via the chromium
   // module directly. The firefox playwright project must skip them so it
   // doesn't try to launch a Chromium binary it hasn't installed.
   test.skip(({ browserName }) => browserName !== "chromium", "chromium-only suite");
 
+  let runtime: ExtensionRuntime | undefined;
   let context: BrowserContext | undefined;
-  let extId: string | undefined;
   let probe: Page | undefined;
   let downloadDir: string | undefined;
 
@@ -48,21 +149,20 @@ test.describe("extension classifies real fixture pages", () => {
     // project doesn't try to spawn a binary it never installed.
     if (browserName !== "chromium") return;
     downloadDir = mkdtempSync(resolve(tmpdir(), "savemedia-downloads-"));
-    context = await chromium.launchPersistentContext("", {
-      headless: false,
-      acceptDownloads: true,
-      downloadsPath: downloadDir,
-      args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
-    });
-    const sw = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 10_000 });
-    extId = new URL(sw.url()).host;
+    runtime = await launchExtensionRuntime({ acceptDownloads: true, downloadsPath: downloadDir });
+    context = runtime.context;
     probe = await context.newPage();
-    await probe.goto(`chrome-extension://${extId}/src/popup/index.html`);
+    await probe.goto(extensionPageUrl(runtime));
+    await expect(probe.locator("header")).toContainText("savemedia");
+  });
+
+  test.afterEach(() => {
+    expectNoFatalExtensionConsoleErrors(runtime);
   });
 
   test.afterAll(async () => {
     await probe?.close();
-    await context?.close();
+    await closeExtensionRuntime(runtime);
     if (downloadDir) rmSync(downloadDir, { recursive: true, force: true });
   });
 
@@ -238,6 +338,13 @@ test.describe("extension classifies real fixture pages", () => {
     expect(descriptors.filter(d => d.protocol === "progressive-http")).toHaveLength(0);
   });
 
+  test("HLS fMP4 .mp4-named fragments are not surfaced as standalone videos", async () => {
+    const descriptors = await waitForDescriptors("hls-fmp4-mp4", ds => ds.some(d => d.protocol === "hls"));
+    const hls = descriptors.find(d => d.protocol === "hls");
+    expect(hls, `got ${JSON.stringify(descriptors)}`).toBeDefined();
+    expect(descriptors.filter(d => d.protocol === "progressive-http")).toHaveLength(0);
+  });
+
   test("DASH MPD fixture produces a dash descriptor", async () => {
     const descriptors = await waitForDescriptors("dash", ds => ds.some(d => d.protocol === "dash"));
     const dash = descriptors.find(d => d.protocol === "dash");
@@ -337,14 +444,28 @@ test.describe("extension classifies real fixture pages", () => {
     }
   });
 
-  test("download pipeline refuses HLS fMP4/CMAF instead of saving fragments", async () => {
+  test("download pipeline saves clear HLS fMP4/CMAF as a playable MP4", async () => {
     await clearDownloadHistory();
     const page = await openFixtureAndWait("hls-fmp4", ds => ds.some(d => d.protocol === "hls"));
     try {
       const descriptor = (await descriptorsForUrlContaining("/page/hls-fmp4.html")).find(d => d.protocol === "hls");
       expect(descriptor).toBeDefined();
-      await expect(startDescriptorDownloadExpectFailure(descriptor!, "e2e-hls-fmp4.mp4"))
-        .resolves.toBe("hls_layout_unsupported");
+      await startDescriptorDownload(descriptor!, "e2e-hls-fmp4.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-hls-fmp4.mp4");
+      expectPlayable(file, /mp4|mov/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("Alt+S on the page starts the best HLS download", async () => {
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("hls-fmp4-mp4", ds => ds.some(d => d.protocol === "hls"));
+    try {
+      await page.bringToFront();
+      await page.keyboard.press("Alt+KeyS");
+      const file = await waitForCompletedDownload(page, ".mp4");
+      expectPlayable(file, /mp4|mov/);
     } finally {
       await page.close();
     }
@@ -378,24 +499,23 @@ test.describe("extension classifies real fixture pages", () => {
 });
 
 test.describe("popup HTML round-trips chrome.runtime messaging", () => {
-  test.skip(!hasExtension, "dist-chrome/ not built");
   test.skip(({ browserName }) => browserName !== "chromium", "chromium-only suite");
 
+  let runtime: ExtensionRuntime | undefined;
   let context: BrowserContext | undefined;
-  let extId: string | undefined;
 
   test.beforeAll(async ({ browserName }) => {
     if (browserName !== "chromium") return;
-    context = await chromium.launchPersistentContext("", {
-      headless: false,
-      args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
-    });
-    const sw = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 10_000 });
-    extId = new URL(sw.url()).host;
+    runtime = await launchExtensionRuntime();
+    context = runtime.context;
+  });
+
+  test.afterEach(() => {
+    expectNoFatalExtensionConsoleErrors(runtime);
   });
 
   test.afterAll(async () => {
-    await context?.close();
+    await closeExtensionRuntime(runtime);
   });
 
   test("popup loads + sendMessage('list') from popup actually reaches the SW", async () => {
@@ -407,7 +527,8 @@ test.describe("popup HTML round-trips chrome.runtime messaging", () => {
 
     const popup = await context!.newPage();
     try {
-      await popup.goto(`chrome-extension://${extId}/src/popup/index.html`);
+      await popup.goto(extensionPageUrl(runtime!));
+      expect(new URL(popup.url()).pathname).toBe(`/${runtime!.popupPath}`);
       await expect(popup.locator("header")).toContainText("savemedia");
       // Within the popup context, chrome.runtime.sendMessage DOES round-trip
       // to the SW listener. Probe the list response for the fixture tab.
@@ -433,7 +554,7 @@ test.describe("popup HTML round-trips chrome.runtime messaging", () => {
   test("Chrome registers Alt+S for the best-download command", async () => {
     const popup = await context!.newPage();
     try {
-      await popup.goto(`chrome-extension://${extId}/src/popup/index.html`);
+      await popup.goto(extensionPageUrl(runtime!));
       const command = await popup.evaluate(async () => {
         const commands = await chrome.commands.getAll();
         return commands.find(c => c.name === "download-best") ?? null;

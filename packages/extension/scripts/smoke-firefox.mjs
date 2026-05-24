@@ -97,11 +97,18 @@ try {
   expectPlayable(hlsFile, /mp4|mov/);
   console.log("✓ Firefox remuxed and downloaded a plain HLS VOD fixture");
 
+  await clearDownloadHistory();
+  const fmp4 = await firstDescriptor("hls-fmp4", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const fmp4Name = `firefox-hls-fmp4-${Date.now()}.mp4`;
+  await startDescriptorDownload(fmp4, fmp4Name);
+  const fmp4File = await waitForDownloadedFile(fmp4Name);
+  expectPlayable(fmp4File, /mp4|mov/);
+  console.log("✓ Firefox downloaded a clear HLS fMP4/CMAF fixture");
+
   await expectFailure("dash", d => d.protocol === "dash", "dash_unsupported");
   await expectFailure("hls-aes", d => d.protocol === "hls", "hls_encryption_unsupported");
   await expectFailure("hls-live", d => d.protocol === "hls", "hls_live_unsupported");
-  await expectFailure("hls-fmp4", d => d.protocol === "hls", "hls_layout_unsupported");
-  console.log("✓ Firefox surfaced DASH, encrypted HLS, live HLS, and HLS fMP4/CMAF refusals");
+  console.log("✓ Firefox surfaced DASH, encrypted HLS, and live HLS refusals");
 
   console.log("✓ Firefox runtime smoke passed");
 

@@ -6,14 +6,25 @@
 // See content/main.ts for why the `export {}` marker is here.
 export {};
 const BRIDGE_TAG = "__savemedia" as const;
+const CAPTURE_KINDS = ["media-element", "media-source", "eme", "ms-probe"] as const;
 
-interface MainPayload {
+type CaptureKind = typeof CAPTURE_KINDS[number];
+
+interface PageCapturePayload {
   [BRIDGE_TAG]: true;
-  kind: string;
+  kind: CaptureKind;
   url: string | null;
   pageUrl: string;
   [key: string]: unknown;
 }
+
+interface PageCommandPayload {
+  [BRIDGE_TAG]: true;
+  kind: "download-best-hotkey";
+  pageUrl: string;
+}
+
+type MainPayload = PageCapturePayload | PageCommandPayload;
 
 interface DiscoverPageMediaMessage {
   type: "discover-page-media";
@@ -21,8 +32,15 @@ interface DiscoverPageMediaMessage {
 
 window.addEventListener("message", event => {
   if (event.source !== window) return;
-  const data = event.data as MainPayload | null;
-  if (!data || data[BRIDGE_TAG] !== true) return;
+  const data = event.data;
+  if (!isMainPayload(data)) return;
+  if (data.kind === "download-best-hotkey") {
+    chrome.runtime.sendMessage(
+      { type: "download-best-hotkey", pageUrl: data.pageUrl },
+      () => void chrome.runtime.lastError,
+    );
+    return;
+  }
   chrome.runtime.sendMessage(
     { type: "capture", payload: data },
     () => void chrome.runtime.lastError,
@@ -30,8 +48,7 @@ window.addEventListener("message", event => {
 });
 
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
-  const command = msg as DiscoverPageMediaMessage | null;
-  if (command?.type !== "discover-page-media") return false;
+  if (!isDiscoverPageMediaMessage(msg)) return false;
   sendResponse({ pageUrl: location.href, urls: discoverMediaUrls() });
   return false;
 });
@@ -89,4 +106,44 @@ function looksLikeFragmentUrl(url: string): boolean {
   if (/\.(m4s|ts|mpegts)$/i.test(base)) return true;
   if (/\.mp4\/[^/]+\.(mp4|m4s)$/i.test(path)) return true;
   return /^(init|seg|segment|chunk|frag|fragment|part)[._-][a-z0-9._-]*\.mp4$/i.test(base);
+}
+
+function isMainPayload(value: unknown): value is MainPayload {
+  if (!isRecord(value)) return false;
+  if (value[BRIDGE_TAG] !== true || typeof value.pageUrl !== "string") return false;
+  if (value.kind === "download-best-hotkey") return true;
+  return isCaptureKind(value.kind)
+    && (typeof value.url === "string" || value.url === null)
+    && isOptionalStringRecord(value.responseHeaders)
+    && isOptionalString(value.responseBodyHeadB64)
+    && isOptionalString(value.keySystem)
+    && isOptionalString(value.mimeType)
+    && isOptionalMediaElementTag(value.elementTag)
+    && isOptionalString(value.elementSrc);
+}
+
+function isDiscoverPageMediaMessage(value: unknown): value is DiscoverPageMediaMessage {
+  return isRecord(value) && value.type === "discover-page-media";
+}
+
+function isCaptureKind(value: unknown): value is CaptureKind {
+  return typeof value === "string" && (CAPTURE_KINDS as readonly string[]).includes(value);
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalStringRecord(value: unknown): value is Readonly<Record<string, string>> | undefined {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(entry => typeof entry === "string");
+}
+
+function isOptionalMediaElementTag(value: unknown): value is "video" | "audio" | undefined {
+  return value === undefined || value === "video" || value === "audio";
 }
