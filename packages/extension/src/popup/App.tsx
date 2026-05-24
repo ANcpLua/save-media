@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { StreamDescriptor } from "@savemedia/core";
-import type { BackgroundToPopupMessage, PopupToBackgroundMessage } from "../types/messages";
+import { isBackgroundToPopupMessage } from "../types/messages";
+import type { PopupToBackgroundMessage } from "../types/messages";
 import { DetectedItem, type JobStatus } from "./components/DetectedItem";
 
 export interface AppProps {
@@ -12,23 +13,26 @@ export interface AppProps {
 export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch = false }: AppProps = {}) {
   const [descriptors, setDescriptors] = useState<readonly StreamDescriptor[]>(initialDescriptors);
   const [tabId, setTabId] = useState<number | null>(null);
+  const tabIdRef = useRef<number | null>(null);
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({ ...initialStatuses });
 
   useEffect(() => {
     if (skipFetch) return;
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
       const id = tabs[0]?.id ?? null;
+      tabIdRef.current = id;
       setTabId(id);
       if (id === null) return;
       const msg: PopupToBackgroundMessage = { type: "list", tabId: id };
-      chrome.runtime.sendMessage(msg, (response: BackgroundToPopupMessage | undefined) => {
-        if (response?.type === "descriptors") setDescriptors(response.descriptors);
+      chrome.runtime.sendMessage(msg, (response: unknown) => {
+        if (isBackgroundToPopupMessage(response) && response.type === "descriptors") setDescriptors(response.descriptors);
       });
     });
   }, [skipFetch]);
 
   useEffect(() => {
-    function listener(msg: BackgroundToPopupMessage): void {
+    function listener(msg: unknown): void {
+      if (!isBackgroundToPopupMessage(msg)) return;
       if (msg.type === "job-progress") {
         setStatuses(prev => ({
           ...prev,
@@ -43,6 +47,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "complete" } }));
       } else if (msg.type === "job-failed") {
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "failed", error: msg.error } }));
+      } else if (msg.type === "descriptors" && msg.tabId === tabIdRef.current) {
+        setDescriptors(msg.descriptors);
       }
     }
     chrome.runtime.onMessage.addListener(listener);

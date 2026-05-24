@@ -9,19 +9,20 @@ native host, yt-dlp, ffmpeg.wasm, local ffmpeg, or hidden remote services.
 
 ## Supported
 
-Verified in the Chrome Playwright extension suite with real media fixtures:
+The release gates cover these paths with real media fixtures:
 
 - Direct progressive `.mp4`, `.webm`, and `.mkv` files after headers or magic
   bytes confirm the container. A matching URL extension alone is only a hint.
 - Plain HLS VOD with MPEG-TS segments, remuxed to one playable MP4.
-- DRM, ClearKey/CENC, DASH, encrypted HLS, HLS fMP4/CMAF, and live HLS detection
-  as refusal cases.
+- Plain HLS VOD with clear fMP4/CMAF init + media fragments, assembled to one
+  playable MP4 after MP4 box validation.
+- DRM, ClearKey/CENC, DASH, encrypted HLS, malformed fMP4/CMAF, and live HLS
+  detection as refusal cases.
 - Negative filtering for `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.css`,
   `.js`, `.html`, standalone audio files, orphan `.ts`, orphan `.m4s`, init
   segments, and numbered chunk URLs.
-- `Alt+S` command registration in Chrome. Manual Chrome testing confirmed it
-  starts the highest-quality supported detected download on the current tab.
-- Firefox Desktop runtime smoke coverage for the same direct, HLS, command, and
+- `Alt+S` command registration and best-download routing.
+- Firefox Desktop runtime smoke coverage for the direct, HLS, command, and
   refusal paths listed in the browser evidence table.
 
 The engine aborts partial in-memory output when a required segment fails. It
@@ -35,8 +36,7 @@ bytes as final video.
 - HLS AES-128, SAMPLE-AES, SAMPLE-AES-CTR, ClearKey/CENC, Widevine, PlayReady,
   FairPlay, and other protected media paths.
 - HLS Live/DVR or any playlist without `EXT-X-ENDLIST`.
-- HLS fMP4/CMAF layouts until structural validation is implemented and covered
-  by golden media tests.
+- HLS fMP4/CMAF playlists whose init or media fragments fail MP4 box validation.
 - Direct `.mov`, `.avi`, `.wmv`, `.flv`, `.m4v` as independent support claims.
   `m4v` may be accepted only when bytes prove it is normal MP4.
 - Transcoding, size-reduction modes, arbitrary container conversion, and
@@ -47,9 +47,9 @@ bytes as final video.
 
 | Browser target | Current evidence | Claim level |
 | --- | --- | --- |
-| Chrome | Automated unpacked-extension Playwright suite, including real downloads verified with `ffprobe`. | Supported for the capabilities above. |
-| Edge | Edge zip builds; `smoke:edge` launches Microsoft Edge, opens the popup, checks `Alt+S`, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. | Supported for the capabilities above. |
-| Firefox | Firefox zip builds for Firefox Desktop 140+; `smoke:firefox` temporarily installs `dist-firefox`, opens the popup, checks `Alt+S`, downloads direct MP4, remuxes HLS VOD, and verifies refusal fixtures. | Supported on Firefox Desktop for the capabilities above. |
+| Chrome | Automated unpacked-extension Playwright suite, including direct, HLS MPEG-TS, and HLS fMP4/CMAF downloads verified with `ffprobe`. | Claimed after the Chrome gate passes for the release commit. |
+| Edge | Edge zip builds; `smoke:edge` launches Microsoft Edge, opens the popup, checks `Alt+S`, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. | Claimed after the Edge smoke gate passes for the release commit. |
+| Firefox | Firefox zip builds for Firefox Desktop 140+; `smoke:firefox` temporarily installs `dist-firefox`, opens the popup, checks `Alt+S`, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. | Claimed after Firefox lint and smoke gates pass for the release commit. |
 
 Store-readiness drafts live in `docs/privacy-policy.md` and
 `docs/store-submission.md`. Any store listing must match the browser evidence
@@ -76,8 +76,9 @@ Chrome execution path:
    descriptors, dedupes noisy segment URLs, and starts either a direct browser
    download or an HLS engine job.
 4. The offscreen engine fetches the selected HLS media playlist and segments,
-   refuses unsupported layouts/encryption, remuxes MPEG-TS to MP4, verifies the
-   MP4 signature, and hands a Blob URL to `chrome.downloads.download`.
+   refuses unsupported layouts/encryption, remuxes MPEG-TS to MP4 or assembles
+   validated fMP4/CMAF fragments, verifies the MP4 structure, and hands a Blob
+   URL to `chrome.downloads.download`.
 
 ## Development
 
@@ -87,14 +88,14 @@ pnpm --filter @savemedia/core build
 pnpm -r typecheck
 pnpm -r test
 pnpm --filter @savemedia/extension build:chrome
-pnpm --filter @savemedia/extension exec playwright test --project=chromium
+pnpm --filter @savemedia/extension test:e2e
 pnpm --filter @savemedia/extension smoke:edge
 pnpm --filter @savemedia/extension smoke:firefox
 pnpm --filter @savemedia/extension zip
 ```
 
-`pnpm verify` runs the type/unit/build gate. The Chromium Playwright suite is
-kept separate because it launches a headed browser with the unpacked extension.
+`pnpm verify` runs typecheck, unit tests, production Chrome and Firefox builds,
+and the Chromium Playwright suite against the unpacked Chrome extension.
 Install `ffmpeg`/`ffprobe` before running media-download e2e or smoke tests.
 
 ## Loading Locally
@@ -112,3 +113,16 @@ Release zips are created by:
 ```sh
 pnpm --filter @savemedia/extension zip
 ```
+
+The zip task creates Chrome, Edge, Firefox, and source packages. Generated
+packages include `LICENSE` and `NOTICE`; do not upload stale local zips after a
+source or license change.
+
+## License
+
+Apache-2.0. See `LICENSE` and `NOTICE`.
+
+## Support
+
+Use GitHub Issues for reproducible bugs and store-review questions. Do not post
+credentials, cookies, private media URLs, license keys, or other secrets.

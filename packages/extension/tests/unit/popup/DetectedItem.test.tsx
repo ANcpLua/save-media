@@ -79,6 +79,19 @@ describe("DetectedItem — progress + error + complete states", () => {
     expect(screen.getByText("fetching")).toBeTruthy();
   });
 
+  it("uses HLS segment count as determinate progress when byte total is unknown", () => {
+    render(
+      <ul>
+        <DetectedItem
+          descriptor={hlsDescriptor()}
+          status={{ phase: "active", bytesWritten: 123_000, bytesTotal: null, stage: "segment 75/100" }}
+        />
+      </ul>,
+    );
+    const bar = screen.getByTestId("progress").querySelector(".bg-blue-600") as HTMLElement | null;
+    expect(bar?.style.width).toBe("75%");
+  });
+
   it("renders failure with userMessage when failed", () => {
     render(
       <ul>

@@ -2,7 +2,25 @@
   "name": "savemedia",
   "version": "0.0.1",
   "private": true,
+  "description": "Browser extension for saving verified direct video files and plain HLS VOD streams.",
   "license": "Apache-2.0",
+  "author": "Alexander Nachtmann ANcpLua",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/O-ANcppLua/save-media.git"
+  },
+  "bugs": {
+    "url": "https://github.com/O-ANcppLua/save-media/issues"
+  },
+  "homepage": "https://github.com/O-ANcppLua/save-media#readme",
+  "keywords": [
+    "browser-extension",
+    "chrome-extension",
+    "firefox-addon",
+    "edge-addon",
+    "video",
+    "hls"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.11.0",
@@ -12,8 +30,13 @@
     "build": "pnpm -r build",
     "build:all": "pnpm -r build && pnpm --filter @savemedia/extension build:firefox",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck",
+    "test:e2e": "pnpm --filter @savemedia/extension test:e2e",
+    "test:e2e:chromium": "pnpm --filter @savemedia/extension test:e2e:chromium",
+    "test:e2e:firefox-fixtures": "pnpm --filter @savemedia/extension test:e2e:firefox-fixtures",
+    "test:e2e:headed": "pnpm --filter @savemedia/extension test:e2e:headed",
+    "lint": "pnpm --filter @savemedia/core build && pnpm -r lint",
+    "typecheck": "pnpm --filter @savemedia/core build && pnpm -r typecheck",
+    "report:e2e": "pnpm --filter @savemedia/extension report:e2e",
     "smoke:edge": "pnpm --filter @savemedia/extension smoke:edge",
     "smoke:firefox": "pnpm --filter @savemedia/extension smoke:firefox",
     "verify": "node scripts/verify.mjs"

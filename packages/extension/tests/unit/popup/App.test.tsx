@@ -27,6 +27,25 @@ describe("popup App", () => {
     expect(screen.getByText(/clip name/i)).toBeTruthy();
   });
 
+  it("refreshes descriptors when background broadcasts the active tab list", () => {
+    let listener: ((msg: BackgroundToPopupMessage) => void) | null = null;
+    vi.mocked(globalThis.chrome.runtime.onMessage.addListener).mockImplementation((fn: unknown) => {
+      listener = fn as (msg: BackgroundToPopupMessage) => void;
+    });
+    render(<App />);
+    expect(listener).not.toBeNull();
+
+    act(() => {
+      listener!({
+        type: "descriptors",
+        tabId: 1,
+        descriptors: [directDescriptor({ title: "fresh list" })],
+      });
+    });
+
+    expect(screen.getByText(/fresh list/i)).toBeTruthy();
+  });
+
   it("updates job state when background broadcasts progress/failed/complete messages", () => {
     let listener: ((msg: BackgroundToPopupMessage) => void) | null = null;
     vi.mocked(globalThis.chrome.runtime.onMessage.addListener).mockImplementation((fn: unknown) => {

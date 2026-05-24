@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   discoverPageMediaForTab,
   downloadBestForActiveTab,
+  downloadBestForTab,
   registerDownloadBestCommand,
   type DownloadBestDeps,
 } from "../../../src/background/download-best";
@@ -92,6 +93,20 @@ describe("download-best command helpers", () => {
 
     expect(d.handleCapture).toHaveBeenCalledTimes(1);
     expect(d.router.startBestDownload).toHaveBeenCalledWith(42);
+  });
+
+  it("runs download-best for a content-script hotkey without querying the active tab", async () => {
+    const d = deps();
+
+    await downloadBestForTab(d, 77, "https://example.com/hotkey");
+
+    expect(d.tabs.query).not.toHaveBeenCalled();
+    expect(d.tabs.sendMessage).toHaveBeenCalledWith(
+      77,
+      { type: "discover-page-media" },
+      expect.any(Function),
+    );
+    expect(d.router.startBestDownload).toHaveBeenCalledWith(77);
   });
 
   it("forwards startBestDownload failures to popup listeners", async () => {

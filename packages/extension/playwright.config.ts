@@ -8,7 +8,13 @@ export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false, // extension under test is global; avoid races
   workers: 1,
-  reporter: process.env.CI ? "line" : "list",
+  forbidOnly: !!process.env.CI,
+  outputDir: "test-results/e2e-artifacts",
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "playwright-report", open: "never" }],
+    ["json", { outputFile: "test-results/e2e-results.json" }],
+  ],
   timeout: 60_000,
   expect: { timeout: 10_000 },
   webServer: {
@@ -19,8 +25,10 @@ export default defineConfig({
     env: { SAVEMEDIA_FIXTURE_PORT: String(process.env.SAVEMEDIA_FIXTURE_PORT ?? 5174) },
   },
   use: {
-    baseURL: `http://localhost:${process.env.SAVEMEDIA_FIXTURE_PORT ?? 5174}`,
-    trace: "on-first-retry",
+    baseURL: `http://127.0.0.1:${process.env.SAVEMEDIA_FIXTURE_PORT ?? 5174}`,
+    screenshot: "only-on-failure",
+    trace: "retain-on-failure",
+    video: "retain-on-failure",
   },
   projects: [
     {

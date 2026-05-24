@@ -76,8 +76,16 @@ export async function downloadBestForActiveTab(deps: DownloadBestDeps): Promise<
   const [tab] = await deps.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
 
-  await discoverPageMediaForTab(deps, tab.id, tab.url ?? "");
-  const failure = await deps.router.startBestDownload(tab.id);
+  await downloadBestForTab(deps, tab.id, tab.url ?? "");
+}
+
+export async function downloadBestForTab(
+  deps: DownloadBestDeps,
+  tabId: number,
+  fallbackPageUrl: string,
+): Promise<void> {
+  await discoverPageMediaForTab(deps, tabId, fallbackPageUrl);
+  const failure = await deps.router.startBestDownload(tabId);
   if (failure) {
     const msg: BackgroundToPopupMessage = {
       type: "job-failed",

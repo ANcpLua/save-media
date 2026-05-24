@@ -33,7 +33,8 @@ or share data with data brokers.
 When the user starts a download, the browser may request media bytes from the
 original website or media host that the page already referenced. For plain HLS
 VOD, savemedia fetches the playlist and segments from those original URLs in the
-browser and remuxes clear MPEG-TS segments locally.
+browser, then remuxes clear MPEG-TS segments or assembles validated clear
+fMP4/CMAF fragments locally.
 
 ## Credentials, Protected Media, and Access Control
 
@@ -41,7 +42,8 @@ savemedia does not collect usernames, passwords, payment details, cookies, or
 license keys. It does not bypass DRM, paywalls, login restrictions, geographic
 restrictions, expired signed URLs, or protected streams. If the browser or the
 server denies access, or if DRM/encryption/live/DASH/fMP4-CMAF paths are
-detected, savemedia refuses the download instead of attempting a workaround.
+detected outside the supported clear-HLS boundary, savemedia refuses the
+download instead of attempting a workaround.
 
 ## Browser Store Limited Use Statement
 
@@ -52,5 +54,7 @@ transfer, sell, or use user data for unrelated purposes.
 
 ## Contact
 
-For review or privacy questions, use the developer contact configured in the
-browser store listing for this extension.
+For review, privacy, support, or security questions, use the browser store
+developer contact or the repository support guidance:
+
+https://github.com/O-ANcppLua/save-media

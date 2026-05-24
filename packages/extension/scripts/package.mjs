@@ -6,11 +6,12 @@
  * pack step from the build step and parallelise.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(root, "../..");
 const version = readVersion();
 
 // Edge ships the chromium build verbatim; just rename the zip so release
@@ -28,16 +29,50 @@ for (const t of targets) {
     process.exit(1);
   }
   const out = resolve(root, `savemedia-${t.name}-${version}.zip`);
-  spawnSync("rm", ["-f", out]);
+  rmSync(out, { force: true });
   const r = spawnSync("zip", ["-r", "-q", out, "."], { cwd: src, stdio: "inherit" });
   if (r.status !== 0) {
     console.error(`✘ zip failed for ${t.name}`);
     process.exit(r.status ?? 1);
   }
+  addLicenseFiles(out);
   console.log(`✓ ${out} (${(statSync(out).size / 1024 / 1024).toFixed(2)} MB)`);
 }
 
+createSourceArchive(version);
+
 function readVersion() {
-  const pkg = JSON.parse(spawnSync("cat", [resolve(root, "package.json")]).stdout?.toString() ?? "{}");
+  const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
   return pkg.version ?? "0.0.0";
+}
+
+function addLicenseFiles(zipPath) {
+  const r = spawnSync("zip", ["-q", "-j", zipPath, "LICENSE", "NOTICE"], { cwd: repoRoot, stdio: "inherit" });
+  if (r.status !== 0) {
+    console.error(`✘ license packaging failed for ${zipPath}`);
+    process.exit(r.status ?? 1);
+  }
+}
+
+function createSourceArchive(packageVersion) {
+  const out = resolve(root, `savemedia-source-${packageVersion}.zip`);
+  rmSync(out, { force: true });
+
+  const tracked = spawnSync("git", ["ls-files", "-z"], { cwd: repoRoot });
+  if (tracked.status !== 0) {
+    console.error("✘ could not list tracked source files");
+    process.exit(tracked.status ?? 1);
+  }
+
+  const files = tracked.stdout.toString()
+    .split("\0")
+    .filter(Boolean)
+    .filter(file => !file.endsWith(".crx") && !file.endsWith(".pem") && !file.endsWith(".zip"));
+
+  const r = spawnSync("zip", ["-q", out, ...files], { cwd: repoRoot, stdio: "inherit" });
+  if (r.status !== 0) {
+    console.error("✘ source zip failed");
+    process.exit(r.status ?? 1);
+  }
+  console.log(`✓ ${out} (${(statSync(out).size / 1024 / 1024).toFixed(2)} MB)`);
 }
