@@ -74,5 +74,19 @@ function createSourceArchive(packageVersion) {
     console.error("✘ source zip failed");
     process.exit(r.status ?? 1);
   }
+
+  // AMO's source-archive validator runs extension-package checks and fails if
+  // manifest.json is not at the zip root. Junk-add the extension's manifest at
+  // root so the validator accepts the archive; the full repo tree (including
+  // the real packages/extension/manifest.json) is still inside for reviewers.
+  const addRootManifest = spawnSync(
+    "zip", ["-q", "-j", out, "packages/extension/manifest.json"],
+    { cwd: repoRoot, stdio: "inherit" }
+  );
+  if (addRootManifest.status !== 0) {
+    console.error("✘ failed to add root manifest.json to source zip");
+    process.exit(addRootManifest.status ?? 1);
+  }
+
   console.log(`✓ ${out} (${(statSync(out).size / 1024 / 1024).toFixed(2)} MB)`);
 }
