@@ -5,9 +5,10 @@
 html, body, #root {
   height: 100%;
   width: 380px;
-  min-height: 420px;
+  min-height: 440px;
   background: theme('colors.ink');
-  color: #eaeaea;
-  font: 13px/1.4 system-ui, sans-serif;
+  color: #eef3f6;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   overflow-y: auto;
+  -webkit-font-smoothing: antialiased;
 }
