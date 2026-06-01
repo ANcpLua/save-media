@@ -7,6 +7,7 @@ const steps = [
   ["pnpm", ["-r", "test"]],
   ["pnpm", ["-r", "build"]],
   ["pnpm", ["--filter", "@savemedia/extension", "build:firefox"]],
+  ["pnpm", ["--filter", "@savemedia/extension", "screenshots"]],
   ["pnpm", ["--filter", "@savemedia/extension", "test:e2e"]],
 ];
 

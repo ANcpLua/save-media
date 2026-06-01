@@ -48,6 +48,38 @@ const SCENES: readonly Scene[] = [
   },
 ];
 
+// Small promotional tile (Chrome/Edge): 440x280, logo + wordmark + tagline.
+// Uses the real logo via the served public/ icons; no product UI screenshot,
+// so it stays accurate and on-brand.
+function PromoTile() {
+  return (
+    <div
+      data-scene="promo-440x280"
+      style={{
+        width: 440,
+        height: 280,
+        background: "#0e1b26",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 18,
+        boxSizing: "border-box",
+        padding: 24,
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+      }}
+    >
+      <img src="/icons/icon-128.png" alt="" width={96} height={96} style={{ borderRadius: 20 }} />
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 30, fontWeight: 700, color: "#eef3f6", letterSpacing: -0.5 }}>savemedia</div>
+        <div style={{ fontSize: 14, color: "#9fb2be", marginTop: 6 }}>
+          Save verified video &amp; clear HLS VOD
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Frame({ scene }: { scene: Scene }) {
   return (
     <div
@@ -104,10 +136,16 @@ function Frame({ scene }: { scene: Scene }) {
 
 const params = new URLSearchParams(location.search);
 const wanted = params.get("scene") ?? SCENES[0]!.id;
-const scene = SCENES.find(s => s.id === wanted) ?? SCENES[0]!;
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<Frame scene={scene} />);
+if (root) {
+  if (wanted === "promo-440x280") {
+    createRoot(root).render(<PromoTile />);
+  } else {
+    const scene = SCENES.find(s => s.id === wanted) ?? SCENES[0]!;
+    createRoot(root).render(<Frame scene={scene} />);
+  }
+}
 
 // Expose the scene list so the Playwright driver can iterate without hardcoding.
 (globalThis as unknown as { __SCENES__: readonly string[] }).__SCENES__ = SCENES.map(s => s.id);

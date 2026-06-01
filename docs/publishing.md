@@ -15,14 +15,16 @@ Net: for the **first** release, do listing setup by hand in both dashboards.
 From the **second** release onward, both stores are fully scriptable with
 `pnpm --filter @savemedia/extension publish:chrome` / `publish:edge`.
 
-## Artifacts to submit (v0.0.3)
+## Artifacts to submit (v0.0.4)
 
-- Chrome: `packages/extension/savemedia-chrome-0.0.3.zip`
-- Edge:   `packages/extension/savemedia-edge-0.0.3.zip` (byte-identical to Chrome — Edge ships the Chromium build verbatim)
-- Screenshots: `packages/extension/store-assets/screenshots/01-direct-video.png`, `02-hls-vod.png`, `03-refusal-safety.png`
+- Chrome: `packages/extension/savemedia-chrome-0.0.4.zip`
+- Edge:   `packages/extension/savemedia-edge-0.0.4.zip` (byte-identical to Chrome — Edge ships the Chromium build verbatim)
+- Store logo: `packages/extension/store-assets/store-logo-300.png` (300×300, 1:1)
+- Screenshots: `packages/extension/store-assets/screenshots/01-direct-video.png`, `02-hls-vod.png`, `03-refusal-safety.png` (real popup render, regenerate with `pnpm --filter @savemedia/extension screenshots`)
+- Optional promo tile: `packages/extension/store-assets/promo-440x280.png`
 - Privacy policy: `docs/privacy-policy.md` (host at a public URL; both stores require a link)
 
-Validated for this commit: well-formed MV3, version 0.0.3, permissions limited to
+Validated for this commit: well-formed MV3, version 0.0.4, permissions limited to
 `downloads`, `tabs`, `offscreen`, `webRequest` + `host_permissions: <all_urls>`,
 `LICENSE`/`NOTICE` bundled, no `.pem`/secrets in the package.
 
@@ -35,7 +37,7 @@ Listing copy, permission justifications, and the privacy summary are drafted in
 
 1. **Developer account.** Register at
    https://chrome.google.com/webstore/devconsole (one-time US$5 fee).
-2. **Create item.** New item → upload `savemedia-chrome-0.0.3.zip`.
+2. **Create item.** New item → upload `savemedia-chrome-0.0.4.zip`.
    (Or script it: `pnpm --filter @savemedia/extension publish:chrome insert`,
    then note the returned item id.)
 3. **Store listing tab.** Name `savemedia`, short + long description and category
@@ -51,7 +53,7 @@ After this first publish, capture the item id for CI: `CWS_ITEM_ID`.
 
 1. **Developer account.** Register at
    https://partner.microsoft.com/dashboard/microsoftedge (free).
-2. **Create new extension** → upload `savemedia-edge-0.0.3.zip`.
+2. **Create new extension** → upload `savemedia-edge-0.0.4.zip`.
 3. **Availability / Properties / Privacy / Listing.** Fill from
    `store-submission.md` — same copy, screenshots, permission justifications,
    privacy policy URL. Declare no data collection and no remote code.
