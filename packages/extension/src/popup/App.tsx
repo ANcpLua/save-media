@@ -100,14 +100,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
         <StreamInfoBadges />
       </div>
 
-      <footer className="px-3 py-2 border-t border-line text-[10px] text-muted flex items-center justify-between">
-        <button
-          aria-label="Settings"
-          className="inline-flex items-center gap-1 hover:text-neutral-200"
-          onClick={() => chrome.runtime.openOptionsPage?.()}
-        >
-          <span aria-hidden="true">⚙</span> Settings
-        </button>
+      <footer className="px-3 py-2 border-t border-line text-[10px] text-muted flex items-center justify-end">
         <span>{descriptors.length} detected{version && ` · v${version}`}</span>
       </footer>
     </main>

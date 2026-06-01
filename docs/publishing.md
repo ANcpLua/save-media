@@ -15,21 +15,23 @@ Net: for the **first** release, do listing setup by hand in both dashboards.
 From the **second** release onward, both stores are fully scriptable with
 `pnpm --filter @savemedia/extension publish:chrome` / `publish:edge`.
 
-## Artifacts to submit (v0.0.4)
+## Artifacts to submit (v0.0.5)
 
-- Chrome: `packages/extension/savemedia-chrome-0.0.4.zip`
-- Edge:   `packages/extension/savemedia-edge-0.0.4.zip` (byte-identical to Chrome — Edge ships the Chromium build verbatim)
+- Chrome: `packages/extension/savemedia-chrome-0.0.5.zip`
+- Edge:   `packages/extension/savemedia-edge-0.0.5.zip` (byte-identical to Chrome — Edge ships the Chromium build verbatim)
 - Store logo: `packages/extension/store-assets/store-logo-300.png` (300×300, 1:1)
 - Screenshots: `packages/extension/store-assets/screenshots/01-direct-video.png`, `02-hls-vod.png`, `03-refusal-safety.png` (real popup render, regenerate with `pnpm --filter @savemedia/extension screenshots`)
 - Optional promo tile: `packages/extension/store-assets/promo-440x280.png`
 - Privacy policy: `docs/privacy-policy.md` (host at a public URL; both stores require a link)
 
-Validated for this commit: well-formed MV3, version 0.0.4, permissions limited to
+Validated for this commit: well-formed MV3, version 0.0.5, permissions limited to
 `downloads`, `tabs`, `offscreen`, `webRequest` + `host_permissions: <all_urls>`,
 `LICENSE`/`NOTICE` bundled, no `.pem`/secrets in the package.
 
-Listing copy, permission justifications, and the privacy summary are drafted in
-[`docs/store-submission.md`](./store-submission.md) — copy them into the forms.
+The data-handling summary and per-permission rationale are in
+[`docs/privacy-policy.md`](./privacy-policy.md); product scope (supported vs.
+refused) is in [`docs/design.md`](./design.md). Use those for the listing
+description and the store permission-justification forms.
 
 ---
 
@@ -37,13 +39,13 @@ Listing copy, permission justifications, and the privacy summary are drafted in
 
 1. **Developer account.** Register at
    https://chrome.google.com/webstore/devconsole (one-time US$5 fee).
-2. **Create item.** New item → upload `savemedia-chrome-0.0.4.zip`.
+2. **Create item.** New item → upload `savemedia-chrome-0.0.5.zip`.
    (Or script it: `pnpm --filter @savemedia/extension publish:chrome insert`,
    then note the returned item id.)
-3. **Store listing tab.** Name `savemedia`, short + long description and category
-   from `docs/store-submission.md`, upload the three screenshots, set an icon.
-4. **Privacy tab.** Single purpose statement; justify each permission (table in
-   `store-submission.md`); declare **no** remote code; certify data-use:
+3. **Store listing tab.** Name `savemedia`, description (scope from `design.md`),
+   category Tools, upload the three screenshots and the 128×128 store icon.
+4. **Privacy tab.** Single purpose statement; justify each permission (rationale
+   in `privacy-policy.md`); declare **no** remote code; certify data-use:
    no collection, no sale, no telemetry; paste the privacy-policy URL.
 5. **Submit for review.** Save draft → Submit for review.
 
@@ -53,12 +55,12 @@ After this first publish, capture the item id for CI: `CWS_ITEM_ID`.
 
 1. **Developer account.** Register at
    https://partner.microsoft.com/dashboard/microsoftedge (free).
-2. **Create new extension** → upload `savemedia-edge-0.0.4.zip`.
-3. **Availability / Properties / Privacy / Listing.** Fill from
-   `store-submission.md` — same copy, screenshots, permission justifications,
-   privacy policy URL. Declare no data collection and no remote code.
-4. **Submit** with certification notes (reviewer build steps are in
-   `store-submission.md`).
+2. **Create new extension** → upload `savemedia-edge-0.0.5.zip`.
+3. **Availability / Properties / Privacy / Listing.** Same copy, screenshots,
+   permission justifications, and privacy-policy URL as Chrome. Declare no data
+   collection and no remote code.
+4. **Submit** with certification notes (reviewer build steps: `pnpm install`,
+   `pnpm --filter @savemedia/extension build:chrome`, run the fixture server).
 5. After it passes, capture the **product GUID** → `EDGE_PRODUCT_ID`.
 
 ---
@@ -104,4 +106,4 @@ Sub-commands if you want to stage them: `insert` / `update` / `publish` /
 
 Never commit credentials. Keep them in your shell env locally and in GitHub
 Actions secrets for CI. The old committed Chrome `.pem` is treated as exposed and
-must not be reused for store identity (see `store-submission.md`).
+must not be reused for store identity.
