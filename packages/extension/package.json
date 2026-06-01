@@ -19,6 +19,7 @@
     "zip": "pnpm build:all && node scripts/package.mjs",
     "dev": "SAVEMEDIA_BROWSER=chromium vite build --watch",
     "icons": "node scripts/generate-icons.mjs",
+    "store:assets": "node scripts/store-assets.mjs",
     "lint:firefox": "pnpm build:firefox && web-ext lint --source-dir dist-firefox",
     "smoke:edge": "pnpm build:chrome && node scripts/smoke-edge.mjs",
     "smoke:firefox": "pnpm build:firefox && node scripts/smoke-firefox.mjs",
