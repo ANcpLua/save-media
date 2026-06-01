@@ -20,6 +20,10 @@ const outDir = resolve(ext, "store-assets/screenshots");
 
 const SCENES = ["01-direct-video", "02-stream-support", "03-refusal-safety"];
 
+// Read the real shipped version so the popup footer in screenshots matches the
+// package and never has to be hand-bumped here.
+const manifestVersion = JSON.parse(await readFile(resolve(ext, "manifest.json"), "utf8")).version;
+
 const build = spawnSync(
   "pnpm",
   ["exec", "vite", "build", "--config", resolve(here, "vite.config.ts")],
@@ -64,10 +68,10 @@ page.on("pageerror", e => console.log(`  [page error] ${e.message}`));
 // Minimal chrome stub: the popup always runs inside an extension where `chrome`
 // exists. The harness uses seeded data (skipFetch), so these are inert no-ops;
 // getManifest returns the real version so the footer renders truthfully.
-await page.addInitScript(() => {
+await page.addInitScript((version) => {
   globalThis.chrome = {
     runtime: {
-      getManifest: () => ({ version: "0.0.3" }),
+      getManifest: () => ({ version }),
       getURL: (p) => `/${p}`,
       onMessage: { addListener: () => {}, removeListener: () => {} },
       sendMessage: () => {},
@@ -75,7 +79,7 @@ await page.addInitScript(() => {
     },
     tabs: { query: () => {} },
   };
-});
+}, manifestVersion);
 
 for (const scene of SCENES) {
   await page.goto(`${origin}/index.html?scene=${scene}`);
@@ -86,6 +90,15 @@ for (const scene of SCENES) {
   await frame.screenshot({ path: out });
   console.log(`✓ ${out}`);
 }
+
+// Promotional tile (optional store asset), written alongside the logo.
+await page.goto(`${origin}/index.html?scene=promo-440x280`);
+const promo = page.locator('[data-scene="promo-440x280"]');
+await promo.waitFor({ state: "visible", timeout: 8000 });
+await page.waitForTimeout(150);
+const promoOut = resolve(ext, "store-assets/promo-440x280.png");
+await promo.screenshot({ path: promoOut });
+console.log(`✓ ${promoOut}`);
 
 await browser.close();
 server.close();
