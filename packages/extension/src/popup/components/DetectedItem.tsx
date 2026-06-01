@@ -58,32 +58,36 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
 
   if (isDrmBlocked) {
     return (
-      <li className="p-3 text-xs" data-testid="drm-card" data-deferred={isDeferred}>
+      <li
+        className="rounded-lg bg-surface border border-red-900/40 p-3 text-xs"
+        data-testid="drm-card"
+        data-deferred={isDeferred}
+      >
         <div className="flex items-center gap-2 mb-1">
           <span className="text-red-400" aria-hidden="true">🔒</span>
           <span className="font-medium truncate">{descriptor.title ?? "Protected stream"}</span>
         </div>
-        <p className="text-neutral-500 leading-relaxed">
+        <p className="text-muted leading-relaxed">
           {isDeferred
             ? "ClearKey / CENC decryption is not implemented."
             : "DRM-protected media. savemedia cannot decrypt this stream."}
         </p>
-        <p className="text-neutral-600 mt-1">Reason: <code>{descriptor.drm?.reason}</code></p>
+        <p className="text-neutral-500 mt-1">Reason: <code>{descriptor.drm?.reason}</code></p>
       </li>
     );
   }
 
   return (
-    <li className="p-3 text-xs">
+    <li className="rounded-lg bg-surface border border-line p-3 text-xs">
       <button
         onClick={() => setExpanded(e => !e)}
         className="flex items-center gap-2 w-full text-left mb-1"
       >
-        <span className="text-neutral-500">{expanded ? "▼" : "▶"}</span>
+        <span className="text-muted">{expanded ? "▼" : "▶"}</span>
         <span className="font-medium truncate flex-1">{descriptor.title ?? descriptor.pageUrl}</span>
       </button>
 
-      <div className="text-neutral-400 ml-5 leading-relaxed">
+      <div className="text-muted ml-5 leading-relaxed">
         {variant && <>{variant.width}×{variant.height} · {variant.frameRate ?? "?"} fps · </>}
         {vcodec ? friendlyVideoCodec(vcodec) : "—"}
         {acodec && <> + {friendlyAudioCodec(acodec)}</>}
@@ -93,7 +97,7 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
       </div>
 
       {expanded && (
-        <div className="mt-2 ml-5 space-y-1.5 text-neutral-400">
+        <div className="mt-2 ml-5 space-y-1.5 text-muted">
           <Row label="source type" value={descriptor.source.kind} />
           <Row label="protocol" value={descriptor.protocol} />
           <Row label="container" value={descriptor.container} />
@@ -105,11 +109,11 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
 
       {status && status.phase === "active" && (
         <div className="mt-2 ml-5" data-testid="progress">
-          <div className="flex items-center justify-between text-neutral-400">
+          <div className="flex items-center justify-between text-muted">
             <span>{status.stage ?? "downloading"}</span>
             <span>{formatBytes(status.bytesWritten ?? 0)}{status.bytesTotal ? ` / ${formatBytes(status.bytesTotal)}` : ""}</span>
           </div>
-          <div className="mt-1 h-1 rounded bg-neutral-800 overflow-hidden">
+          <div className="mt-1 h-1 rounded bg-surface-2 overflow-hidden">
             <div
               className="h-full bg-blue-600 transition-all"
               style={{ width: activeProgressWidth }}
@@ -121,7 +125,7 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
       {status?.phase === "failed" && status.error && (
         <div className="mt-2 ml-5 text-red-400" data-testid="job-error">
           <p className="font-medium">{userMessage(status.error).title}</p>
-          <p className="text-neutral-500 mt-0.5">{userMessage(status.error).body}</p>
+          <p className="text-muted mt-0.5">{userMessage(status.error).body}</p>
         </div>
       )}
 
@@ -141,16 +145,16 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
         {status?.phase === "active" ? (
           <button
             onClick={cancel}
-            className="ml-auto bg-neutral-700 hover:bg-neutral-600 text-white px-2.5 py-1 rounded text-xs"
+            className="ml-auto bg-surface-2 hover:bg-neutral-600 text-white px-2.5 py-1 rounded-md text-xs"
           >
             Cancel
           </button>
         ) : isDownloadable ? (
           <button
             onClick={download}
-            className="ml-auto bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-xs"
+            className="ml-auto inline-flex items-center gap-1 bg-accent hover:brightness-110 text-ink font-medium px-2.5 py-1 rounded-md text-xs"
           >
-            ⬇ Download
+            <span aria-hidden="true">⬇</span> Download
           </button>
         ) : null}
       </div>

@@ -3,6 +3,14 @@ import type { StreamDescriptor } from "@savemedia/core";
 import { isBackgroundToPopupMessage } from "../types/messages";
 import type { PopupToBackgroundMessage } from "../types/messages";
 import { DetectedItem, type JobStatus } from "./components/DetectedItem";
+import { StreamInfoBadges } from "./components/StreamInfoBadges";
+
+// Read the shipped version from the manifest so the footer never drifts from
+// the package version. Optional-chained because the test chrome mock and the
+// screenshot harness do not stub getManifest.
+function manifestVersion(): string {
+  return globalThis.chrome?.runtime?.getManifest?.().version ?? "";
+}
 
 export interface AppProps {
   readonly initialDescriptors?: readonly StreamDescriptor[];
@@ -55,34 +63,52 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
+  const version = manifestVersion();
+
   return (
-    <main className="flex flex-col h-full">
-      <header className="px-3 py-2 border-b border-neutral-800 flex items-center justify-between">
-        <span className="text-sm font-semibold">savemedia</span>
-        <button
-          aria-label="Settings"
-          className="text-neutral-500 hover:text-neutral-300 text-xs"
-          onClick={() => chrome.runtime.openOptionsPage?.()}
-        >
-          ⚙
-        </button>
+    <main className="flex flex-col h-full bg-ink">
+      <header className="px-3 py-3 border-b border-line flex items-center gap-2.5">
+        <img
+          src={globalThis.chrome?.runtime?.getURL?.("icons/icon-48.png") ?? "icons/icon-48.png"}
+          alt=""
+          className="w-9 h-9 rounded-lg shrink-0"
+        />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold leading-tight">savemedia</div>
+          <p className="text-[11px] text-muted leading-snug">
+            Press <kbd className="text-accent font-medium">Alt+S</kbd> to save the best supported video on this page.
+          </p>
+        </div>
       </header>
+
       <section className="flex-1 overflow-y-auto">
+        <h2 className="px-3 pt-3 pb-1 text-[11px] font-medium text-muted">Detected</h2>
         {descriptors.length === 0 ? (
-          <div className="p-6 text-center text-neutral-500 text-xs">
+          <div className="px-3 py-8 text-center text-muted text-xs">
             {tabId === null && !skipFetch ? "No active tab." : "No media detected on this page."}
           </div>
         ) : (
-          <ul className="divide-y divide-neutral-800">
+          <ul className="px-2 pb-1 space-y-1.5">
             {descriptors.map(d => (
               <DetectedItem key={d.id} descriptor={d} status={statuses[d.id]} />
             ))}
           </ul>
         )}
       </section>
-      <footer className="px-3 py-1.5 border-t border-neutral-800 text-[10px] text-neutral-500 flex justify-between">
-        <span>{descriptors.length} detected</span>
-        <span>v0.0.1</span>
+
+      <div className="border-t border-line">
+        <StreamInfoBadges />
+      </div>
+
+      <footer className="px-3 py-2 border-t border-line text-[10px] text-muted flex items-center justify-between">
+        <button
+          aria-label="Settings"
+          className="inline-flex items-center gap-1 hover:text-neutral-200"
+          onClick={() => chrome.runtime.openOptionsPage?.()}
+        >
+          <span aria-hidden="true">⚙</span> Settings
+        </button>
+        <span>{descriptors.length} detected{version && ` · v${version}`}</span>
       </footer>
     </main>
   );

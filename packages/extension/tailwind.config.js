@@ -4,10 +4,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#0a0a0a",
-        surface: "#161616",
-        muted: "#9ca3af",
-        accent: "#3b82f6",
+        ink: "#0e1b26",
+        surface: "#18242e",
+        "surface-2": "#22323d",
+        line: "#28343f",
+        muted: "#9fb2be",
+        accent: "#f5a623",
       },
     },
   },

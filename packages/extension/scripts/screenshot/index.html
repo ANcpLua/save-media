@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>savemedia store screenshots</title>
+  <link rel="stylesheet" href="../../src/styles/popup.css" />
+  <style>
+    /* popup.css clamps #root to 380px for the real popup; the screenshot frame
+       is 1280 wide, so override with !important to beat stylesheet ordering. */
+    html, body, #root {
+      width: max-content !important;
+      max-width: none !important;
+      min-height: 0 !important;
+      overflow: visible !important;
+      margin: 0 !important;
+      background: #0e1b26 !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./harness.tsx"></script>
+</body>
+</html>
