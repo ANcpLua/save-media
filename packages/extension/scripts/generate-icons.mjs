@@ -6,12 +6,19 @@ import { deflateSync } from "node:zlib";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = resolve(here, "../public/icons");
+const storeDir = resolve(here, "../store-assets");
 
 mkdirSync(outDir, { recursive: true });
 for (const size of [16, 32, 48, 128]) {
   writeFileSync(resolve(outDir, `icon-${size}.png`), makeIcon(size));
 }
 console.log(`icons -> ${outDir}`);
+
+// Store-listing logo only (not a manifest icon, so it is not shipped in the
+// package). Chrome Web Store and Edge Add-ons recommend a 300x300 1:1 logo.
+mkdirSync(storeDir, { recursive: true });
+writeFileSync(resolve(storeDir, "store-logo-300.png"), makeIcon(300));
+console.log(`store logo -> ${storeDir}/store-logo-300.png`);
 
 function makeIcon(size) {
   const pixels = new Uint8Array(size * size * 4);
