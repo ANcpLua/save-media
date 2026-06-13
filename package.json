@@ -7,12 +7,12 @@
   "author": "Alexander Nachtmann ANcpLua",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/O-ANcppLua/save-media.git"
+    "url": "git+https://github.com/ANcpLua/save-media.git"
   },
   "bugs": {
-    "url": "https://github.com/O-ANcppLua/save-media/issues"
+    "url": "https://github.com/ANcpLua/save-media/issues"
   },
-  "homepage": "https://github.com/O-ANcppLua/save-media#readme",
+  "homepage": "https://github.com/ANcpLua/save-media#readme",
   "keywords": [
     "browser-extension",
     "chrome-extension",

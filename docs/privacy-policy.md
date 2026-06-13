@@ -57,4 +57,4 @@ transfer, sell, or use user data for unrelated purposes.
 For review, privacy, support, or security questions, use the browser store
 developer contact or the repository support guidance:
 
-https://github.com/O-ANcppLua/save-media
+https://github.com/ANcpLua/save-media
