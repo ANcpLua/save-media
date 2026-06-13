@@ -7,7 +7,7 @@
   "author": "Alexander Nachtmann ANcpLua",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/O-ANcppLua/save-media.git",
+    "url": "git+https://github.com/ANcpLua/save-media.git",
     "directory": "packages/extension"
   },
   "type": "module",
