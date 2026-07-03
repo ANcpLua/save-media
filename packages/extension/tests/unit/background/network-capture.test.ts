@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { looksLikeMediaEntryUrl } from "../../../src/background/network-capture";
+import { isExtractorManagedHost, looksLikeMediaEntryUrl } from "../../../src/background/network-capture";
 
 describe("background network capture URL filter", () => {
   it("captures manifest and standalone media entry URLs", () => {
@@ -21,5 +21,21 @@ describe("background network capture URL filter", () => {
     expect(looksLikeMediaEntryUrl("https://cdn.example/audio/track.mp3")).toBe(false);
     expect(looksLikeMediaEntryUrl("https://cdn.example/audio/track.m4a")).toBe(false);
     expect(looksLikeMediaEntryUrl("https://cdn.example/audio/segment-01.aac")).toBe(false);
+  });
+});
+
+describe("extractor-managed host gate", () => {
+  it("recognises resolver-owned pages so generic discovery is suppressed", () => {
+    expect(isExtractorManagedHost("https://x.com/user/status/1")).toBe(true);
+    expect(isExtractorManagedHost("https://twitter.com/i/web/status/1")).toBe(true);
+    expect(isExtractorManagedHost("https://mobile.twitter.com/home")).toBe(true);
+    expect(isExtractorManagedHost("https://www.instagram.com/reel/CxYz/")).toBe(true);
+  });
+
+  it("leaves every other page to the generic path", () => {
+    expect(isExtractorManagedHost("https://www.youtube.com/watch?v=1")).toBe(false);
+    expect(isExtractorManagedHost("https://cdn.example/video/master.m3u8")).toBe(false);
+    expect(isExtractorManagedHost("https://x.com.evil.com/")).toBe(false);
+    expect(isExtractorManagedHost("garbage")).toBe(false);
   });
 });

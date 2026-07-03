@@ -1,11 +1,15 @@
-// Content scripts in MV3 are injected as classic scripts — `import` is
-// a syntax error. We intentionally duplicate this constant (also defined
-// in src/types/messages.ts) so this file has no module dependencies and
-// can ship as a standalone JS file.
+// Content scripts in MV3 are injected as classic scripts — top-level ES
+// `import` would be a syntax error at runtime. This file is a Rollup entry
+// whose imports are inlined into one self-contained bundle (see
+// vite.config.ts `manualChunks`), so the source may import freely.
 //
 // Keep the runtime code inside an IIFE. This script runs in the page's
 // MAIN world; unscoped helper names can collide with page globals after
 // minification and crash later async observers.
+import { resolverForPage } from "./sites/registry";
+import { installInterceptor } from "./intercept";
+import { dedupeKey } from "./sites/json";
+
 export {};
 (() => {
 const BRIDGE_TAG = "__savemedia" as const;
@@ -59,6 +63,39 @@ const emitDownloadBestHotkey = (): void => {
 };
 
 /**
+ * On sites with a dedicated resolver (twitter/x, instagram), the site's own
+ * API responses are the authoritative source of the muxed download URL, and
+ * the generic passive observers below only surface noise — a demuxed
+ * video-only HLS master, or a video-only DASH byte-range fragment — that
+ * would masquerade as the "best" download. So on those hosts we run the
+ * interceptor instead of the generic observers. The generic path stays the
+ * default for every other site.
+ */
+const siteResolver = resolverForPage(location.href);
+
+if (siteResolver) {
+  const emitted = new Set<string>();
+  installInterceptor(siteResolver, media => {
+    const key = dedupeKey(media.url);
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    emit("media-source", media.url);
+  });
+} else {
+  installGenericDiscovery();
+}
+
+// The download-best hotkey works everywhere, including resolver sites.
+installHotkey();
+
+function installGenericDiscovery(): void {
+  installResourceTimingObserver();
+  installMediaSourceProbe();
+  installEmeProbe();
+  installMediaElementObserver();
+}
+
+/**
  * Resource timing gives us a passive page-side fallback for very early
  * manifest requests without monkey-patching fetch/XHR. The background
  * webRequest listener is the main discovery path; this catches entries
@@ -87,17 +124,20 @@ function observeResourceUrl(url: string): void {
   if (looksLikeMediaEntry(url)) emit("media-source", url);
 }
 
-try {
-  performance.getEntriesByType("resource").forEach(entry => observeResourceUrl(entry.name));
-  const observer = new PerformanceObserver(list => {
-    list.getEntries().forEach(entry => observeResourceUrl(entry.name));
-  });
-  observer.observe({ type: "resource", buffered: true });
-} catch {
-  // Resource timing is best-effort; never perturb the page.
+function installResourceTimingObserver(): void {
+  try {
+    performance.getEntriesByType("resource").forEach(entry => observeResourceUrl(entry.name));
+    const observer = new PerformanceObserver(list => {
+      list.getEntries().forEach(entry => observeResourceUrl(entry.name));
+    });
+    observer.observe({ type: "resource", buffered: true });
+  } catch {
+    // Resource timing is best-effort; never perturb the page.
+  }
 }
 
-if (typeof MediaSource !== "undefined") {
+function installMediaSourceProbe(): void {
+  if (typeof MediaSource === "undefined") return;
   const _isTypeSupported = MediaSource.isTypeSupported.bind(MediaSource);
   MediaSource.isTypeSupported = function (type: string) {
     if (/;\s*encrypted/i.test(type)) emit("ms-probe", null, { mimeType: type });
@@ -105,7 +145,8 @@ if (typeof MediaSource !== "undefined") {
   };
 }
 
-if (navigator.requestMediaKeySystemAccess) {
+function installEmeProbe(): void {
+  if (!navigator.requestMediaKeySystemAccess) return;
   const _orig = navigator.requestMediaKeySystemAccess.bind(navigator);
   navigator.requestMediaKeySystemAccess = function (keySystem: string, config: MediaKeySystemConfiguration[]) {
     emit("eme", null, { keySystem });
@@ -120,25 +161,29 @@ function observeMediaElement(el: HTMLVideoElement | HTMLAudioElement): void {
   }
 }
 
-new MutationObserver(records => {
-  for (const r of records) {
-    r.addedNodes.forEach(n => {
-      if (n instanceof HTMLVideoElement || n instanceof HTMLAudioElement) observeMediaElement(n);
-      else if (n instanceof HTMLElement) {
-        n.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
-      }
-    });
-  }
-}).observe(document.documentElement, { childList: true, subtree: true });
+function installMediaElementObserver(): void {
+  new MutationObserver(records => {
+    for (const r of records) {
+      r.addedNodes.forEach(n => {
+        if (n instanceof HTMLVideoElement || n instanceof HTMLAudioElement) observeMediaElement(n);
+        else if (n instanceof HTMLElement) {
+          n.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
+        }
+      });
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
 
-document.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
+  document.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
+}
 
-document.addEventListener("keydown", event => {
-  if (!event.isTrusted || !isDownloadBestHotkey(event) || isEditableTarget(event.target)) return;
-  event.preventDefault();
-  event.stopPropagation();
-  emitDownloadBestHotkey();
-}, true);
+function installHotkey(): void {
+  document.addEventListener("keydown", event => {
+    if (!event.isTrusted || !isDownloadBestHotkey(event) || isEditableTarget(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    emitDownloadBestHotkey();
+  }, true);
+}
 
 function isDownloadBestHotkey(event: KeyboardEvent): boolean {
   if (event.repeat || event.metaKey || event.shiftKey) return false;
