@@ -38,6 +38,51 @@ Listing and YouTube-download are mutually exclusive; owner accepts unlisted for 
   - [ ] Unlock Twitter demuxed-HLS audio, Instagram DASH, YouTube adaptive (googlevideo host capture).
   - [ ] Golden fixtures + ffprobe verification per the repo's existing e2e contract.
 
+  ### PR B — grounded design (mediabunny 1.45.3, API confirmed from installed .d.ts)
+
+  **Merge primitive** (`engine/remux/merge-av.ts`, sibling to `remux/ts-to-mp4.ts`). Copy encoded
+  packets, no re-encode:
+  ```
+  const vIn = new Input({ formats: ALL_FORMATS, source: new BufferSource(videoBytes) });
+  const aIn = new Input({ formats: ALL_FORMATS, source: new BufferSource(audioBytes) });
+  const vTrack = await vIn.getPrimaryVideoTrack();   // InputVideoTrack; .codec, .getDecoderConfig()
+  const aTrack = await aIn.getPrimaryAudioTrack();
+  const target = new BufferTarget();
+  const output = new Output({ format: new Mp4OutputFormat(), target });
+  const vSrc = new EncodedVideoPacketSource(vTrack.codec);   // add via output.addVideoTrack(vSrc, meta)
+  const aSrc = new EncodedAudioPacketSource(aTrack.codec);   // output.addAudioTrack(aSrc, meta)
+  await output.start();
+  for await (const pkt of new EncodedPacketSink(vTrack).packets()) await vSrc.add(pkt, firstMeta);
+  for await (const pkt of new EncodedPacketSink(aTrack).packets()) await aSrc.add(pkt, firstMeta);
+  await output.finalize();  // → new Uint8Array(target.buffer)
+  ```
+  decoderConfig (from `track.getDecoderConfig()`) rides the FIRST `source.add(pkt, meta)` as
+  `EncodedVideoChunkMetadata.decoderConfig`. Runs in the offscreen doc (where mediabunny already
+  runs); verify via e2e golden fixtures, not vitest (repo mocks remux in unit tests).
+
+  **Core changes** (must land WITH the engine — do NOT half-wire dispatch):
+  - `parser/hls/adapter.ts`: stop hard-coding `audioRenditionId: null`; parse `EXT-X-MEDIA
+    TYPE=AUDIO` groups + link each variant's `AUDIO=` group → `audioRenditions[]` on the descriptor.
+  - `types/job.ts`: new `AvMergePlan` (video seg/url + audio seg/url + outputContainer). `dispatch`:
+    demuxed HLS (variant has an audio group) → AvMergePlan instead of HlsPlainPlan; DASH video+audio
+    AdaptationSets → AvMergePlan (stop refusing `dash_unsupported` when clear).
+  - `engine/jobs/{hls,dash,merge}.ts`: fetch both track segment sequences (reuse
+    `fetch-with-retry.ts`), assemble each to a byte buffer, call `mergeAvToMp4`.
+
+  **YouTube** (unlisted/personal build only — see standing decision above):
+  - `content/sites/youtube.ts` resolver: intercept `/youtubei/v1/player` → `streamingData.
+    adaptiveFormats`; prefer H.264 video itag (137/136/135) + AAC audio itag (140) so output is a
+    clean MP4 without VP9/Opus (≤1080p covers the demo; >1080p is VP9/AV1 → WebM, later).
+  - `background/network-capture.ts`: add googlevideo host capture (videoplayback URLs have no file
+    extension, so `looksLikeMediaEntryUrl` won't catch them — needs explicit host match) OR emit the
+    two chosen itag URLs from the resolver directly. Add `googlevideo.com` to extractor-managed set.
+  - Merge the two itag byte ranges via `mergeAvToMp4`. Works only while the video is actively
+    playing (intercept-first; no paste-URL). Signed URLs expire ~6h.
+
+  **Verification:** ffmpeg-generated demuxed fixtures (video-only mp4 + audio-only m4a) served by the
+  e2e fixture-server; a page triggers the merge; ffprobe asserts the output MP4 has BOTH a video and
+  an audio stream. Mirror the existing TS→MP4 e2e gate in `tests/e2e/classification.spec.ts`.
+
 ## Verify
 `pnpm typecheck && pnpm -r test` must stay green. E2e (`pnpm test:e2e:chromium`) is the enforcement
 mechanism — add fixtures for new capabilities where tractable.
