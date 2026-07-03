@@ -34,6 +34,7 @@ files as video.
 | HLS fMP4/CMAF internal-piece filtering | Implemented | Fixture verifies init/fragment URLs are not surfaced as standalone downloads. |
 | DRM detection | Implemented | Widevine fixture is refused with `cdm_required`. |
 | ClearKey/CENC detection | Implemented | ClearKey fixture is refused with `clearkey_deferred`. |
+| Twitter/X & Instagram progressive MP4 | Implemented | MAIN-world site resolvers (`content/sites/*`) read the page's own API responses and surface the muxed progressive MP4 as a verified direct download. Unit tests cover the resolvers (golden fixtures) and the fetch/XHR interceptor wiring; generic discovery is suppressed on these hosts so the demuxed video-only stream cannot outrank it. |
 | `Alt+S` best download command | Implemented | Automated tests check command registration; headed Playwright does not reliably fire extension shortcuts. |
 | Edge runtime | Release-gated | `smoke:edge` launches Edge with the unpacked Chromium build, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. |
 | Firefox runtime | Release-gated | `smoke:firefox` temporarily installs the extension, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. |
@@ -45,7 +46,9 @@ files as video.
 - ffmpeg.wasm or browser-side transcoding.
 - "Small file", "best quality transcode", manual output modes, or arbitrary MP4
   conversion modes.
-- DASH downloads or MPD segment assembly.
+- DASH downloads or MPD segment assembly (including the Twitter/X demuxed-HLS
+  audio group and Instagram DASH-only videos — these need the audio+video merge
+  engine and stay refused until it lands).
 - HLS AES-128/SAMPLE-AES download.
 - HLS Live/DVR recording.
 - Direct `.mov`, `.avi`, `.wmv`, `.flv`, or URL-only media guesses.

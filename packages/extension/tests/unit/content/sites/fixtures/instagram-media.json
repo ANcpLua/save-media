@@ -1,0 +1,24 @@
+{
+  "data": {
+    "xdt_api__v1__media__shortcode__web_info": {
+      "items": [
+        {
+          "code": "CxYzReel",
+          "media_type": 2,
+          "user": { "username": "creator" },
+          "image_versions2": {
+            "candidates": [
+              { "width": 1080, "height": 1920, "url": "https://scontent.cdninstagram.com/v/t51/thumb.jpg?efg=abc" }
+            ]
+          },
+          "video_versions": [
+            { "type": 101, "width": 480, "height": 854, "url": "https://scontent.cdninstagram.com/o1/v/t16/480.mp4?efg=abc&_nc_ht=x" },
+            { "type": 102, "width": 720, "height": 1280, "url": "https://scontent.cdninstagram.com/o1/v/t16/720.mp4?efg=abc&_nc_ht=x" },
+            { "type": 103, "width": 640, "height": 1138, "url": "https://scontent.cdninstagram.com/o1/v/t16/640.mp4?efg=abc&_nc_ht=x" }
+          ],
+          "video_dash_manifest": "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"></MPD>"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "data": {
+    "threaded_conversation_with_injections_v2": {
+      "instructions": [
+        {
+          "type": "TimelineAddEntries",
+          "entries": [
+            {
+              "entryId": "tweet-1001",
+              "content": {
+                "itemContent": {
+                  "tweet_results": {
+                    "result": {
+                      "rest_id": "1001",
+                      "legacy": {
+                        "full_text": "first clip",
+                        "extended_entities": {
+                          "media": [
+                            {
+                              "type": "video",
+                              "media_key": "13_1001",
+                              "video_info": {
+                                "aspect_ratio": [16, 9],
+                                "duration_millis": 30000,
+                                "variants": [
+                                  { "content_type": "application/x-mpegURL", "url": "https://video.twimg.com/ext_tw_video/1001/pu/pl/master.m3u8?tag=12" },
+                                  { "bitrate": 256000, "content_type": "video/mp4", "url": "https://video.twimg.com/ext_tw_video/1001/pu/vid/480x270/low.mp4?tag=12" },
+                                  { "bitrate": 832000, "content_type": "video/mp4", "url": "https://video.twimg.com/ext_tw_video/1001/pu/vid/640x360/mid.mp4?tag=12" },
+                                  { "bitrate": 2176000, "content_type": "video/mp4", "url": "https://video.twimg.com/ext_tw_video/1001/pu/vid/1280x720/high.mp4?tag=12" }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "entryId": "tweet-1002",
+              "content": {
+                "itemContent": {
+                  "tweet_results": {
+                    "result": {
+                      "rest_id": "1002",
+                      "legacy": {
+                        "full_text": "second clip, gif has no mp4",
+                        "retweeted_status_result": {
+                          "result": {
+                            "legacy": {
+                              "extended_entities": {
+                                "media": [
+                                  {
+                                    "type": "video",
+                                    "media_key": "13_1001",
+                                    "video_info": {
+                                      "variants": [
+                                        { "bitrate": 2176000, "content_type": "video/mp4", "url": "https://video.twimg.com/ext_tw_video/1001/pu/vid/1280x720/high.mp4?tag=99" }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        "extended_entities": {
+                          "media": [
+                            {
+                              "type": "video",
+                              "media_key": "16_2002",
+                              "video_info": {
+                                "variants": [
+                                  { "content_type": "application/x-mpegURL", "url": "https://video.twimg.com/ext_tw_video/2002/pu/pl/master.m3u8" }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "video",
+                              "media_key": "13_2003",
+                              "video_info": {
+                                "variants": [
+                                  { "bitrate": 632000, "content_type": "video/mp4", "url": "https://video.twimg.com/ext_tw_video/2003/pu/vid/720x1280/portrait.mp4" }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
