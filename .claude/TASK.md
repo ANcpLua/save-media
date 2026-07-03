@@ -33,10 +33,17 @@ Listing and YouTube-download are mutually exclusive; owner accepts unlisted for 
   - [x] Docs: docs/design.md contract row + refusal note.
   - [ ] Follow-up (defer): host-mapped e2e fixture for a resolver site (needs host-resolver-rules like
         yt-transcript's youtube-fixture-server). Unit coverage carries PR A; e2e rides PR B.
-- [ ] **PR B — mediabunny dual-stream merge engine + YouTube (unlisted)**
-  - [ ] Fetch demuxed audio+video, mux into one MP4 with no re-encode.
+- [ ] **PR B — mediabunny dual-stream merge engine + YouTube (unlisted)** (branch:
+      `feat/av-merge-engine`)
+  - [x] Merge primitive `engine/remux/merge-av.ts` — copy-encoded-packets mux, global-offset
+        timestamp rebase for negative-AAC-priming. Real mediabunny mux unit-tested in a node-env
+        vitest (`tests/unit/engine/merge-av.test.ts`, 4 tests) against committed ffmpeg fixtures;
+        asserts the output MP4 carries both an avc + aac track. Green (extension 145→149).
+  - [ ] Wire it: fetch demuxed audio+video sequences, call mergeAvToMp4 (new engine job).
+  - [ ] Core: HLS `EXT-X-MEDIA` audio-group parse (drop hard-coded audioRenditionId null) +
+        `AvMergePlan` type + dispatch (demuxed HLS / clear DASH → AvMergePlan, not refuse).
   - [ ] Unlock Twitter demuxed-HLS audio, Instagram DASH, YouTube adaptive (googlevideo host capture).
-  - [ ] Golden fixtures + ffprobe verification per the repo's existing e2e contract.
+  - [ ] Golden e2e fixtures + ffprobe verification per the repo's existing e2e contract.
 
   ### PR B — grounded design (mediabunny 1.45.3, API confirmed from installed .d.ts)
 
