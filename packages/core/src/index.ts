@@ -9,7 +9,7 @@ export type {
   SegmentRef, ByteRange, HlsEncryption,
 } from "./types/codec";
 export type {
-  JobPlan, JobStep, DirectPlan, HlsPlainPlan,
+  JobPlan, JobStep, DirectPlan, HlsPlainPlan, AvMergePlan, MergeTrack,
   OutputMode, UserChoice, DispatchRefusal, DispatchRefusalReason,
   VerifyCheckKind,
 } from "./types/job";

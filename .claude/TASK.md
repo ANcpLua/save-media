@@ -39,9 +39,14 @@ Listing and YouTube-download are mutually exclusive; owner accepts unlisted for 
         timestamp rebase for negative-AAC-priming. Real mediabunny mux unit-tested in a node-env
         vitest (`tests/unit/engine/merge-av.test.ts`, 4 tests) against committed ffmpeg fixtures;
         asserts the output MP4 carries both an avc + aac track. Green (extension 145→149).
-  - [ ] Wire it: fetch demuxed audio+video sequences, call mergeAvToMp4 (new engine job).
+  - [x] Engine job `engine/jobs/av-merge.ts` — `runAvMergeJob(plan, onProgress, signal, sink?)`:
+        fetch init+segments per track (fetchWithRetry), concat, `mergeAvToMp4`, write to sink. Core
+        `AvMergePlan`/`MergeTrack` types added (exported, NOT yet in the JobPlan union → dispatch
+        can't emit it → engine stays un-half-wired). Node-env unit test drives the REAL merge via
+        mocked fetch + injected sink; asserts both tracks + progress/error/abort/empty. Green (149→154).
   - [ ] Core: HLS `EXT-X-MEDIA` audio-group parse (drop hard-coded audioRenditionId null) +
-        `AvMergePlan` type + dispatch (demuxed HLS / clear DASH → AvMergePlan, not refuse).
+        add `AvMergePlan` to the JobPlan union + dispatch (demuxed HLS / clear DASH → AvMergePlan,
+        not refuse) + route av-merge in engine/download.ts + runner. THEN it becomes reachable.
   - [ ] Unlock Twitter demuxed-HLS audio, Instagram DASH, YouTube adaptive (googlevideo host capture).
   - [ ] Golden e2e fixtures + ffprobe verification per the repo's existing e2e contract.
 
