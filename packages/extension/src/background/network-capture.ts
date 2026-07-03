@@ -36,6 +36,22 @@ export function looksLikeMediaEntryUrl(url: string, requestType?: string): boole
   return /\.(mp4|webm|mkv)(\?|#|$)/i.test(url);
 }
 
+// Hosts where a dedicated MAIN-world site resolver (content/sites/*) is the
+// authoritative source of the muxed download URL. Generic webRequest sniffing
+// on these pages only surfaces demuxed video-only noise that would outrank the
+// real download, so we suppress it here. Deliberate mirror of the resolver
+// `ownsHost` patterns — the two live on opposite sides of the content/background
+// boundary and cannot share a module without breaking the classic-script bundle.
+const EXTRACTOR_MANAGED_HOST = /(^|\.)(twitter\.com|x\.com|instagram\.com)$/i;
+
+export function isExtractorManagedHost(pageUrl: string): boolean {
+  try {
+    return EXTRACTOR_MANAGED_HOST.test(new URL(pageUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function looksLikeFragmentUrl(url: string): boolean {
   let path: string;
   try {
@@ -56,6 +72,8 @@ async function handleNetworkRequest(
   if (details.tabId < 0 || !looksLikeMediaEntryUrl(details.url, details.type)) return;
 
   const pageUrl = await pageUrlFor(details);
+  // A site resolver owns discovery on this page; skip the generic path.
+  if (isExtractorManagedHost(pageUrl)) return;
   await handleCapture(details.tabId, {
     type: "capture",
     payload: {
