@@ -103,6 +103,16 @@ Listing and YouTube-download are mutually exclusive; owner accepts unlisted for 
   sync). This is the silent-corruption trap the merge engine MUST carry. Working proof:
   scratchpad/mbtest/merge-smoke.mjs.
 
+  ### PR B — fragmented-fMP4 input DE-RISKED (2026-07-03)
+  The wiring will feed `mergeAvToMp4` CONCATENATED fragmented fMP4 (per track: init segment + all
+  media `.m4s` bytes, in order) — the shape DASH SegmentList/Template and HLS-fMP4 produce. Confirmed
+  end-to-end: generated fragmented video-only + audio-only fMP4 via `ffmpeg -f hls -hls_segment_type
+  fmp4`, concatenated `init + *.m4s` per track, ran the merge -> ffprobe confirms both h264 + aac
+  tracks in the output (30 video + 88 audio packets, 2s). So the DASH/HLS engine job is: fetch(init) +
+  fetch(each media segment) -> concat per track -> `mergeAvToMp4(videoBytes, audioBytes)`. No
+  per-segment demux needed; mediabunny reads the whole concatenated fragmented stream. Proof:
+  scratchpad/mbtest/merge-frag-smoke.mjs.
+
 ## Verify
 `pnpm typecheck && pnpm -r test` must stay green. E2e (`pnpm test:e2e:chromium`) is the enforcement
 mechanism — add fixtures for new capabilities where tractable.
