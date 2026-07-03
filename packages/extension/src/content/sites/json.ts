@@ -13,10 +13,14 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * Iterative + a visited set: payloads can be large and are not guaranteed
  * acyclic once the same result object is referenced from multiple entries.
+ *
+ * `visit` may return `false` to stop the traversal early — resolvers use this
+ * once they have collected their cap, so a multi-megabyte timeline response is
+ * not walked in full for the sake of the first few videos.
  */
 export function walkObjects(
   root: unknown,
-  visit: (node: Record<string, unknown>) => void,
+  visit: (node: Record<string, unknown>) => boolean | void,
 ): void {
   const stack: unknown[] = [root];
   const seen = new Set<object>();
@@ -29,7 +33,7 @@ export function walkObjects(
     if (!isRecord(node)) continue;
     if (seen.has(node)) continue;
     seen.add(node);
-    visit(node);
+    if (visit(node) === false) return;
     for (const key of Object.keys(node)) stack.push(node[key]);
   }
 }

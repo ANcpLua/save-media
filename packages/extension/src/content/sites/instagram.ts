@@ -52,11 +52,10 @@ export const instagramResolver: SiteResolver = {
     const out: ResolvedMedia[] = [];
     const seen = new Set<string>();
     walkObjects(json, node => {
-      if (out.length >= MAX_MEDIA) return;
       const best = bestVersion(node.video_versions);
-      if (best === null) return;
+      if (best === null) return true;
       const key = dedupeKey(best.url);
-      if (seen.has(key)) return;
+      if (seen.has(key)) return true;
       seen.add(key);
       out.push({
         url: best.url,
@@ -65,6 +64,7 @@ export const instagramResolver: SiteResolver = {
         height: best.height,
         bitrate: null,
       });
+      return out.length < MAX_MEDIA; // stop walking once the cap is reached.
     });
     return out;
   },

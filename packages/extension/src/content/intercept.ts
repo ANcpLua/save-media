@@ -59,7 +59,7 @@ function patchFetch(
   const original = target.fetch;
   if (typeof original !== "function") return;
 
-  target.fetch = function patched(this: unknown, ...args: Parameters<typeof fetch>) {
+  const patched = function patched(this: unknown, ...args: Parameters<typeof fetch>) {
     const promise = original.apply(this, args);
     try {
       const requestUrl = requestUrlFromFetchArgs(args);
@@ -75,6 +75,14 @@ function patchFetch(
     }
     return promise;
   } as typeof fetch;
+
+  // A hardened page can make `fetch` non-writable; honour "never throw into
+  // the page" — if we can't patch, we simply don't observe fetch here.
+  try {
+    target.fetch = patched;
+  } catch {
+    // Leave the page's fetch untouched.
+  }
 }
 
 function patchXhr(
@@ -89,7 +97,7 @@ function patchXhr(
   const originalSend = proto.send;
   const urlKey = "__savemediaUrl";
 
-  proto.open = function open(this: XMLHttpRequest, _method: string, url: string | URL) {
+  const patchedOpen = function open(this: XMLHttpRequest, _method: string, url: string | URL) {
     try {
       (this as unknown as Record<string, unknown>)[urlKey] = typeof url === "string" ? url : url.href;
     } catch {
@@ -99,20 +107,32 @@ function patchXhr(
     return originalOpen.apply(this, arguments as unknown as Parameters<XMLHttpRequest["open"]>);
   } as XMLHttpRequest["open"];
 
-  proto.send = function send(this: XMLHttpRequest, ...sendArgs: Parameters<XMLHttpRequest["send"]>) {
+  const patchedSend = function send(this: XMLHttpRequest, ...sendArgs: Parameters<XMLHttpRequest["send"]>) {
     try {
       const url = (this as unknown as Record<string, unknown>)[urlKey];
       if (typeof url === "string" && resolver.matchesApi(url)) {
+        // `{ once: true }`: a reused XHR that re-sends must not accumulate
+        // listeners and emit the same body twice.
         this.addEventListener("load", () => {
           const body = xhrResponseText(this);
           if (body !== null) deliver(resolver, onMedia, url, body);
-        });
+        }, { once: true });
       }
     } catch {
       // Never let observation break the send.
     }
     return originalSend.apply(this, sendArgs);
   } as XMLHttpRequest["send"];
+
+  // Guard the prototype assignments the same way as fetch: a frozen XHR must
+  // not throw out of the content script.
+  try {
+    proto.open = patchedOpen;
+    proto.send = patchedSend;
+  } catch {
+    // Restore consistency if only the first assignment took.
+    try { proto.open = originalOpen; } catch { /* best-effort */ }
+  }
 }
 
 function requestUrlFromFetchArgs(args: Parameters<typeof fetch>): string | null {

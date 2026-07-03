@@ -54,13 +54,12 @@ export const twitterResolver: SiteResolver = {
     const out: ResolvedMedia[] = [];
     const seen = new Set<string>();
     walkObjects(json, node => {
-      if (out.length >= MAX_MEDIA) return;
       const info = node.video_info;
-      if (!isRecord(info)) return;
+      if (!isRecord(info)) return true;
       const best = bestProgressiveVariant(info.variants);
-      if (best === null) return;
+      if (best === null) return true;
       const key = dedupeKey(best.url);
-      if (seen.has(key)) return;
+      if (seen.has(key)) return true;
       seen.add(key);
       const dims = dimensionsFromUrl(best.url);
       out.push({
@@ -70,6 +69,7 @@ export const twitterResolver: SiteResolver = {
         height: dims.height,
         bitrate: best.bitrate,
       });
+      return out.length < MAX_MEDIA; // stop walking once the cap is reached.
     });
     return out;
   },
