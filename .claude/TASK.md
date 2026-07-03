@@ -83,6 +83,19 @@ Listing and YouTube-download are mutually exclusive; owner accepts unlisted for 
   e2e fixture-server; a page triggers the merge; ffprobe asserts the output MP4 has BOTH a video and
   an audio stream. Mirror the existing TS→MP4 e2e gate in `tests/e2e/classification.spec.ts`.
 
+  ### PR B — DE-RISKED ✅ (merge primitive proven end-to-end, 2026-07-03)
+  Ran the exact mediabunny flow above in node against real ffmpeg fixtures (H.264 video-only mp4 +
+  AAC audio-only m4a). Result muxed cleanly; **ffprobe independently confirmed the output MP4 has both
+  an h264 video and an aac audio stream** (no re-encode). mediabunny muxes fine under the node entry,
+  so the primitive is unit-testable without the browser — but final wiring still verifies via e2e per
+  repo convention.
+  **CRITICAL GOTCHA (found + solved):** demuxed AAC's first packet has a NEGATIVE timestamp (encoder
+  priming, e.g. −0.023s); `IsobmffMuxer.validateTimestamp` throws `Timestamps must be non-negative`.
+  Fix: `shift = max(0, -min(videoFirstTs, audioFirstTs))` via `track.getFirstTimestamp()`, then
+  `pkt.clone({ timestamp: pkt.timestamp + shift })` for BOTH tracks (one global offset preserves A/V
+  sync). This is the silent-corruption trap the merge engine MUST carry. Working proof:
+  scratchpad/mbtest/merge-smoke.mjs.
+
 ## Verify
 `pnpm typecheck && pnpm -r test` must stay green. E2e (`pnpm test:e2e:chromium`) is the enforcement
 mechanism — add fixtures for new capabilities where tractable.
