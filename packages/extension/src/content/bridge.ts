@@ -119,7 +119,8 @@ function isMainPayload(value: unknown): value is MainPayload {
     && isOptionalString(value.keySystem)
     && isOptionalString(value.mimeType)
     && isOptionalMediaElementTag(value.elementTag)
-    && isOptionalString(value.elementSrc);
+    && isOptionalString(value.elementSrc)
+    && isOptionalString(value.audioUrl);
 }
 
 function isDiscoverPageMediaMessage(value: unknown): value is DiscoverPageMediaMessage {

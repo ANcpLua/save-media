@@ -255,6 +255,25 @@ test.describe("extension classifies real fixture pages", () => {
     expect(Number(parsed.format?.duration ?? 0)).toBeGreaterThan(0);
   }
 
+  function probeStreams(file: string): Array<{ codec_type?: string; codec_name?: string }> {
+    const raw = execFileSync("ffprobe", [
+      "-v", "error",
+      "-show_entries", "stream=codec_type,codec_name",
+      "-of", "json",
+      file,
+    ], { encoding: "utf8" });
+    return (JSON.parse(raw) as { streams?: Array<{ codec_type?: string; codec_name?: string }> }).streams ?? [];
+  }
+
+  function ffprobeAvailable(): boolean {
+    try {
+      execFileSync("ffprobe", ["-version"], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function startDescriptorDownload(descriptor: Descriptor, filename: string): Promise<void> {
     const variant = [...(descriptor.variants ?? [])].sort((a, b) => {
       const height = (b.height ?? 0) - (a.height ?? 0);
@@ -453,6 +472,30 @@ test.describe("extension classifies real fixture pages", () => {
       await startDescriptorDownload(descriptor!, "e2e-hls-fmp4.mp4");
       const file = await waitForCompletedDownload(page, "e2e-hls-fmp4.mp4");
       expectPlayable(file, /mp4|mov/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline merges demuxed HLS audio+video into one MP4 carrying both streams", async () => {
+    test.skip(!ffprobeAvailable(), "ffprobe not found. Install ffmpeg/ffprobe or put ffprobe on PATH.");
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("av-merge", ds => ds.some(d => d.protocol === "hls"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/av-merge.html")).find(d => d.protocol === "hls");
+      expect(descriptor).toBeDefined();
+      // The EXT-X-MEDIA audio group must survive parsing — the variant links
+      // to it, which is what routes the download through the merge engine.
+      expect(descriptor!.variants.some(v => v.audioRenditionId !== null),
+        `expected an audio-linked variant, got ${JSON.stringify(descriptor!.variants)}`).toBe(true);
+      await startDescriptorDownload(descriptor!, "e2e-av-merge.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-av-merge.mp4");
+      expectPlayable(file, /mp4|mov/);
+      const streams = probeStreams(file);
+      expect(streams.some(s => s.codec_type === "video" && s.codec_name === "h264"),
+        `expected an h264 video stream, got ${JSON.stringify(streams)}`).toBe(true);
+      expect(streams.some(s => s.codec_type === "audio" && s.codec_name === "aac"),
+        `expected an aac audio stream, got ${JSON.stringify(streams)}`).toBe(true);
     } finally {
       await page.close();
     }

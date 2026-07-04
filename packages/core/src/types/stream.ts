@@ -71,6 +71,17 @@ export interface StreamDescriptor {
   readonly container: Container;
   readonly codecs: CodecSet;
   readonly variants: readonly Variant[];
+  /**
+   * Demuxed audio renditions (HLS EXT-X-MEDIA TYPE=AUDIO with URI, DASH audio
+   * AdaptationSets), reused as audio-only {@link Variant}s (videoCodec null,
+   * audioRenditionId set). A video variant links its rendition through
+   * `variant.audioRenditionId`. For HLS masters the rendition's segment URLs
+   * are NOT materialized at parse time — `segmentRef.playlistUrl` carries the
+   * rendition media playlist, and callers must fetch it and materialize
+   * `segmentUrls` (plus the variant's) before dispatch can emit an av-merge
+   * plan. Absent/empty means the source has no demuxed audio.
+   */
+  readonly audioRenditions?: readonly Variant[];
   readonly drm: DrmStatus;
   readonly capabilities: OutputCapabilities;
   readonly confidence: Confidence;

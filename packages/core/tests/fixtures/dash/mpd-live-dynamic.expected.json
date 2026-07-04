@@ -1,0 +1,11 @@
+{
+  "kind": "dash",
+  "note": "type=dynamic (live) — mpd-parser expands only the current availability window, so segment refs must stay unmaterialized and dispatch keeps refusing",
+  "videoRepresentations": [
+    { "id": "720p", "height": 720, "videoCodecRfc6381": "avc1.4d401f", "bitrate": 2500000, "materializedSegments": 0 }
+  ],
+  "audioRepresentations": [
+    { "id": "audio", "audioCodecRfc6381": "mp4a.40.2", "bitrate": 128000, "materializedSegments": 0 }
+  ],
+  "drm": null
+}

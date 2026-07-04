@@ -26,6 +26,7 @@ interface PageCaptureMessage {
   mimeType?: string;
   elementTag?: "video" | "audio";
   elementSrc?: string;
+  audioUrl?: string;
 }
 
 interface PageCommandMessage {
@@ -63,11 +64,11 @@ const emitDownloadBestHotkey = (): void => {
 };
 
 /**
- * On sites with a dedicated resolver (twitter/x, instagram), the site's own
- * API responses are the authoritative source of the muxed download URL, and
- * the generic passive observers below only surface noise — a demuxed
- * video-only HLS master, or a video-only DASH byte-range fragment — that
- * would masquerade as the "best" download. So on those hosts we run the
+ * On sites with a dedicated resolver (twitter/x, instagram, youtube), the
+ * site's own API responses are the authoritative source of the download
+ * URL(s), and the generic passive observers below only surface noise — a
+ * demuxed video-only HLS master, or a video-only DASH byte-range fragment —
+ * that would masquerade as the "best" download. So on those hosts we run the
  * interceptor instead of the generic observers. The generic path stays the
  * default for every other site.
  */
@@ -76,10 +77,22 @@ const siteResolver = resolverForPage(location.href);
 if (siteResolver) {
   const emitted = new Set<string>();
   installInterceptor(siteResolver, media => {
-    const key = dedupeKey(media.url);
+    const audioUrl = media.audioUrl === undefined ? undefined : canonicaliseUrl(media.audioUrl);
+    // null means the pair's audio half was an empty string (untrusted API
+    // JSON). A demuxed pair must stay a pair — drop the capture rather than
+    // degrade it to a silent video-only direct download.
+    if (audioUrl === null) return;
+    // Demuxed pairs (youtube): the signed googlevideo URLs all share the one
+    // `/videoplayback` path and differ only by query, so the query-stripping
+    // dedupeKey would collapse different videos into one — while the full URL
+    // over-splits, because a player re-fetch of the SAME video (SPA re-nav,
+    // playback recovery) re-signs the query (expire/sig/n) and would surface
+    // it as a second stream. The resolver's stable content identity wins;
+    // the full pair URL is only the fallback when it could not derive one.
+    const key = media.dedupeKey ?? (audioUrl === undefined ? dedupeKey(media.url) : media.url);
     if (emitted.has(key)) return;
     emitted.add(key);
-    emit("media-source", media.url);
+    emit("media-source", media.url, audioUrl === undefined ? {} : { audioUrl });
   });
 } else {
   installGenericDiscovery();

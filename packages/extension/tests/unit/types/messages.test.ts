@@ -72,6 +72,23 @@ describe("message types", () => {
     })).toBe(true);
   });
 
+  it("capture payloads may carry a demuxed companion audioUrl (string only)", () => {
+    const base = {
+      [MAIN_BRIDGE_TAG]: true,
+      kind: "media-source",
+      url: "https://cdn.example/videoplayback?itag=137",
+      pageUrl: "https://www.youtube.com/watch?v=1",
+    };
+    expect(isBridgeToBackgroundMessage({
+      type: "capture",
+      payload: { ...base, audioUrl: "https://cdn.example/videoplayback?itag=140" },
+    })).toBe(true);
+    expect(isBridgeToBackgroundMessage({
+      type: "capture",
+      payload: { ...base, audioUrl: 42 },
+    })).toBe(false);
+  });
+
   it("BackgroundToContentMessage asks the bridge to discover page media URLs", () => {
     const msg: BackgroundToContentMessage = { type: "discover-page-media" };
     const response: ContentDiscoveryResponse = {

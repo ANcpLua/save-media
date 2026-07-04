@@ -3,7 +3,6 @@
 // at module-load with `ReferenceError: window is not defined`.
 import "../sw-globals-polyfill";
 
-import { classify } from "@savemedia/core";
 import {
   isBackgroundToEngineMessage,
   isBridgeToBackgroundMessage,
@@ -13,16 +12,15 @@ import {
 import type {
   BackgroundToEngineMessage,
   BackgroundToPopupMessage,
-  BridgeToBackgroundMessage,
   EngineToBackgroundMessage,
 } from "../types/messages";
 import { createRouter } from "./router";
+import { createCaptureHandler } from "./capture";
 import { downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { registerNetworkCapture } from "./network-capture";
 import { ensureEngineHost } from "../platform/processor-host";
 import { createInProcessEngineHost } from "../engine/in-process-host";
 import { consoleLogger } from "../util/logger";
-import type { StreamDescriptor } from "@savemedia/core";
 
 declare const __BROWSER__: "chromium" | "firefox";
 
@@ -59,6 +57,18 @@ router = createRouter({
   logger,
 });
 
+const handleCapture = createCaptureHandler({
+  fetchFn: (url, init) => fetch(url, init),
+  onDescriptor: (tabId, descriptor) => {
+    const added = router.addDescriptor(tabId, descriptor);
+    if (added) {
+      updateBadge(tabId);
+      broadcastDescriptors(tabId);
+    }
+  },
+  logger,
+});
+
 const downloadBestDeps: DownloadBestDeps = {
   tabs: {
     query: queryInfo => chrome.tabs.query(queryInfo),
@@ -83,60 +93,6 @@ chrome.tabs.onRemoved.addListener(tabId => router.clearTab(tabId));
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === "loading" && info.url) router.clearTab(tabId);
 });
-
-async function handleCapture(
-  tabId: number,
-  msg: Extract<BridgeToBackgroundMessage, { type: "capture" }>,
-): Promise<void> {
-  const cap = msg.payload;
-  if (!cap.url && cap.kind !== "eme") return;
-
-  const headers: Record<string, string> = cap.responseHeaders ? { ...cap.responseHeaders } : {};
-  let bodyBytes: Uint8Array | null = null;
-  let manifestText: string | null = null;
-
-  if (cap.url) {
-    try {
-      const r = await fetch(cap.url, { credentials: "include" });
-      r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-      const ct = headers["content-type"] ?? "";
-      if (/(mpegurl|dash\+xml|xml|text)/i.test(ct) || /\.(m3u8|mpd)(\?|$)/i.test(cap.url)) {
-        manifestText = await r.text();
-      } else {
-        const buf = await r.clone().arrayBuffer();
-        bodyBytes = new Uint8Array(buf.slice(0, 4096));
-      }
-    } catch (err) {
-      logger.debug("capture fetch failed", { url: cap.url, err: String(err) });
-    }
-  }
-
-  if (cap.kind === "eme" && cap.keySystem) {
-    headers["x-savemedia-eme-keysystem"] = cap.keySystem;
-  }
-
-  const descriptor = await classify({
-    tabId,
-    pageUrl: cap.pageUrl,
-    url: cap.url ?? cap.pageUrl,
-    headers,
-    bodyBytes,
-    manifestText,
-  });
-
-  if (!shouldSurfaceDescriptor(descriptor)) return;
-  const added = router.addDescriptor(tabId, descriptor);
-  if (added) {
-    updateBadge(tabId);
-    broadcastDescriptors(tabId);
-  }
-}
-
-function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {
-  if (descriptor.drm) return true;
-  if (descriptor.capabilities.directDownload) return true;
-  return descriptor.protocol === "hls" || descriptor.protocol === "dash";
-}
 
 registerNetworkCapture(handleCapture);
 

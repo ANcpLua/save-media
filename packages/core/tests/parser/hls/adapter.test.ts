@@ -37,3 +37,57 @@ describe("parseHlsMaster", () => {
     }
   });
 });
+
+describe("parseHlsMaster — EXT-X-MEDIA audio groups", () => {
+  it("master without EXT-X-MEDIA yields no renditions and null variant links", () => {
+    const r = parseHlsMaster(fixture("master-vod-h264-aac.m3u8"), "https://x.test/master.m3u8");
+    expect(r.audioRenditions).toHaveLength(0);
+    for (const v of r.variants) expect(v.audioRenditionId).toBeNull();
+  });
+
+  it("master-audio-group.m3u8 → URI-bearing renditions + variant links", () => {
+    const r = parseHlsMaster(fixture("master-audio-group.m3u8"), "https://x.test/master.m3u8");
+    const exp = expected("master-audio-group.expected.json") as {
+      variantCount: number;
+      renditionCount: number;
+      renditions: Array<{ audioRenditionId: string; playlistUrl: string }>;
+      variantLinks: Array<{ height: number; audioRenditionId: string | null }>;
+    };
+
+    expect(r.variants).toHaveLength(exp.variantCount);
+    expect(r.audioRenditions).toHaveLength(exp.renditionCount);
+
+    for (const e of exp.renditions) {
+      const rend = r.audioRenditions.find(a => a.audioRenditionId === e.audioRenditionId);
+      expect(rend, `rendition ${e.audioRenditionId}`).toBeDefined();
+      expect(rend?.videoCodec).toBeNull();
+      expect(rend?.segmentRef).toMatchObject({
+        kind: "hls-segments",
+        playlistUrl: e.playlistUrl,
+        initSegmentUrl: null,
+        segmentUrls: [],
+        encryption: null,
+      });
+    }
+
+    for (const e of exp.variantLinks) {
+      const v = r.variants.find(x => x.height === e.height);
+      expect(v, `variant ${e.height}p`).toBeDefined();
+      expect(v?.audioRenditionId).toBe(e.audioRenditionId);
+    }
+  });
+
+  it("prefers the DEFAULT=YES rendition over the group's first listed one", () => {
+    const r = parseHlsMaster(fixture("master-audio-group.m3u8"), "https://x.test/master.m3u8");
+    // aud-hi lists French (DEFAULT=NO) before English (DEFAULT=YES).
+    const v1080 = r.variants.find(v => v.height === 1080);
+    expect(v1080?.audioRenditionId).toBe("aud-hi:English");
+  });
+
+  it("a group whose renditions carry no URI (muxed audio) links nothing", () => {
+    const r = parseHlsMaster(fixture("master-audio-group.m3u8"), "https://x.test/master.m3u8");
+    const v480 = r.variants.find(v => v.height === 480);
+    expect(v480?.audioRenditionId).toBeNull();
+    expect(r.audioRenditions.some(a => String(a.audioRenditionId).startsWith("aud-muxed:"))).toBe(false);
+  });
+});

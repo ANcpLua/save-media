@@ -7,6 +7,8 @@
  *   /hls/master.m3u8 + media.m3u8 + segNNN.ts — real clear HLS VOD
  *   /hls-fmp4/master.m3u8 + media.m3u8 + EXT-X-MAP init + m4s fragments — clear fMP4
  *   /hls-fmp4-mp4/* .mp4-named init/fragments — verifies chunk suppression
+ *   /av-merge/master.m3u8 + EXT-X-MEDIA audio group + video/audio playlists
+ *     + per-track init/m4s fragments — demuxed HLS for the a/v merge engine
  *   /hls-aes/key + master + media + ciphertext segments — refused encryption
  *   /dash/clip.mpd                         — clear DASH descriptor, refused download
  *   /drm/widevine.mpd                      — DASH with Widevine ContentProtection
@@ -125,6 +127,17 @@ seg000.ts
   "/hls-fmp4-mp4/title-part-1.mp4": { type: "video/mp4", body: fixture("hls-fmp4/seg000.m4s") },
   "/hls-fmp4-mp4/title-part-2.mp4": { type: "video/mp4", body: fixture("hls-fmp4/seg000.m4s") },
 
+  // Demuxed HLS: video-only variant + EXT-X-MEDIA audio rendition
+  "/av-merge/master.m3u8":     { type: "application/vnd.apple.mpegurl", body: fixture("av-merge/master.m3u8") },
+  "/av-merge/video.m3u8":      { type: "application/vnd.apple.mpegurl", body: fixture("av-merge/video.m3u8") },
+  "/av-merge/audio.m3u8":      { type: "application/vnd.apple.mpegurl", body: fixture("av-merge/audio.m3u8") },
+  "/av-merge/video-init.mp4":  { type: "video/mp4", body: fixture("av-merge/video-init.mp4") },
+  "/av-merge/audio-init.mp4":  { type: "video/mp4", body: fixture("av-merge/audio-init.mp4") },
+  "/av-merge/video-seg000.m4s": { type: "video/iso.segment", body: fixture("av-merge/video-seg000.m4s") },
+  "/av-merge/video-seg001.m4s": { type: "video/iso.segment", body: fixture("av-merge/video-seg001.m4s") },
+  "/av-merge/audio-seg000.m4s": { type: "video/iso.segment", body: fixture("av-merge/audio-seg000.m4s") },
+  "/av-merge/audio-seg001.m4s": { type: "video/iso.segment", body: fixture("av-merge/audio-seg001.m4s") },
+
   // HLS AES-128
   "/hls-aes/master.m3u8": { type: "application/vnd.apple.mpegurl", body: fixture("hls-aes/master.m3u8") },
   "/hls-aes/media.m3u8":  { type: "application/vnd.apple.mpegurl", body: fixture("hls-aes/media.m3u8") },
@@ -166,6 +179,7 @@ const pages = {
     fetch("/hls-fmp4-mp4/title-part-1.mp4").catch(() => {});
     fetch("/hls-fmp4-mp4/title-part-2.mp4").catch(() => {});
   </script><p>hls fmp4 mp4-named fragment fixture</p>`),
+  "av-merge": html("av-merge", `<script>fetch("/av-merge/master.m3u8");</script><p>demuxed hls av-merge fixture</p>`),
   "embedded-hls": html("embedded-hls", `<script>
     window.__savemediaFixture = {"stream":{"url":"\\/hls\\/master.m3u8","urls":{"1080p":"\\/hls-fmp4\\/master.m3u8"}}};
   </script><p>embedded hls fixture</p>`),

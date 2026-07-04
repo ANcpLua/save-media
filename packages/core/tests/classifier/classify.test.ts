@@ -70,7 +70,44 @@ describe("classify orchestration", () => {
     });
     expect(d.protocol).toBe("hls");
     expect(d.variants.length).toBe(3);
+    expect(d.audioRenditions).toHaveLength(0);
     expect(d.drm).toBeNull();
+  });
+
+  it("HLS master with EXT-X-MEDIA audio groups surfaces renditions on the descriptor", async () => {
+    const d = await classify({
+      tabId: 1,
+      pageUrl: "https://example.com/page",
+      url: "https://cdn/master.m3u8",
+      headers: { "content-type": "application/vnd.apple.mpegurl" },
+      bodyBytes: null,
+      manifestText: fx("hls/master-audio-group.m3u8"),
+    });
+    expect(d.audioRenditions).toHaveLength(3);
+    const v1080 = d.variants.find(v => v.height === 1080);
+    expect(v1080?.audioRenditionId).toBe("aud-hi:English");
+    expect(
+      d.audioRenditions?.some(a => a.audioRenditionId === v1080?.audioRenditionId),
+    ).toBe(true);
+  });
+
+  it("clear DASH MPD surfaces materialized video variants + audio renditions", async () => {
+    const d = await classify({
+      tabId: 1,
+      pageUrl: "https://example.com/page",
+      url: "https://cdn/m.mpd",
+      headers: { "content-type": "application/dash+xml" },
+      bodyBytes: null,
+      manifestText: fx("dash/mpd-vod-multibitrate.mpd"),
+    });
+    expect(d.protocol).toBe("dash");
+    expect(d.drm).toBeNull();
+    expect(d.variants.length).toBeGreaterThanOrEqual(2);
+    expect(d.audioRenditions).toHaveLength(1);
+    const audioRef = d.audioRenditions?.[0]?.segmentRef;
+    if (audioRef?.kind !== "dash-segments") throw new Error("expected dash-segments");
+    expect(audioRef.initUrl).toBe("https://cdn/init-audio.m4s");
+    expect(audioRef.mediaUrls.length).toBeGreaterThan(0);
   });
 
   it("HLS media playlist → single downloadable variant for the playlist itself", async () => {
