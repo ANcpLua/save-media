@@ -21,6 +21,19 @@ describe("job types", () => {
     expect(direct.kind).toBe("direct");
   });
 
+  it("JobPlan includes av-merge with two concrete merge tracks", () => {
+    const merge: JobPlan = {
+      kind: "av-merge",
+      video: { initUrl: "https://example.com/init-v.mp4", segmentUrls: ["https://example.com/v1.m4s"] },
+      audio: { initUrl: null, segmentUrls: ["https://example.com/a1.m4s"] },
+      outputContainer: "mp4",
+      outputFilename: "v.mp4",
+      estimatedBytes: null,
+    };
+    expect(merge.kind).toBe("av-merge");
+    if (merge.kind === "av-merge") expect(merge.audio.initUrl).toBeNull();
+  });
+
   it("DispatchRefusal carries the DRM reason", () => {
     const refusal: DispatchRefusal = {
       kind: "refuse",

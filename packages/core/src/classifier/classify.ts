@@ -156,6 +156,7 @@ export async function classify(input: ClassifyInput): Promise<StreamDescriptor> 
   let confidence = mergeConfidence(l1.confidence, l2.confidence);
   const title: string | null = l2.titleHint;
   let variants: Variant[] = [];
+  let audioRenditions: Variant[] = [];
   let drm: DrmStatus = null;
   const codecs: CodecSet = { video: null, audio: null, subtitles: [] };
   let hlsManifestType: "master" | "media" = "master";
@@ -164,6 +165,7 @@ export async function classify(input: ClassifyInput): Promise<StreamDescriptor> 
   if (protocol === "hls" && input.manifestText) {
     const r = parseHlsMaster(input.manifestText, input.url);
     variants = [...r.variants];
+    audioRenditions = [...r.audioRenditions];
     confidence = { ...confidence, protocol: "confirmed" };
 
     // Only attempt media-playlist encryption scan when there are no variant
@@ -187,6 +189,7 @@ export async function classify(input: ClassifyInput): Promise<StreamDescriptor> 
   } else if (protocol === "dash" && input.manifestText) {
     const r = parseDash(input.manifestText, input.url);
     variants = [...r.videoVariants];
+    audioRenditions = [...r.audioRenditions];
     drm = r.drm;
     confidence = { ...confidence, protocol: "confirmed" };
   }
@@ -220,6 +223,7 @@ export async function classify(input: ClassifyInput): Promise<StreamDescriptor> 
     container,
     codecs,
     variants,
+    audioRenditions,
     drm,
     capabilities,
     confidence,

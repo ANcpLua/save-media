@@ -1,0 +1,15 @@
+{
+  "variantCount": 4,
+  "renditionCount": 3,
+  "renditions": [
+    { "audioRenditionId": "aud-lo:English", "playlistUrl": "https://x.test/audio/en-lo/playlist.m3u8" },
+    { "audioRenditionId": "aud-hi:French", "playlistUrl": "https://x.test/audio/fr-hi/playlist.m3u8" },
+    { "audioRenditionId": "aud-hi:English", "playlistUrl": "https://x.test/audio/en-hi/playlist.m3u8" }
+  ],
+  "variantLinks": [
+    { "height": 720, "audioRenditionId": "aud-lo:English" },
+    { "height": 1080, "audioRenditionId": "aud-hi:English" },
+    { "height": 360, "audioRenditionId": null },
+    { "height": 480, "audioRenditionId": null }
+  ]
+}

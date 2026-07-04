@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRouter, dispatchRefusalToError } from "../../../src/background/router";
+import { demuxedPairDescriptor } from "../../../src/background/capture";
 import { directDescriptor, hlsDescriptor, dashDescriptor, drmDescriptor, clearKeyDescriptor } from "../popup/helpers/descriptors";
 import type { UserChoice, StreamDescriptor, StreamId, VariantId } from "@savemedia/core";
 
@@ -292,6 +293,35 @@ describe("router — startBestDownload", () => {
     expect(failure).toBeNull();
     expect(d.downloads.download).not.toHaveBeenCalled();
     expect(d.ensureEngineHost).not.toHaveBeenCalled();
+  });
+
+  it("selects a demuxed audio+video pair while plain DASH stays skipped", async () => {
+    const d = deps();
+    const r = createRouter(d);
+    r.addDescriptor(1, dashDescriptor()); // no audio renditions → never a candidate
+    const pair = demuxedPairDescriptor(
+      directDescriptor({
+        id: "stream-pair" as StreamId,
+        source: { kind: "direct-url", url: "https://cdn.example/videoplayback?id=o-AAA&itag=137", headers: {} },
+      }),
+      "https://cdn.example/videoplayback?id=o-AAA&itag=140",
+      null,
+    );
+    expect(r.addDescriptor(1, pair)).toBe(true);
+    expect(r.addDescriptor(1, pair)).toBe(false); // same pair dedupes
+
+    const failure = await r.startBestDownload(1);
+
+    // The pair — not the plain DASH entry, not nothing — is selected, and
+    // core dispatch turns its demuxed shape into an AvMergePlan, so the job
+    // must reach the engine host rather than resolve to a refusal or a
+    // silent video-only browser download.
+    expect(failure).toBeNull();
+    expect(d.ensureEngineHost).toHaveBeenCalled();
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "start-job", streamId: pair.id }),
+    );
+    expect(d.downloads.download).not.toHaveBeenCalled();
   });
 });
 

@@ -62,9 +62,10 @@ export interface MergeTrack {
 /**
  * A source that ships video and audio separately (demuxed HLS audio groups,
  * DASH, YouTube adaptive itags): fetch both tracks and mux them into one MP4
- * with no re-encode. Not yet part of {@link JobPlan} — dispatch does not emit
- * it until the parser/dispatch wiring lands, so the engine cannot be reached
- * with a half-wired plan.
+ * with no re-encode. Dispatch emits it for demuxed HLS variants (a linked
+ * audio rendition) and clear DASH with both tracks, and only once every track
+ * carries concrete fetchable URLs — a plan with an unmaterialized track is
+ * never emitted.
  */
 export interface AvMergePlan {
   readonly kind: "av-merge";
@@ -75,4 +76,4 @@ export interface AvMergePlan {
   readonly estimatedBytes: number | null;
 }
 
-export type JobPlan = DirectPlan | HlsPlainPlan;
+export type JobPlan = DirectPlan | HlsPlainPlan | AvMergePlan;

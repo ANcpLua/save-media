@@ -8,8 +8,20 @@ declare module "m3u8-parser" {
           "FRAME-RATE"?: number;
           RESOLUTION?: { width: number; height: number };
           CODECS?: string;
+          /** GROUP-ID of the EXT-X-MEDIA audio group linked via AUDIO= */
+          AUDIO?: string;
         };
       }>;
+      mediaGroups?: {
+        /** groupId → rendition NAME → rendition attributes */
+        AUDIO?: Record<string, Record<string, {
+          default?: boolean;
+          autoselect?: boolean;
+          language?: string;
+          /** Absent when the rendition's audio is muxed into the variant stream */
+          uri?: string;
+        }>>;
+      };
       segments?: ReadonlyArray<{
         uri: string;
         duration: number;

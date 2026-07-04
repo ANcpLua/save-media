@@ -50,6 +50,32 @@ test.describe("fixture server", () => {
     expect(text).toContain("seg000.m4s");
   });
 
+  test("serves the demuxed HLS fixture with an EXT-X-MEDIA audio group", async ({ page }) => {
+    await page.goto("/page/av-merge.html");
+    const master = await page.request.get("/av-merge/master.m3u8");
+    expect(master.status()).toBe(200);
+    expect(master.headers()["content-type"]).toContain("mpegurl");
+    const masterText = await master.text();
+    expect(masterText).toContain("#EXT-X-MEDIA:TYPE=AUDIO");
+    expect(masterText).toContain('URI="audio.m3u8"');
+    expect(masterText).toContain('AUDIO="aud"');
+    expect(masterText).toContain("video.m3u8");
+    const video = await (await page.request.get("/av-merge/video.m3u8")).text();
+    expect(video).toContain('EXT-X-MAP:URI="video-init.mp4"');
+    expect(video).toContain("video-seg000.m4s");
+    expect(video).toContain("EXT-X-ENDLIST");
+    const audio = await (await page.request.get("/av-merge/audio.m3u8")).text();
+    expect(audio).toContain('EXT-X-MAP:URI="audio-init.mp4"');
+    expect(audio).toContain("audio-seg000.m4s");
+    expect(audio).toContain("EXT-X-ENDLIST");
+    for (const path of ["/av-merge/video-init.mp4", "/av-merge/audio-init.mp4"]) {
+      expect((await page.request.get(path)).headers()["content-type"]).toContain("video/mp4");
+    }
+    for (const path of ["/av-merge/video-seg000.m4s", "/av-merge/video-seg001.m4s", "/av-merge/audio-seg000.m4s", "/av-merge/audio-seg001.m4s"]) {
+      expect((await page.request.get(path)).headers()["content-type"]).toContain("video/iso.segment");
+    }
+  });
+
   test("serves the HLS AES-128 fixture with a reachable 16-byte key", async ({ page }) => {
     await page.goto("/page/hls-aes.html");
     const playlist = await page.request.get("/hls-aes/media.m3u8");

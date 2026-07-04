@@ -13,9 +13,15 @@ describe("resolverForPage", () => {
     expect(resolverForPage("https://instagram.com/p/CxYz/")?.id).toBe("instagram");
   });
 
+  it("selects the youtube resolver for youtube watch/embed pages", () => {
+    expect(resolverForPage("https://www.youtube.com/watch?v=aQb2eDW4kzA")?.id).toBe("youtube");
+    expect(resolverForPage("https://m.youtube.com/watch?v=aQb2eDW4kzA")?.id).toBe("youtube");
+    expect(resolverForPage("https://www.youtube-nocookie.com/embed/aQb2eDW4kzA")?.id).toBe("youtube");
+  });
+
   it("returns null for ordinary pages and bad URLs", () => {
-    expect(resolverForPage("https://www.youtube.com/watch?v=1")).toBeNull();
     expect(resolverForPage("https://example.com")).toBeNull();
+    expect(resolverForPage("https://rr3---sn-4g5edned.googlevideo.com/videoplayback?itag=137")).toBeNull();
     expect(resolverForPage("not a url")).toBeNull();
   });
 });
