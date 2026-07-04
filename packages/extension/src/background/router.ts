@@ -17,6 +17,7 @@ import type {
 import type { Logger } from "../util/logger";
 import { suggestFilename } from "../util/filename";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
+import { hasDownloadableDemuxedPair } from "../util/demuxed-pair";
 
 export { dispatchRefusalToError } from "../util/dispatch-refusal";
 
@@ -277,21 +278,9 @@ export function createRouter(deps: RouterDeps): Router {
     };
   }
 
-  /**
-   * A demuxed audio+video pair reshaped for the av-merge path: a DASH-protocol
-   * descriptor exposing at least one video variant and one audio rendition
-   * (see background/capture.ts `demuxedPairDescriptor`). Plain DASH
-   * descriptors — no renditions surfaced — stay non-candidates.
-   */
-  function hasDemuxedAudioPair(d: StreamDescriptor): boolean {
-    return d.protocol === "dash"
-      && d.variants.length > 0
-      && (d.audioRenditions?.length ?? 0) > 0;
-  }
-
   function isDownloadableCandidate(d: StreamDescriptor): boolean {
     return !d.capabilities.drmBlocked
-      && (d.capabilities.directDownload || d.protocol === "hls" || hasDemuxedAudioPair(d));
+      && (d.capabilities.directDownload || d.protocol === "hls" || hasDownloadableDemuxedPair(d));
   }
 
   async function startBestDownload(tabId: number): Promise<{ streamId: StreamDescriptor["id"]; error: JobError } | null> {

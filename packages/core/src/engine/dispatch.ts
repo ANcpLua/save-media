@@ -13,7 +13,7 @@ import type {
   AvMergePlan,
   MergeTrack,
 } from "../types/job";
-import type { Variant, HlsEncryption, SegmentRef } from "../types/codec";
+import type { Variant, HlsEncryption, SegmentRef, VideoCodecFamily, AudioCodecFamily } from "../types/codec";
 import { interpretHlsEncryption } from "../parser/hls/encryption";
 
 export const BROWSER_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024; // Blob URLs become unreliable above this.
@@ -129,7 +129,24 @@ function mergeTrackFrom(ref: SegmentRef): MergeTrack | null {
   }
 }
 
+// The merge engine muxes to MP4 only; families outside these sets yield an
+// invalid or unplayable MP4 (VP9/Opus belong in WebM — a later story). A null
+// codec passes: progressive pairs confirmed as MP4 by magic bytes carry no
+// manifest codec declaration.
+const MP4_VIDEO_FAMILIES: ReadonlySet<VideoCodecFamily> = new Set(["h264", "h265", "av1"]);
+const MP4_AUDIO_FAMILIES: ReadonlySet<AudioCodecFamily> = new Set(["aac", "mp3"]);
+
+function mp4MergeCompatible(video: Variant, audio: Variant): boolean {
+  // A demuxed HLS variant's CODECS attribute declares the group's audio
+  // codec; the rendition itself usually carries none.
+  const audioCodec = audio.audioCodec ?? video.audioCodec;
+  if (video.videoCodec && !MP4_VIDEO_FAMILIES.has(video.videoCodec.family)) return false;
+  if (audioCodec && !MP4_AUDIO_FAMILIES.has(audioCodec.family)) return false;
+  return true;
+}
+
 function buildAvMergePlan(video: Variant, audio: Variant, choice: UserChoice): AvMergePlan | null {
+  if (!mp4MergeCompatible(video, audio)) return null;
   const videoTrack = mergeTrackFrom(video.segmentRef);
   const audioTrack = mergeTrackFrom(audio.segmentRef);
   if (!videoTrack || !audioTrack) return null;

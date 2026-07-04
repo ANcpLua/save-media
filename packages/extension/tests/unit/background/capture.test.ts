@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createCaptureHandler,
   demuxedPairDescriptor,
+  type CaptureDeps,
   type CaptureFetchResponse,
   type CaptureMessage,
 } from "../../../src/background/capture";
@@ -23,6 +24,7 @@ function response(
   contentType: string,
   body: Uint8Array | string,
   extraHeaders: Readonly<Record<string, string>> = {},
+  stream?: ReadableStream<Uint8Array>,
 ): CaptureFetchResponse {
   const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
   const buffer = new ArrayBuffer(bytes.byteLength);
@@ -34,6 +36,7 @@ function response(
         for (const [k, v] of Object.entries(extraHeaders)) cb(v, k);
       },
     },
+    ...(stream === undefined ? {} : { body: stream }),
     text: async () => (typeof body === "string" ? body : ""),
     clone: () => ({ arrayBuffer: async () => buffer }),
   };
@@ -59,7 +62,7 @@ function captureMsg(url: string, audioUrl?: string): CaptureMessage {
   };
 }
 
-function harness(fetchImpl: () => Promise<CaptureFetchResponse>) {
+function harness(fetchImpl: CaptureDeps["fetchFn"]) {
   const fetchFn = vi.fn(fetchImpl);
   const onDescriptor = vi.fn<[number, StreamDescriptor], void>();
   const handle = createCaptureHandler({ fetchFn, onDescriptor });
@@ -154,12 +157,12 @@ describe("capture handler — demuxed pairs", () => {
 describe("demuxedPairDescriptor", () => {
   it("returns non-direct descriptors unchanged", () => {
     const hls = hlsDescriptor();
-    expect(demuxedPairDescriptor(hls, AUDIO_URL, null)).toBe(hls);
+    expect(demuxedPairDescriptor(hls, AUDIO_URL, null, null)).toBe(hls);
   });
 
   it("keeps identity fields while re-protocoling a direct descriptor", () => {
     const direct = directDescriptor();
-    const pair = demuxedPairDescriptor(direct, AUDIO_URL, null);
+    const pair = demuxedPairDescriptor(direct, AUDIO_URL, null, null);
     expect(pair.id).toBe(direct.id);
     expect(pair.pageUrl).toBe(direct.pageUrl);
     expect(pair.container).toBe(direct.container);
@@ -167,9 +170,75 @@ describe("demuxedPairDescriptor", () => {
     expect(pair.capabilities).toEqual({ directDownload: false, remuxableTo: [], drmBlocked: false });
   });
 
-  it("puts the probed video size on the video half only", () => {
-    const pair = demuxedPairDescriptor(directDescriptor(), AUDIO_URL, 123456789);
+  it("puts each probed size on its own half", () => {
+    const pair = demuxedPairDescriptor(directDescriptor(), AUDIO_URL, 123456789, 9876543);
     expect(pair.variants[0]!.estimatedSize).toBe(123456789);
+    expect(pair.audioRenditions![0]!.estimatedSize).toBe(9876543);
+  });
+
+  it("leaves an unprobeable half's size unknown rather than wrong", () => {
+    const pair = demuxedPairDescriptor(directDescriptor(), AUDIO_URL, 123456789, null);
     expect(pair.audioRenditions![0]!.estimatedSize).toBeNull();
+  });
+});
+
+describe("capture handler — probe safety", () => {
+  it("reads at most 4 KiB from a stream even when the server ignores the range header", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const firstChunk = new Uint8Array(1024);
+    firstChunk.set(FTYP_HEAD);
+    // An endless 200 body standing in for a multi-GB file on a server that
+    // ignored the range header: every pull yields another KiB forever.
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(pulls === 1 ? firstChunk : new Uint8Array(1024));
+      },
+      cancel() { cancelled = true; },
+    });
+    const { onDescriptor, handle } = harness(async () =>
+      response("video/mp4", FTYP_HEAD, { "content-length": "5368709120" }, endless));
+
+    await handle(7, captureMsg(VIDEO_URL, AUDIO_URL));
+
+    // Classification still worked from the streamed head…
+    expect(onDescriptor).toHaveBeenCalledTimes(1);
+    expect(onDescriptor.mock.calls[0]![1].protocol).toBe("dash");
+    // …but the body was never buffered whole.
+    expect(pulls).toBeLessThan(10);
+    expect(cancelled).toBe(true);
+  });
+
+  it("probes the audio half so the size guard counts both tracks", async () => {
+    const { fetchFn, onDescriptor, handle } = harness(async () => response("video/mp4", FTYP_HEAD));
+    fetchFn.mockImplementation(async (url: string) =>
+      url === AUDIO_URL
+        ? response("audio/mp4", FTYP_HEAD, { "content-range": "bytes 0-0/44444444" })
+        : response("video/mp4", FTYP_HEAD, { "content-range": "bytes 0-4095/123456789" }));
+
+    await handle(7, captureMsg(VIDEO_URL, AUDIO_URL));
+
+    const [, d] = onDescriptor.mock.calls[0]!;
+    expect(d.variants[0]!.estimatedSize).toBe(123456789);
+    expect(d.audioRenditions![0]!.estimatedSize).toBe(44444444);
+    expect(fetchFn).toHaveBeenCalledWith(
+      AUDIO_URL,
+      expect.objectContaining({ headers: { range: "bytes=0-0" } }),
+    );
+  });
+
+  it("a failed audio probe leaves the audio size unknown without dropping the pair", async () => {
+    const { fetchFn, onDescriptor, handle } = harness(async () => response("video/mp4", FTYP_HEAD));
+    fetchFn.mockImplementation(async (url: string) => {
+      if (url === AUDIO_URL) throw new Error("net::ERR_FAILED");
+      return response("video/mp4", FTYP_HEAD, { "content-range": "bytes 0-4095/123456789" });
+    });
+
+    await handle(7, captureMsg(VIDEO_URL, AUDIO_URL));
+
+    expect(onDescriptor).toHaveBeenCalledTimes(1);
+    const [, d] = onDescriptor.mock.calls[0]!;
+    expect(d.audioRenditions![0]!.estimatedSize).toBeNull();
   });
 });

@@ -8,6 +8,7 @@ export type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture
 /** The slice of a fetch Response the capture probe actually reads. */
 export interface CaptureFetchResponse {
   readonly headers: { forEach(cb: (value: string, key: string) => void): void };
+  readonly body?: ReadableStream<Uint8Array> | null;
   text(): Promise<string>;
   clone(): { arrayBuffer(): Promise<ArrayBuffer> };
 }
@@ -47,8 +48,7 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
         if (/(mpegurl|dash\+xml|xml|text)/i.test(ct) || /\.(m3u8|mpd)(\?|$)/i.test(cap.url)) {
           manifestText = await r.text();
         } else {
-          const buf = await r.clone().arrayBuffer();
-          bodyBytes = new Uint8Array(buf.slice(0, 4096));
+          bodyBytes = await probeBytes(r);
         }
       } catch (err) {
         deps.logger?.debug("capture fetch failed", { url: cap.url, err: String(err) });
@@ -73,7 +73,12 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     // An unconfirmed half (expired signature, fetch failure) falls through
     // as-is and is dropped by the surfacing gate below.
     const descriptor = cap.audioUrl !== undefined && classified.capabilities.directDownload
-      ? demuxedPairDescriptor(classified, cap.audioUrl, declaredTotalBytes(headers))
+      ? demuxedPairDescriptor(
+        classified,
+        cap.audioUrl,
+        declaredTotalBytes(headers),
+        await probeDeclaredBytes(deps, cap.audioUrl),
+      )
       : classified;
 
     if (!shouldSurfaceDescriptor(descriptor)) return;
@@ -85,6 +90,62 @@ export function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {
   if (descriptor.drm) return true;
   if (descriptor.capabilities.directDownload) return true;
   return descriptor.protocol === "hls" || descriptor.protocol === "dash";
+}
+
+/**
+ * First 4 KiB of the probe body, read incrementally with the stream cancelled
+ * afterwards: a server that ignores the range header answers 200 with the
+ * full body, and buffering it whole would pull a multi-GB media file into the
+ * service worker just to sniff magic bytes. Falls back to the buffering path
+ * when the response exposes no body stream (test doubles).
+ */
+async function probeBytes(r: CaptureFetchResponse): Promise<Uint8Array> {
+  if (!r.body) {
+    const buf = await r.clone().arrayBuffer();
+    return new Uint8Array(buf.slice(0, 4096));
+  }
+  const reader = r.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < 4096) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* stream already closed */ }
+  }
+  const out = new Uint8Array(Math.min(total, 4096));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const take = Math.min(chunk.byteLength, out.byteLength - offset);
+    out.set(chunk.subarray(0, take), offset);
+    offset += take;
+    if (offset >= out.byteLength) break;
+  }
+  return out;
+}
+
+/**
+ * Range-probe a companion track for its declared byte total so the browser
+ * output-size guard counts both halves of a demuxed pair. Any failure yields
+ * null — the size stays unknown rather than wrong.
+ */
+async function probeDeclaredBytes(deps: CaptureDeps, url: string): Promise<number | null> {
+  try {
+    const r = await deps.fetchFn(url, {
+      credentials: "include",
+      headers: { range: "bytes=0-0" },
+    });
+    const headers: Record<string, string> = {};
+    r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+    try { await r.body?.cancel(); } catch { /* stream already closed */ }
+    return declaredTotalBytes(headers);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -112,16 +173,17 @@ function declaredTotalBytes(headers: Readonly<Record<string, string>>): number |
  * video-only half can never ship alone as a silent "direct" download. The
  * `direct-url` source is kept so router de-duplication keys stay per-video.
  *
- * `videoSizeBytes` (the probe's declared total) rides the video half as
- * `estimatedSize` so dispatch's browser-output size guard stays reachable —
- * left null, a multi-GB pair would be fetched whole and OOM the offscreen
- * document. The audio half is never probed and stays null; the combined
- * estimate keys on the dominant video half.
+ * `videoSizeBytes` / `audioSizeBytes` (each probe's declared total) ride the
+ * halves as `estimatedSize` so dispatch's browser-output size guard stays
+ * reachable and counts the whole merged output — left null, a multi-GB pair
+ * would be fetched whole and OOM the offscreen document. An unprobeable half
+ * stays null rather than wrong.
  */
 export function demuxedPairDescriptor(
   descriptor: StreamDescriptor,
   audioUrl: string,
   videoSizeBytes: number | null,
+  audioSizeBytes: number | null,
 ): StreamDescriptor {
   if (descriptor.source.kind !== "direct-url") return descriptor;
   const videoUrl = descriptor.source.url;
@@ -144,7 +206,7 @@ export function demuxedPairDescriptor(
     height: null,
     frameRate: null,
     bitrate: null,
-    estimatedSize: null,
+    estimatedSize: audioSizeBytes,
     videoCodec: null,
     audioCodec: null,
     audioRenditionId: renditionId,

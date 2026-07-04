@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createRouter, dispatchRefusalToError } from "../../../src/background/router";
 import { demuxedPairDescriptor } from "../../../src/background/capture";
 import { directDescriptor, hlsDescriptor, dashDescriptor, drmDescriptor, clearKeyDescriptor } from "../popup/helpers/descriptors";
-import type { UserChoice, StreamDescriptor, StreamId, VariantId } from "@savemedia/core";
+import type { UserChoice, StreamDescriptor, StreamId, VariantId, AudioRenditionId } from "@savemedia/core";
 
 function deps() {
   return {
@@ -306,6 +306,7 @@ describe("router — startBestDownload", () => {
       }),
       "https://cdn.example/videoplayback?id=o-AAA&itag=140",
       null,
+      null,
     );
     expect(r.addDescriptor(1, pair)).toBe(true);
     expect(r.addDescriptor(1, pair)).toBe(false); // same pair dedupes
@@ -322,6 +323,39 @@ describe("router — startBestDownload", () => {
       expect.objectContaining({ type: "start-job", streamId: pair.id }),
     );
     expect(d.downloads.download).not.toHaveBeenCalled();
+  });
+
+  it("an unmaterialized pair never outranks a working direct stream", async () => {
+    const d = deps();
+    const r = createRouter(d);
+    // A live/byte-range MPD parses into variants and renditions whose
+    // dash-segments refs carry no media URLs — dispatch can only refuse it,
+    // so it must not be selected over the usable direct entry.
+    const unmaterialized = dashDescriptor({
+      id: "stream-live-mpd" as StreamId,
+      variants: [{
+        ...dashDescriptor().variants[0]!,
+        audioRenditionId: "audio" as AudioRenditionId,
+        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: [] },
+      }],
+      audioRenditions: [{
+        ...dashDescriptor().variants[0]!,
+        id: "live-audio" as VariantId,
+        videoCodec: null,
+        audioRenditionId: "audio" as AudioRenditionId,
+        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: [] },
+      }],
+    });
+    r.addDescriptor(1, unmaterialized);
+    r.addDescriptor(1, directDescriptor());
+
+    const failure = await r.startBestDownload(1);
+
+    expect(failure).toBeNull();
+    expect(d.downloads.download).toHaveBeenCalled();
+    expect(d.runtime.sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ streamId: unmaterialized.id }),
+    );
   });
 });
 

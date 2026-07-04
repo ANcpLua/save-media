@@ -593,3 +593,59 @@ describe("dispatch — variant selection", () => {
     expect(r.variantId).toBe("v-1080");
   });
 });
+
+describe("dispatch — MP4 codec gate (av-merge)", () => {
+  const vp9 = { rfc6381: "vp09.00.10.08", family: "vp9" as const, profile: null, level: null };
+  const av1 = { rfc6381: "av01.0.04M.08", family: "av1" as const, profile: null, level: null };
+  const opus = { rfc6381: "opus", family: "opus" as const, channels: 2, sampleRate: 48000 };
+
+  it("demuxed HLS with a VP9 variant refuses instead of failing late in the muxer", () => {
+    const d = makeDemuxedHls();
+    const demuxedRef = d.variants[0]!.segmentRef;
+    const r = dispatch(
+      makeDemuxedHls({ variants: [variant({ audioRenditionId: AUDIO_EN, segmentRef: demuxedRef, videoCodec: vp9 })] }),
+      originalChoice,
+    );
+    expect(r).toEqual({ kind: "refuse", reason: "no_usable_variant" });
+  });
+
+  it("clear DASH with an Opus audio rendition refuses dash_unsupported", () => {
+    const d = makeDashAv({ audioRenditions: [dashAudioRendition({ audioCodec: opus })] });
+    const r = dispatch(d, originalChoice);
+    expect(r).toEqual({ kind: "refuse", reason: "dash_unsupported" });
+  });
+
+  it("falls back to the variant's CODECS audio declaration when the rendition carries none", () => {
+    const d = makeDemuxedHls();
+    const demuxedRef = d.variants[0]!.segmentRef;
+    const r = dispatch(
+      makeDemuxedHls({
+        variants: [variant({ audioRenditionId: AUDIO_EN, segmentRef: demuxedRef, audioCodec: opus })],
+        audioRenditions: [hlsAudioRendition({ audioCodec: null })],
+      }),
+      originalChoice,
+    );
+    expect(r).toEqual({ kind: "refuse", reason: "no_usable_variant" });
+  });
+
+  it("AV1 + AAC still merges — MP4 carries both natively", () => {
+    const d = makeDashAv();
+    const r = dispatch(
+      makeDashAv({ variants: [{ ...d.variants[0]!, videoCodec: av1 }] }),
+      { ...originalChoice, variantId: d.variants[0]!.id },
+    );
+    expect(r.kind).toBe("av-merge");
+  });
+
+  it("null codecs pass — a magic-byte-confirmed progressive pair carries no declaration", () => {
+    const d = makeDashAv();
+    const r = dispatch(
+      makeDashAv({
+        variants: [{ ...d.variants[0]!, videoCodec: null, audioCodec: null }],
+        audioRenditions: [dashAudioRendition({ audioCodec: null })],
+      }),
+      { ...originalChoice, variantId: d.variants[0]!.id },
+    );
+    expect(r.kind).toBe("av-merge");
+  });
+});
