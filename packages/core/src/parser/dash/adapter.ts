@@ -1,5 +1,5 @@
 import { parse as parseMpd } from "mpd-parser";
-import type { Variant, VariantId, AudioRenditionId } from "../../types/codec";
+import type { Variant, VariantId, AudioRenditionId, SegmentRef } from "../../types/codec";
 import type { DrmStatus } from "../../types/stream";
 import { parseVideoCodec, parseAudioCodec } from "../../classifier/codec-registry";
 import { classifyContentProtection, type ContentProtectionElement } from "./content-protection";
@@ -40,6 +40,51 @@ function collectContentProtectionFromXml(manifestXml: string): readonly ContentP
   return out;
 }
 
+type ParsedDashSegment = {
+  readonly resolvedUri: string;
+  readonly duration: number;
+  readonly map?: {
+    readonly resolvedUri?: string;
+    readonly byterange?: { readonly length: number; readonly offset: number };
+  };
+  readonly byterange?: { readonly length: number; readonly offset: number };
+};
+
+type ParsedDashPlaylist = {
+  /** mpd-parser sets this true iff MPD@type is static (a missing type defaults to static). */
+  readonly endList?: boolean;
+  readonly segments?: readonly ParsedDashSegment[];
+};
+
+/**
+ * Materialize mpd-parser's expanded segment list into a dash-segments ref.
+ * Byte-range addressed segments (SegmentBase/sidx) cannot be fetched as whole
+ * URLs by the merge engine, and a dynamic (live) MPD expands to only the
+ * current availability window — downloading it would save a truncated file
+ * and report success. Both yield an empty ref and dispatch keeps refusing.
+ */
+function dashSegmentRef(playlist: ParsedDashPlaylist | undefined): SegmentRef {
+  const segs = playlist?.segments ?? [];
+  if (playlist?.endList !== true || segs.some(s => s.byterange || s.map?.byterange)) {
+    return { kind: "dash-segments", initUrl: "", mediaUrls: [] };
+  }
+  return {
+    kind: "dash-segments",
+    initUrl: segs[0]?.map?.resolvedUri ?? "",
+    mediaUrls: segs.map(s => s.resolvedUri),
+  };
+}
+
+function estimateSizeBytes(
+  bitrate: number | null,
+  segments: readonly ParsedDashSegment[] | undefined,
+): number | null {
+  if (bitrate == null) return null;
+  const durationSeconds = (segments ?? []).reduce((total, s) => total + (s.duration || 0), 0);
+  if (durationSeconds <= 0) return null;
+  return Math.round((bitrate / 8) * durationSeconds);
+}
+
 export function parseDash(manifestXml: string, manifestUrl: string): DashParseResult {
   const parsed = parseMpd(manifestXml, { manifestUri: manifestUrl });
 
@@ -53,17 +98,18 @@ export function parseDash(manifestXml: string, manifestUrl: string): DashParseRe
     const codecs = (p.attributes?.CODECS as string | undefined) ?? "";
     const [vCodec, aCodec] = splitCodecs(codecs);
     if (p.attributes?.RESOLUTION) {
+      const bitrate = (p.attributes.BANDWIDTH as number | undefined) ?? null;
       videoVariants.push({
         id: `${manifestUrl}#${p.attributes?.NAME ?? videoVariants.length}` as VariantId,
         width: p.attributes.RESOLUTION.width,
         height: p.attributes.RESOLUTION.height,
         frameRate: (p.attributes["FRAME-RATE"] as number | undefined) ?? null,
-        bitrate: (p.attributes.BANDWIDTH as number | undefined) ?? null,
-        estimatedSize: null,
+        bitrate,
+        estimatedSize: estimateSizeBytes(bitrate, p.segments),
         videoCodec: vCodec ? parseVideoCodec(vCodec) : null,
         audioCodec: aCodec ? parseAudioCodec(aCodec) : null,
         audioRenditionId: null,
-        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: [] },
+        segmentRef: dashSegmentRef(p),
       });
     }
   }
@@ -71,19 +117,21 @@ export function parseDash(manifestXml: string, manifestUrl: string): DashParseRe
   for (const [groupName, group] of Object.entries(parsed.mediaGroups?.AUDIO ?? {})) {
     for (const [renditionName, rend] of Object.entries(group)) {
       // Audio rendition CODECS live on rend.playlists[0].attributes, not rend.attributes
-      const rendPlaylistAttrs = rend.playlists?.[0]?.attributes;
+      const rendPlaylist = rend.playlists?.[0];
+      const rendPlaylistAttrs = rendPlaylist?.attributes;
       const codecsStr = (rendPlaylistAttrs?.CODECS as string | undefined) ?? "";
+      const bitrate = (rendPlaylistAttrs?.BANDWIDTH as number | undefined) ?? null;
       audioRenditions.push({
         id: `${manifestUrl}#audio:${groupName}:${renditionName}` as VariantId,
         width: null,
         height: null,
         frameRate: null,
-        bitrate: (rendPlaylistAttrs?.BANDWIDTH as number | undefined) ?? null,
-        estimatedSize: null,
+        bitrate,
+        estimatedSize: estimateSizeBytes(bitrate, rendPlaylist?.segments),
         videoCodec: null,
         audioCodec: codecsStr ? parseAudioCodec(codecsStr) : null,
         audioRenditionId: renditionName as AudioRenditionId,
-        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: [] },
+        segmentRef: dashSegmentRef(rendPlaylist),
       });
     }
   }

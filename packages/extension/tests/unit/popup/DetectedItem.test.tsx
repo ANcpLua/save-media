@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { DetectedItem } from "../../../src/popup/components/DetectedItem";
 import { directDescriptor, hlsDescriptor, dashDescriptor, drmDescriptor, clearKeyDescriptor } from "./helpers/descriptors";
-import type { StreamId } from "@savemedia/core";
+import type { StreamId, VariantId, AudioRenditionId } from "@savemedia/core";
 
 describe("DetectedItem — DRM/ClearKey cards", () => {
   it("renders the DRM-blocked card with reason", () => {
@@ -62,6 +62,25 @@ describe("DetectedItem — unsupported stream card", () => {
     render(<ul>{<DetectedItem descriptor={dashDescriptor()} />}</ul>);
     expect(screen.getByTestId("unsupported-card").textContent).toMatch(/DASH detected/i);
     expect(screen.queryByRole("button", { name: /download/i })).toBeNull();
+  });
+
+  it("a demuxed audio+video pair gets a Download button, not the DASH refusal", () => {
+    // The av-merge shape: dash protocol, materialized video variant linked to
+    // a materialized audio rendition (see background/capture.ts).
+    const base = dashDescriptor();
+    const pair = dashDescriptor({
+      variants: [{ ...base.variants[0]!, audioRenditionId: "audio" as AudioRenditionId }],
+      audioRenditions: [{
+        ...base.variants[0]!,
+        id: "pair-audio" as VariantId,
+        videoCodec: null,
+        audioRenditionId: "audio" as AudioRenditionId,
+        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: ["https://example.com/audio.m4a"] },
+      }],
+    });
+    render(<ul>{<DetectedItem descriptor={pair} />}</ul>);
+    expect(screen.queryByTestId("unsupported-card")).toBeNull();
+    expect(screen.getByRole("button", { name: /download/i })).toBeTruthy();
   });
 });
 

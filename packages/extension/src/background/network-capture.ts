@@ -37,12 +37,16 @@ export function looksLikeMediaEntryUrl(url: string, requestType?: string): boole
 }
 
 // Hosts where a dedicated MAIN-world site resolver (content/sites/*) is the
-// authoritative source of the muxed download URL. Generic webRequest sniffing
+// authoritative source of the download URL(s). Generic webRequest sniffing
 // on these pages only surfaces demuxed video-only noise that would outrank the
 // real download, so we suppress it here. Deliberate mirror of the resolver
 // `ownsHost` patterns — the two live on opposite sides of the content/background
 // boundary and cannot share a module without breaking the classic-script bundle.
-const EXTRACTOR_MANAGED_HOST = /(^|\.)(twitter\.com|x\.com|instagram\.com)$/i;
+// googlevideo.com is the youtube media CDN, never a resolver page host, but
+// `pageUrlFor` falls back to the request URL itself for CDN fetches with no
+// page context — those must not enter generic discovery either.
+const EXTRACTOR_MANAGED_HOST =
+  /(^|\.)(twitter\.com|x\.com|instagram\.com|youtube\.com|youtube-nocookie\.com|googlevideo\.com)$/i;
 
 export function isExtractorManagedHost(pageUrl: string): boolean {
   try {

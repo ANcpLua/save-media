@@ -20,6 +20,12 @@ export interface PageCaptureMessage {
   readonly mimeType?: string;
   readonly elementTag?: "video" | "audio";
   readonly elementSrc?: string;
+  /**
+   * Companion audio-track URL for demuxed captures (YouTube adaptive itags):
+   * `url` is then the video-only half and the pair downloads as one merged
+   * MP4. Mirrored in content/bridge.ts's duplicated validator — update both.
+   */
+  readonly audioUrl?: string;
   readonly pageUrl: string;
 }
 
@@ -155,7 +161,8 @@ function isPageCaptureMessage(value: unknown): value is PageCaptureMessage {
     && isOptionalString(value.keySystem)
     && isOptionalString(value.mimeType)
     && isOptionalMediaElementTag(value.elementTag)
-    && isOptionalString(value.elementSrc);
+    && isOptionalString(value.elementSrc)
+    && isOptionalString(value.audioUrl);
 }
 
 function isUserChoice(value: unknown): value is UserChoice {

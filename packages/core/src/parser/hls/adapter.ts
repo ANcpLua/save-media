@@ -1,9 +1,15 @@
 import { Parser } from "m3u8-parser";
-import type { Variant, VariantId } from "../../types/codec";
+import type { Variant, VariantId, AudioRenditionId } from "../../types/codec";
 import { parseVideoCodec, parseAudioCodec } from "../../classifier/codec-registry";
 
 export interface HlsMasterParseResult {
   readonly variants: readonly Variant[];
+  /**
+   * URI-bearing EXT-X-MEDIA TYPE=AUDIO renditions as audio-only variants.
+   * Segment URLs are not materialized here — only the rendition playlist URL
+   * (segmentRef.playlistUrl); see StreamDescriptor.audioRenditions.
+   */
+  readonly audioRenditions: readonly Variant[];
   readonly encryption: null;
 }
 
@@ -28,12 +34,60 @@ function splitCodecs(codecs: string): [string | null, string | null] {
   return [v, a];
 }
 
+function parseAudioGroups(
+  mediaGroupsAudio: NonNullable<Parser["manifest"]["mediaGroups"]>["AUDIO"],
+  manifestUrl: string,
+): { renditions: readonly Variant[]; chosenByGroup: ReadonlyMap<string, AudioRenditionId> } {
+  const renditions: Variant[] = [];
+  const chosenByGroup = new Map<string, AudioRenditionId>();
+
+  for (const [groupId, group] of Object.entries(mediaGroupsAudio ?? {})) {
+    let chosen: AudioRenditionId | null = null;
+    let chosenIsDefault = false;
+    for (const [name, rend] of Object.entries(group)) {
+      // No URI = the group's audio is muxed into the variant stream itself.
+      if (!rend.uri) continue;
+      const renditionId = `${groupId}:${name}` as AudioRenditionId;
+      renditions.push({
+        id: `${manifestUrl}#audio:${groupId}:${name}` as VariantId,
+        width: null,
+        height: null,
+        frameRate: null,
+        bitrate: null,
+        estimatedSize: null,
+        videoCodec: null,
+        // EXT-X-MEDIA carries no CODECS; the linked variant's split CODECS
+        // already names the audio codec.
+        audioCodec: null,
+        audioRenditionId: renditionId,
+        segmentRef: {
+          kind: "hls-segments",
+          playlistUrl: new URL(rend.uri, manifestUrl).href,
+          initSegmentUrl: null,
+          segmentUrls: [],
+          encryption: null,
+        },
+      });
+      const isDefault = rend.default === true;
+      if (chosen === null || (isDefault && !chosenIsDefault)) {
+        chosen = renditionId;
+        chosenIsDefault = isDefault;
+      }
+    }
+    if (chosen !== null) chosenByGroup.set(groupId, chosen);
+  }
+
+  return { renditions, chosenByGroup };
+}
+
 export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMasterParseResult {
   const parser = new Parser();
   parser.push(manifestText);
   parser.end();
 
   const manifest = parser.manifest;
+  const { renditions: audioRenditions, chosenByGroup } =
+    parseAudioGroups(manifest.mediaGroups?.AUDIO, manifestUrl);
   const variants: Variant[] = [];
 
   for (let i = 0; i < (manifest.playlists ?? []).length; i++) {
@@ -41,6 +95,7 @@ export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMa
     if (!p) continue;
     const codecsAttr: string = p.attributes?.CODECS ?? "";
     const [vCodecStr, aCodecStr] = splitCodecs(codecsAttr);
+    const audioGroup = p.attributes?.AUDIO;
 
     variants.push({
       id: `${manifestUrl}#var${i}` as VariantId,
@@ -51,7 +106,7 @@ export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMa
       estimatedSize: null,
       videoCodec: vCodecStr ? parseVideoCodec(vCodecStr) : null,
       audioCodec: aCodecStr ? parseAudioCodec(aCodecStr) : null,
-      audioRenditionId: null,
+      audioRenditionId: audioGroup ? chosenByGroup.get(audioGroup) ?? null : null,
       segmentRef: {
         kind: "hls-segments",
         playlistUrl: new URL(p.uri, manifestUrl).href,
@@ -62,7 +117,7 @@ export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMa
     });
   }
 
-  return { variants, encryption: null };
+  return { variants, audioRenditions, encryption: null };
 }
 
 export function parseHlsMediaPlaylist(manifestText: string, manifestUrl: string): HlsMediaPlaylistParseResult {

@@ -17,6 +17,7 @@ import type {
 import type { Logger } from "../util/logger";
 import { suggestFilename } from "../util/filename";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
+import { hasDownloadableDemuxedPair } from "../util/demuxed-pair";
 
 export { dispatchRefusalToError } from "../util/dispatch-refusal";
 
@@ -42,7 +43,7 @@ export interface RouterDeps {
 
 export interface Router {
   readonly tabs: Map<number, TabState>;
-  readonly jobs: Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan }>;
+  readonly jobs: Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>;
   readonly addDescriptor: (tabId: number, descriptor: StreamDescriptor) => boolean;
   readonly listDescriptors: (tabId: number) => readonly StreamDescriptor[];
   readonly findDescriptor: (id: StreamDescriptor["id"]) => StreamDescriptor | null;
@@ -57,7 +58,7 @@ export interface Router {
 
 export function createRouter(deps: RouterDeps): Router {
   const tabs = new Map<number, TabState>();
-  const jobs = new Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan }>();
+  const jobs = new Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>();
 
   function getTab(tabId: number): TabState {
     let s = tabs.get(tabId);
@@ -279,7 +280,7 @@ export function createRouter(deps: RouterDeps): Router {
 
   function isDownloadableCandidate(d: StreamDescriptor): boolean {
     return !d.capabilities.drmBlocked
-      && (d.capabilities.directDownload || d.protocol === "hls");
+      && (d.capabilities.directDownload || d.protocol === "hls" || hasDownloadableDemuxedPair(d));
   }
 
   async function startBestDownload(tabId: number): Promise<{ streamId: StreamDescriptor["id"]; error: JobError } | null> {
@@ -292,6 +293,20 @@ export function createRouter(deps: RouterDeps): Router {
     return error ? { streamId: descriptor.id, error } : null;
   }
 
+  /**
+   * Demuxed HLS holds only media-playlist URLs until the engine host fetches
+   * them (materializeDemuxedHls), so the pre-flight dispatch here sees empty
+   * segment lists and would refuse a runnable pair.
+   */
+  function isUnmaterializedDemuxedHls(d: StreamDescriptor): boolean {
+    return d.protocol === "hls"
+      && !d.drm
+      && d.variants.some(v =>
+        v.audioRenditionId !== null
+        && v.segmentRef.kind === "hls-segments"
+        && v.segmentRef.segmentUrls.length === 0);
+  }
+
   async function startDownload(id: StreamDescriptor["id"], choice: UserChoice): Promise<JobError | null> {
     const descriptor = findDescriptor(id);
     if (!descriptor) {
@@ -302,7 +317,12 @@ export function createRouter(deps: RouterDeps): Router {
     const plan: JobPlan | DispatchRefusal = dispatch(descriptor, choice);
 
     if (plan.kind === "refuse") {
-      return dispatchRefusalToError(plan.reason, descriptor);
+      // Forward an unmaterialized demuxed pair to the engine host, which
+      // materializes both media playlists and re-dispatches authoritatively
+      // (engine/download.ts); genuine refusals come back as job-failed.
+      if (plan.reason !== "no_usable_variant" || !isUnmaterializedDemuxedHls(descriptor)) {
+        return dispatchRefusalToError(plan.reason, descriptor);
+      }
     }
 
     if (plan.kind === "direct") {
@@ -323,7 +343,7 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
 
-    jobs.set(id, { descriptor, choice, plan });
+    jobs.set(id, { descriptor, choice, plan: plan.kind === "refuse" ? null : plan });
     await deps.ensureEngineHost();
     const engineMsg: BackgroundToEngineMessage = { type: "start-job", streamId: id, descriptor, choice };
     deps.runtime.sendMessage(engineMsg);

@@ -3,6 +3,7 @@ import type { StreamDescriptor, JobError } from "@savemedia/core";
 import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
 import type { PopupToBackgroundMessage } from "../../types/messages";
 import { suggestFilename } from "../../util/filename";
+import { hasDownloadableDemuxedPair } from "../../util/demuxed-pair";
 
 export interface JobStatus {
   readonly phase: "queued" | "active" | "complete" | "failed";
@@ -29,7 +30,9 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
   const isDrmBlocked = descriptor.capabilities.drmBlocked;
   const isDeferred = descriptor.drm?.reason === "clearkey_deferred";
   const action = outputActionLabel(descriptor);
-  const isDownloadable = descriptor.capabilities.directDownload || descriptor.protocol === "hls";
+  const isDownloadable = descriptor.capabilities.directDownload
+    || descriptor.protocol === "hls"
+    || hasDownloadableDemuxedPair(descriptor);
   const activeProgressWidth = status?.phase === "active" ? progressWidth(status) : "30%";
 
   function download() {
@@ -165,6 +168,7 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
 function outputActionLabel(d: StreamDescriptor): string {
   if (d.capabilities.directDownload) return "direct";
   if (d.protocol === "hls") return "hls";
+  if (hasDownloadableDemuxedPair(d)) return "av-merge";
   return "unsupported";
 }
 

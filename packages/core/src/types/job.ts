@@ -48,4 +48,32 @@ export interface HlsPlainPlan {
   readonly estimatedBytes: number | null;
 }
 
-export type JobPlan = DirectPlan | HlsPlainPlan;
+/**
+ * One side of a demuxed source: an optional fMP4 init segment followed by the
+ * ordered media segments. For a progressive track it is a single URL with no
+ * init segment. Concatenating `initUrl` + `segmentUrls` yields a complete,
+ * demuxable byte stream (verified against real fragmented fMP4).
+ */
+export interface MergeTrack {
+  readonly initUrl: string | null;
+  readonly segmentUrls: readonly string[];
+}
+
+/**
+ * A source that ships video and audio separately (demuxed HLS audio groups,
+ * DASH, YouTube adaptive itags): fetch both tracks and mux them into one MP4
+ * with no re-encode. Dispatch emits it for demuxed HLS variants (a linked
+ * audio rendition) and clear DASH with both tracks, and only once every track
+ * carries concrete fetchable URLs — a plan with an unmaterialized track is
+ * never emitted.
+ */
+export interface AvMergePlan {
+  readonly kind: "av-merge";
+  readonly video: MergeTrack;
+  readonly audio: MergeTrack;
+  readonly outputContainer: OutputContainer;
+  readonly outputFilename: string;
+  readonly estimatedBytes: number | null;
+}
+
+export type JobPlan = DirectPlan | HlsPlainPlan | AvMergePlan;

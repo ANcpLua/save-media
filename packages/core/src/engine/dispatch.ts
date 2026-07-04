@@ -10,8 +10,10 @@ import type {
   DispatchRefusal,
   DirectPlan,
   HlsPlainPlan,
+  AvMergePlan,
+  MergeTrack,
 } from "../types/job";
-import type { Variant, HlsEncryption } from "../types/codec";
+import type { Variant, HlsEncryption, SegmentRef, VideoCodecFamily, AudioCodecFamily } from "../types/codec";
 import { interpretHlsEncryption } from "../parser/hls/encryption";
 
 export const BROWSER_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024; // Blob URLs become unreliable above this.
@@ -50,11 +52,15 @@ function resolveOutputContainer(descriptor: StreamDescriptor, choice: UserChoice
   return asOutputContainer(descriptor.container);
 }
 
+function audioRenditionsOf(descriptor: StreamDescriptor): readonly Variant[] {
+  return descriptor.audioRenditions ?? [];
+}
+
 function hlsEncryptionFor(descriptor: StreamDescriptor): { kind: "clear" | "encrypted" | "drm-blocked"; encryption: HlsEncryption | null } {
   // Encryption may be carried on the variant segment-ref or surfaced via
   // descriptor.drm. We only reach this branch when descriptor.drm is null
   // (otherwise dispatch returns refuse before us).
-  for (const v of descriptor.variants) {
+  for (const v of [...descriptor.variants, ...audioRenditionsOf(descriptor)]) {
     if (v.segmentRef.kind === "hls-segments" && v.segmentRef.encryption) {
       const enc = v.segmentRef.encryption;
       const verdict = interpretHlsEncryption({ method: enc.method, uri: enc.keyUri, iv: enc.iv });
@@ -96,6 +102,88 @@ function buildDirectPlan(descriptor: StreamDescriptor, choice: UserChoice): Dire
   return { kind: "direct", url: descriptor.source.url, filename: choice.filename };
 }
 
+function combinedEstimate(video: Variant, audio: Variant | null): number | null {
+  const v = video.estimatedSize;
+  const a = audio?.estimatedSize ?? null;
+  if (v == null && a == null) return null;
+  return (v ?? 0) + (a ?? 0);
+}
+
+/**
+ * A merge track needs concrete fetchable URLs; a ref whose segment list has
+ * not been materialized (or that needs byte-range fetches) yields null and
+ * the caller must refuse rather than emit an unrunnable plan.
+ */
+function mergeTrackFrom(ref: SegmentRef): MergeTrack | null {
+  switch (ref.kind) {
+    case "direct":
+      return { initUrl: null, segmentUrls: [ref.url] };
+    case "hls-segments":
+      if (ref.segmentUrls.length === 0) return null;
+      return { initUrl: ref.initSegmentUrl, segmentUrls: ref.segmentUrls };
+    case "dash-segments":
+      if (ref.mediaUrls.length === 0) return null;
+      return { initUrl: ref.initUrl || null, segmentUrls: ref.mediaUrls };
+    case "byte-range":
+      return null;
+  }
+}
+
+// The merge engine muxes to MP4 only; families outside these sets yield an
+// invalid or unplayable MP4 (VP9/Opus belong in WebM — a later story). A null
+// codec passes: progressive pairs confirmed as MP4 by magic bytes carry no
+// manifest codec declaration.
+const MP4_VIDEO_FAMILIES: ReadonlySet<VideoCodecFamily> = new Set(["h264", "h265", "av1"]);
+const MP4_AUDIO_FAMILIES: ReadonlySet<AudioCodecFamily> = new Set(["aac", "mp3"]);
+
+function mp4MergeCompatible(video: Variant, audio: Variant): boolean {
+  // A demuxed HLS variant's CODECS attribute declares the group's audio
+  // codec; the rendition itself usually carries none.
+  const audioCodec = audio.audioCodec ?? video.audioCodec;
+  if (video.videoCodec && !MP4_VIDEO_FAMILIES.has(video.videoCodec.family)) return false;
+  if (audioCodec && !MP4_AUDIO_FAMILIES.has(audioCodec.family)) return false;
+  return true;
+}
+
+function buildAvMergePlan(video: Variant, audio: Variant, choice: UserChoice): AvMergePlan | null {
+  if (!mp4MergeCompatible(video, audio)) return null;
+  const videoTrack = mergeTrackFrom(video.segmentRef);
+  const audioTrack = mergeTrackFrom(audio.segmentRef);
+  if (!videoTrack || !audioTrack) return null;
+  return {
+    kind: "av-merge",
+    video: videoTrack,
+    audio: audioTrack,
+    // The merge engine muxes to MP4 only.
+    outputContainer: "mp4",
+    outputFilename: choice.filename,
+    estimatedBytes: combinedEstimate(video, audio),
+  };
+}
+
+function pickHlsAudioRendition(
+  descriptor: StreamDescriptor,
+  variant: Variant,
+  choice: UserChoice,
+): Variant | null {
+  const renditions = audioRenditionsOf(descriptor);
+  if (choice.audioRenditionId) {
+    const chosen = renditions.find(r => r.audioRenditionId === choice.audioRenditionId);
+    if (chosen) return chosen;
+  }
+  return renditions.find(r => r.audioRenditionId === variant.audioRenditionId) ?? null;
+}
+
+function pickDashAudioRendition(descriptor: StreamDescriptor, choice: UserChoice): Variant | null {
+  const renditions = audioRenditionsOf(descriptor);
+  if (choice.audioRenditionId) {
+    const chosen = renditions.find(r => r.audioRenditionId === choice.audioRenditionId);
+    if (chosen) return chosen;
+  }
+  const sorted = [...renditions].sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+  return sorted[0] ?? null;
+}
+
 export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobPlan | DispatchRefusal {
   if (descriptor.drm) {
     return { kind: "refuse", reason: descriptor.drm.reason };
@@ -115,7 +203,10 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
     if (!variant) {
       return { kind: "refuse", reason: "no_usable_variant" };
     }
-    if (tooLargeForBrowser(estimateSize(variant))) {
+    const demuxed = variant.audioRenditionId !== null;
+    const audio = demuxed ? pickHlsAudioRendition(descriptor, variant, choice) : null;
+    const estimated = demuxed ? combinedEstimate(variant, audio) : estimateSize(variant);
+    if (tooLargeForBrowser(estimated)) {
       return { kind: "refuse", reason: "output_too_large_for_browser" };
     }
     const enc = hlsEncryptionFor(descriptor);
@@ -125,11 +216,34 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
     if (enc.kind === "encrypted") {
       return { kind: "refuse", reason: "hls_encryption_unsupported" };
     }
+    if (demuxed) {
+      // A demuxed variant must never fall back to hls-plain — that would save
+      // a silent video-only file. Until both tracks carry materialized segment
+      // URLs (the caller fetches the media playlists first), refuse.
+      const plan = audio ? buildAvMergePlan(variant, audio, choice) : null;
+      return plan ?? { kind: "refuse", reason: "no_usable_variant" };
+    }
     return buildHlsPlainPlan(descriptor, choice, variant, outputContainer);
   }
 
+  // DASH: clear demuxed video+audio merges into one MP4; anything less
+  // (no audio AdaptationSet, unmaterialized or byte-range segments, or a
+  // dynamic/live MPD — parseDash leaves those unmaterialized) keeps the
+  // historical refusal. DRM was already refused at the top.
   if (descriptor.protocol === "dash") {
-    return { kind: "refuse", reason: "dash_unsupported" };
+    const variant = pickVariant(descriptor, choice);
+    if (!variant) {
+      return { kind: "refuse", reason: "no_usable_variant" };
+    }
+    const audio = pickDashAudioRendition(descriptor, choice);
+    const plan = audio ? buildAvMergePlan(variant, audio, choice) : null;
+    if (!plan) {
+      return { kind: "refuse", reason: "dash_unsupported" };
+    }
+    if (tooLargeForBrowser(plan.estimatedBytes)) {
+      return { kind: "refuse", reason: "output_too_large_for_browser" };
+    }
+    return plan;
   }
 
   // Progressive: pick direct if Original (or the requested output already

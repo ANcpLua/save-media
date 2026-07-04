@@ -30,12 +30,18 @@ describe("extractor-managed host gate", () => {
     expect(isExtractorManagedHost("https://twitter.com/i/web/status/1")).toBe(true);
     expect(isExtractorManagedHost("https://mobile.twitter.com/home")).toBe(true);
     expect(isExtractorManagedHost("https://www.instagram.com/reel/CxYz/")).toBe(true);
+    expect(isExtractorManagedHost("https://www.youtube.com/watch?v=1")).toBe(true);
+    expect(isExtractorManagedHost("https://m.youtube.com/watch?v=1")).toBe(true);
+    expect(isExtractorManagedHost("https://www.youtube-nocookie.com/embed/aQb2eDW4kzA")).toBe(true);
+    // The youtube media CDN: `pageUrlFor` can fall back to the request URL
+    // itself, and those fetches must not enter generic discovery either.
+    expect(isExtractorManagedHost("https://rr3---sn-4g5edned.googlevideo.com/videoplayback?itag=137")).toBe(true);
   });
 
   it("leaves every other page to the generic path", () => {
-    expect(isExtractorManagedHost("https://www.youtube.com/watch?v=1")).toBe(false);
     expect(isExtractorManagedHost("https://cdn.example/video/master.m3u8")).toBe(false);
     expect(isExtractorManagedHost("https://x.com.evil.com/")).toBe(false);
+    expect(isExtractorManagedHost("https://youtube.com.evil.com/watch?v=1")).toBe(false);
     expect(isExtractorManagedHost("garbage")).toBe(false);
   });
 });
