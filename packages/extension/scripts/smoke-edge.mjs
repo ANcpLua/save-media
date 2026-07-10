@@ -98,6 +98,36 @@ try {
   expectPlayable(fmp4File, /mp4|mov/);
   console.log("✓ Edge downloaded a clear HLS fMP4/CMAF fixture");
 
+  await clearDownloadHistory(probe);
+  const hotkeyPage = await context.newPage();
+  await hotkeyPage.goto(`${baseURL}/page/direct.html`);
+  await hotkeyPage.waitForLoadState("networkidle");
+  await hotkeyPage.bringToFront();
+  await hotkeyPage.waitForTimeout(1000);
+  await hotkeyPage.keyboard.press("Alt+KeyS");
+  const hotkeyFile = await waitForDownloadedFile(probe, ".mp4");
+  expectPlayable(hotkeyFile, /mp4|mov/);
+  await hotkeyPage.close();
+  console.log("✓ Edge Alt+S hotkey downloaded a playable MP4");
+
+  const emptyPage = await context.newPage();
+  await emptyPage.goto(`${baseURL}/page/negative.html`);
+  await emptyPage.waitForLoadState("networkidle");
+  await emptyPage.bringToFront();
+  await emptyPage.keyboard.press("Alt+KeyS");
+  let noMediaBadge = null;
+  for (let attempt = 0; attempt < 20 && noMediaBadge !== "∅"; attempt++) {
+    noMediaBadge = await probe.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      const tab = tabs.find(t => t.id && t.url?.includes("/page/negative.html"));
+      return tab?.id ? chrome.action.getBadgeText({ tabId: tab.id }) : null;
+    });
+    if (noMediaBadge !== "∅") await emptyPage.waitForTimeout(250);
+  }
+  assert(noMediaBadge === "∅", `expected ∅ no-media badge after Alt+S on a media-free page, got ${JSON.stringify(noMediaBadge)}`);
+  await emptyPage.close();
+  console.log("✓ Edge Alt+S on a media-free page flashes the ∅ feedback badge");
+
   await expectFailure(context, probe, baseURL, "dash", d => d.protocol === "dash", "dash_unsupported");
   await expectFailure(context, probe, baseURL, "hls-aes", d => d.protocol === "hls", "hls_encryption_unsupported");
   await expectFailure(context, probe, baseURL, "hls-live", d => d.protocol === "hls", "hls_live_unsupported");
