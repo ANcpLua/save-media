@@ -1,0 +1,74 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish to Chrome, Edge, and Firefox stores
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/extension
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.11.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Check tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG does not match packages/extension version $PKG"
+            exit 1
+          fi
+
+      - run: pnpm --filter @savemedia/core build
+        working-directory: .
+      - name: Build and pack all targets
+        run: pnpm zip
+
+      - name: Publish to Edge Add-ons
+        env:
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+        run: node scripts/publish-edge.mjs release --notes "${GITHUB_REF_NAME} automated release"
+
+      - name: Publish to Chrome Web Store
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_ITEM_ID: ${{ secrets.CWS_ITEM_ID }}
+        run: node scripts/publish-chrome.mjs release
+
+      - name: Publish to Firefox Add-ons
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/publish-firefox.mjs release \
+            --notes "${GITHUB_REF_NAME} automated release" \
+            --source "savemedia-source-${VERSION}.zip"
+
+      - name: Create GitHub release with store zips
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            savemedia-chrome-*.zip savemedia-edge-*.zip savemedia-firefox-*.zip savemedia-source-*.zip \
+            --title "$GITHUB_REF_NAME" --generate-notes
