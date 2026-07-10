@@ -2,7 +2,7 @@
 
 ## Context (you have no other context — everything you need is here or in the repo)
 
-- Repo: `/Users/ancplua/savemedia` — a pnpm-workspace browser extension (Manifest V3) called **SaveMedia** that downloads media (progressive files, demuxed HLS, clear DASH, YouTube adaptive with audio+video merging, Twitter/X and Instagram support).
+- Repo: the repo root — a pnpm-workspace browser extension (Manifest V3) called **SaveMedia** that downloads media (progressive files, demuxed HLS, clear DASH, YouTube adaptive with audio+video merging, Twitter/X and Instagram support).
 - It is published on the Edge Add-ons store: https://microsoftedge.microsoft.com/addons/detail/savemedia/mmkdllnjmommekajhadhokanofjlglhk (installable in Edge via `edge://extensions/?id=mmkdllnjmommekajhadhokanofjlglhk`).
 - Work directly on `main`, commit and push when done (this is the repo owner's standing policy).
 

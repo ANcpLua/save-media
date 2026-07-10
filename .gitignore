@@ -43,3 +43,7 @@ e2e/fixtures/**/*.tmp
 packages/extension/savemedia-chrome-*/
 packages/extension/savemedia-edge-*/
 packages/extension/savemedia-firefox-*/
+
+# never commit signing keys or packed builds
+*.pem
+*.crx
