@@ -83,7 +83,22 @@ const downloadBestDeps: DownloadBestDeps = {
   },
   router,
   handleCapture,
+  showHotkeyFeedback,
 };
+
+const FEEDBACK_BADGES: Record<string, { text: string; color: string } | undefined> = {
+  "started": { text: "↓", color: "#16a34a" },
+  "no-media": { text: "∅", color: "#6b7280" },
+  "failed": { text: "✗", color: "#dc2626" },
+};
+
+function showHotkeyFeedback(tabId: number, outcome: string): void {
+  const badge = FEEDBACK_BADGES[outcome];
+  if (!badge) return;
+  chrome.action.setBadgeBackgroundColor({ tabId, color: badge.color }).catch(() => undefined);
+  chrome.action.setBadgeText({ tabId, text: badge.text }).catch(() => undefined);
+  setTimeout(() => updateBadge(tabId), 2_000);
+}
 
 function isEngineControlMessage(msg: unknown): msg is BackgroundToEngineMessage {
   return isBackgroundToEngineMessage(msg);

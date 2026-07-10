@@ -23,9 +23,10 @@ function deps(overrides: Partial<DownloadBestDeps> = {}): DownloadBestDeps {
       sendMessage: vi.fn(),
     },
     router: {
-      startBestDownload: vi.fn(async () => null),
+      startBestDownload: vi.fn(async () => ({ kind: "started", streamId: directDescriptor().id }) as const),
     },
     handleCapture: vi.fn(async () => undefined),
+    showHotkeyFeedback: vi.fn(),
   };
   return { ...base, ...overrides };
 }
@@ -115,9 +116,10 @@ describe("download-best command helpers", () => {
     const d = deps({
       router: {
         startBestDownload: vi.fn(async () => ({
+          kind: "failed",
           streamId: descriptor.id,
           error,
-        })),
+        }) as const),
       },
     });
 
@@ -131,9 +133,23 @@ describe("download-best command helpers", () => {
       },
       expect.any(Function),
     );
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "failed");
   });
 
-  it("registers only the download-best command name", () => {
+  it("shows no-media feedback instead of failing silently when the page has nothing downloadable", async () => {
+    const d = deps({
+      router: {
+        startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const),
+      },
+    });
+
+    await downloadBestForActiveTab(d);
+
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "no-media");
+    expect(d.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("registers only the download-best command name", async () => {
     let listener: (command: string) => void = () => undefined;
     const d = deps();
     registerDownloadBestCommand({ onCommand: { addListener: fn => { listener = fn; } } }, d);
@@ -143,5 +159,8 @@ describe("download-best command helpers", () => {
 
     listener("download-best");
     expect(d.tabs.query).toHaveBeenCalledTimes(1);
+    // The listener fires downloadBestForActiveTab without awaiting it; let it
+    // finish inside this test so mock resets can't strip its deps mid-flight.
+    await vi.waitFor(() => expect(d.showHotkeyFeedback).toHaveBeenCalled());
   });
 });
