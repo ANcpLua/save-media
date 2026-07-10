@@ -41,6 +41,11 @@ export interface RouterDeps {
   readonly logger?: Logger;
 }
 
+export type BestDownloadOutcome =
+  | { readonly kind: "started"; readonly streamId: StreamDescriptor["id"] }
+  | { readonly kind: "no-media" }
+  | { readonly kind: "failed"; readonly streamId: StreamDescriptor["id"]; readonly error: JobError };
+
 export interface Router {
   readonly tabs: Map<number, TabState>;
   readonly jobs: Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>;
@@ -49,7 +54,7 @@ export interface Router {
   readonly findDescriptor: (id: StreamDescriptor["id"]) => StreamDescriptor | null;
   readonly clearTab: (tabId: number) => void;
   readonly startDownload: (id: StreamDescriptor["id"], choice: UserChoice) => Promise<JobError | null>;
-  readonly startBestDownload: (tabId: number) => Promise<{ streamId: StreamDescriptor["id"]; error: JobError } | null>;
+  readonly startBestDownload: (tabId: number) => Promise<BestDownloadOutcome>;
   readonly handleEngineMessage: (msg: EngineToBackgroundMessage) => Promise<BackgroundToPopupMessage | null>;
   readonly handlePopupMessage: (
     msg: PopupToBackgroundMessage,
@@ -283,14 +288,14 @@ export function createRouter(deps: RouterDeps): Router {
       && (d.capabilities.directDownload || d.protocol === "hls" || hasDownloadableDemuxedPair(d));
   }
 
-  async function startBestDownload(tabId: number): Promise<{ streamId: StreamDescriptor["id"]; error: JobError } | null> {
+  async function startBestDownload(tabId: number): Promise<BestDownloadOutcome> {
     const descriptor = [...listDescriptors(tabId)]
       .filter(isDownloadableCandidate)
       .sort(compareBestDescriptors)[0];
-    if (!descriptor) return null;
+    if (!descriptor) return { kind: "no-media" };
 
     const error = await startDownload(descriptor.id, bestDownloadChoice(descriptor));
-    return error ? { streamId: descriptor.id, error } : null;
+    return error ? { kind: "failed", streamId: descriptor.id, error } : { kind: "started", streamId: descriptor.id };
   }
 
   /**

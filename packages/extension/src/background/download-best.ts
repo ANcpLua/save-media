@@ -1,4 +1,4 @@
-import type { JobError, StreamDescriptor } from "@savemedia/core";
+import type { BestDownloadOutcome } from "./router";
 import {
   MAIN_BRIDGE_TAG,
   type BackgroundToContentMessage,
@@ -28,11 +28,15 @@ export interface DownloadBestDeps {
     readonly sendMessage: (msg: BackgroundToPopupMessage, cb?: () => void) => void;
   };
   readonly router: {
-    readonly startBestDownload: (
-      tabId: number,
-    ) => Promise<{ streamId: StreamDescriptor["id"]; error: JobError } | null>;
+    readonly startBestDownload: (tabId: number) => Promise<BestDownloadOutcome>;
   };
   readonly handleCapture: (tabId: number, msg: CaptureMessage) => Promise<void>;
+  /**
+   * Visible per-tab feedback for the hotkey path. The popup is usually
+   * closed when Alt+S fires, so job-failed messages alone leave the user
+   * staring at a page where "nothing happened".
+   */
+  readonly showHotkeyFeedback: (tabId: number, outcome: BestDownloadOutcome["kind"]) => void;
 }
 
 export interface CommandsLike {
@@ -85,12 +89,13 @@ export async function downloadBestForTab(
   fallbackPageUrl: string,
 ): Promise<void> {
   await discoverPageMediaForTab(deps, tabId, fallbackPageUrl);
-  const failure = await deps.router.startBestDownload(tabId);
-  if (failure) {
+  const outcome = await deps.router.startBestDownload(tabId);
+  deps.showHotkeyFeedback(tabId, outcome.kind);
+  if (outcome.kind === "failed") {
     const msg: BackgroundToPopupMessage = {
       type: "job-failed",
-      streamId: failure.streamId,
-      error: failure.error,
+      streamId: outcome.streamId,
+      error: outcome.error,
     };
     deps.runtime.sendMessage(msg, () => undefined);
   }

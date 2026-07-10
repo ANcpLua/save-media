@@ -221,9 +221,9 @@ describe("router — startBestDownload", () => {
     };
     r.addDescriptor(1, hlsDescriptor({ variants: [lowVariant, highVariant] }));
 
-    const failure = await r.startBestDownload(1);
+    const outcome = await r.startBestDownload(1);
 
-    expect(failure).toBeNull();
+    expect(outcome).toMatchObject({ kind: "started" });
     expect(d.ensureEngineHost).toHaveBeenCalledTimes(1);
     const sent = vi.mocked(d.runtime.sendMessage).mock.calls[0]?.[0];
     expect(sent).toMatchObject({
@@ -241,9 +241,9 @@ describe("router — startBestDownload", () => {
     const r = createRouter(d);
     r.addDescriptor(1, directDescriptor());
 
-    const failure = await r.startBestDownload(1);
+    const outcome = await r.startBestDownload(1);
 
-    expect(failure).toBeNull();
+    expect(outcome).toMatchObject({ kind: "started" });
     expect(d.downloads.download).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "https://example.com/clip.mp4",
@@ -259,9 +259,9 @@ describe("router — startBestDownload", () => {
     r.addDescriptor(1, drmDescriptor("cdm_required"));
     r.addDescriptor(1, directDescriptor());
 
-    const failure = await r.startBestDownload(1);
+    const outcome = await r.startBestDownload(1);
 
-    expect(failure).toBeNull();
+    expect(outcome).toMatchObject({ kind: "started" });
     expect(d.downloads.download).toHaveBeenCalledWith(
       expect.objectContaining({ url: "https://example.com/clip.mp4" }),
     );
@@ -274,9 +274,9 @@ describe("router — startBestDownload", () => {
     r.addDescriptor(1, dashDescriptor());
     r.addDescriptor(1, directDescriptor());
 
-    const failure = await r.startBestDownload(1);
+    const outcome = await r.startBestDownload(1);
 
-    expect(failure).toBeNull();
+    expect(outcome).toMatchObject({ kind: "started" });
     expect(d.downloads.download).toHaveBeenCalledWith(
       expect.objectContaining({ url: "https://example.com/clip.mp4" }),
     );
@@ -288,9 +288,9 @@ describe("router — startBestDownload", () => {
     const r = createRouter(d);
     r.addDescriptor(1, drmDescriptor("cdm_required"));
 
-    const failure = await r.startBestDownload(1);
+    const outcome = await r.startBestDownload(1);
 
-    expect(failure).toBeNull();
+    expect(outcome).toEqual({ kind: "no-media" });
     expect(d.downloads.download).not.toHaveBeenCalled();
     expect(d.ensureEngineHost).not.toHaveBeenCalled();
   });
@@ -311,13 +311,13 @@ describe("router — startBestDownload", () => {
     expect(r.addDescriptor(1, pair)).toBe(true);
     expect(r.addDescriptor(1, pair)).toBe(false); // same pair dedupes
 
-    const failure = await r.startBestDownload(1);
+    const outcome = await r.startBestDownload(1);
 
     // The pair — not the plain DASH entry, not nothing — is selected, and
     // core dispatch turns its demuxed shape into an AvMergePlan, so the job
     // must reach the engine host rather than resolve to a refusal or a
     // silent video-only browser download.
-    expect(failure).toBeNull();
+    expect(outcome).toMatchObject({ kind: "started" });
     expect(d.ensureEngineHost).toHaveBeenCalled();
     expect(d.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "start-job", streamId: pair.id }),
@@ -349,9 +349,9 @@ describe("router — startBestDownload", () => {
     r.addDescriptor(1, unmaterialized);
     r.addDescriptor(1, directDescriptor());
 
-    const failure = await r.startBestDownload(1);
+    const outcome = await r.startBestDownload(1);
 
-    expect(failure).toBeNull();
+    expect(outcome).toMatchObject({ kind: "started" });
     expect(d.downloads.download).toHaveBeenCalled();
     expect(d.runtime.sendMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ streamId: unmaterialized.id }),

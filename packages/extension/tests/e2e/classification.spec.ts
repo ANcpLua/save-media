@@ -514,6 +514,33 @@ test.describe("extension classifies real fixture pages", () => {
     }
   });
 
+  test("Alt+S on a page with no downloadable media flashes the ∅ badge instead of doing nothing", async () => {
+    const page = await context!.newPage();
+    try {
+      await page.goto("/page/negative.html");
+      await page.waitForLoadState("networkidle");
+      await page.bringToFront();
+      await page.keyboard.press("Alt+KeyS");
+
+      const badge = await (async () => {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const text = await probe!.evaluate(async (marker: string) => {
+            const tabs = await chrome.tabs.query({});
+            const tab = tabs.find(t => t.id && t.url?.includes(marker));
+            if (!tab?.id) return null;
+            return chrome.action.getBadgeText({ tabId: tab.id });
+          }, "/page/negative.html");
+          if (text === "∅") return text;
+          await page.waitForTimeout(250);
+        }
+        return null;
+      })();
+      expect(badge, "expected the no-media feedback badge after Alt+S on a media-free page").toBe("∅");
+    } finally {
+      await page.close();
+    }
+  });
+
   test("download pipeline refuses HLS live/sliding-window playlists", async () => {
     await clearDownloadHistory();
     const page = await openFixtureAndWait("hls-live", ds => ds.some(d => d.protocol === "hls"));
