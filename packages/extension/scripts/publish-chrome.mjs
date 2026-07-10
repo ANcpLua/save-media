@@ -1,27 +1,24 @@
 #!/usr/bin/env node
 /**
- * Publish a savemedia build to the Chrome Web Store via the Web Store API v1.1.
+ * Publish a savemedia build to the Chrome Web Store via the Web Store API v2.
+ * (v1.1 is deprecated and supported only until 2026-10-15.)
  *
- * Capabilities:
- *   - insert  : create a brand-new draft item from a zip (first upload only).
- *               The API uploads the package and returns the new item id, but the
- *               item still cannot be PUBLISHED until the Store listing + Privacy
- *               tabs are completed once in the developer dashboard.
- *   - update  : upload a new version of an existing item (every release after the
- *               first). This is the normal CI path.
- *   - publish : move the current draft to review/published.
+ * The item must already exist in the developer dashboard (first submission,
+ * listing, and privacy tabs are manual). After that this script handles every
+ * later release. Items publish with their existing visibility settings.
  *
  * Credentials (env, never commit these):
  *   CWS_CLIENT_ID       OAuth client id      (Google Cloud console)
  *   CWS_CLIENT_SECRET   OAuth client secret
  *   CWS_REFRESH_TOKEN   OAuth refresh token  (scope: chromewebstore)
- *   CWS_ITEM_ID         Existing item id     (required for update/publish)
+ *   CWS_PUBLISHER_ID    Publisher id         (dashboard → Publisher → Settings)
+ *   CWS_ITEM_ID         Extension item id
  *
  * Usage:
- *   node scripts/publish-chrome.mjs insert  [--zip path]
- *   node scripts/publish-chrome.mjs update  [--zip path] [--item ID]
- *   node scripts/publish-chrome.mjs publish [--item ID] [--target default|trustedTesters]
- *   node scripts/publish-chrome.mjs release [--zip path] [--item ID] [--target default]
+ *   node scripts/publish-chrome.mjs update  [--zip path]
+ *   node scripts/publish-chrome.mjs publish
+ *   node scripts/publish-chrome.mjs status
+ *   node scripts/publish-chrome.mjs release [--zip path]
  *       (release = update then publish)
  *
  * Docs: https://developer.chrome.com/docs/webstore/using-api
@@ -32,8 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const UPLOAD_BASE = "https://www.googleapis.com/upload/chromewebstore/v1.1/items";
-const API_BASE = "https://www.googleapis.com/chromewebstore/v1.1/items";
+const API_ROOT = "https://chromewebstore.googleapis.com";
 
 main().catch((err) => {
   console.error(`\n✘ ${err.message}`);
@@ -45,39 +41,27 @@ async function main() {
   if (!command || command === "help" || flags.help) return usage();
 
   const zipPath = resolve(root, flags.zip ?? defaultZip());
-  const itemId = flags.item ?? process.env.CWS_ITEM_ID;
-  const target = flags.target ?? "default";
-
+  const publisherId = required("CWS_PUBLISHER_ID");
+  const itemId = flags.item ?? required("CWS_ITEM_ID");
+  const itemBase = `publishers/${publisherId}/items/${itemId}`;
   const token = await accessToken();
 
   switch (command) {
-    case "insert": {
-      const item = await uploadPackage(token, zipPath, null);
-      console.log(`✓ inserted new item: ${item.id}`);
-      console.log("  Next: open the dashboard, complete Store listing + Privacy,");
-      console.log("  then run: publish --item " + item.id);
+    case "update":
+      await uploadPackage(token, itemBase, zipPath);
+      break;
+    case "publish":
+      await publishItem(token, itemBase);
+      break;
+    case "status": {
+      const status = await api(token, `/v2/${itemBase}:fetchStatus`, { method: "GET" });
+      console.log(JSON.stringify(status, null, 2));
       break;
     }
-    case "update": {
-      requireItem(itemId);
-      const item = await uploadPackage(token, zipPath, itemId);
-      console.log(`✓ uploaded new version to ${itemId} (state: ${item.uploadState})`);
+    case "release":
+      await uploadPackage(token, itemBase, zipPath);
+      await publishItem(token, itemBase);
       break;
-    }
-    case "publish": {
-      requireItem(itemId);
-      await publishItem(token, itemId, target);
-      console.log(`✓ publish requested for ${itemId} (target: ${target})`);
-      break;
-    }
-    case "release": {
-      requireItem(itemId);
-      const item = await uploadPackage(token, zipPath, itemId);
-      console.log(`✓ uploaded new version (state: ${item.uploadState})`);
-      await publishItem(token, itemId, target);
-      console.log(`✓ publish requested for ${itemId} (target: ${target})`);
-      break;
-    }
     default:
       return usage(`unknown command: ${command}`);
   }
@@ -96,41 +80,31 @@ async function accessToken() {
   return json.access_token;
 }
 
-async function uploadPackage(token, zipPath, itemId) {
+async function uploadPackage(token, itemBase, zipPath) {
   if (!existsSync(zipPath)) throw new Error(`zip not found: ${zipPath}`);
-  const bytes = readFileSync(zipPath);
-  const url = itemId ? `${UPLOAD_BASE}/${itemId}` : UPLOAD_BASE;
-  const method = itemId ? "PUT" : "POST";
-  const res = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, "x-goog-api-version": "2" },
-    body: bytes,
+  const json = await api(token, `/upload/v2/${itemBase}:upload`, {
+    method: "POST",
+    body: readFileSync(zipPath),
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`upload failed (${res.status}): ${JSON.stringify(json)}`);
-  if (json.uploadState === "FAILURE") {
-    const detail = (json.itemError ?? []).map((e) => e.error_detail).join("; ");
-    throw new Error(`upload rejected: ${detail || JSON.stringify(json)}`);
-  }
+  console.log(`✓ uploaded ${zipPath.split("/").pop()}${json.name ? ` (${json.name})` : ""}`);
   return json;
 }
 
-async function publishItem(token, itemId, target) {
-  const res = await fetch(`${API_BASE}/${itemId}/publish`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "x-goog-api-version": "2",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ target }),
+async function publishItem(token, itemBase) {
+  const json = await api(token, `/v2/${itemBase}:publish`, { method: "POST" });
+  console.log("✓ publish requested (submitted for review with existing visibility)");
+  return json;
+}
+
+async function api(token, path, init) {
+  const res = await fetch(`${API_ROOT}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`publish failed (${res.status}): ${JSON.stringify(json)}`);
-  const status = (json.status ?? []).join(", ");
-  const detail = (json.statusDetail ?? []).join("; ");
-  if (status && !status.includes("OK")) {
-    console.warn(`  status: ${status}${detail ? ` — ${detail}` : ""}`);
+  if (!res.ok) {
+    const msg = json.error?.message ?? JSON.stringify(json);
+    throw new Error(`${init.method} ${path} failed (${res.status}): ${msg}`);
   }
   return json;
 }
@@ -138,10 +112,6 @@ async function publishItem(token, itemId, target) {
 function defaultZip() {
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
   return `savemedia-chrome-${pkg.version}.zip`;
-}
-
-function requireItem(itemId) {
-  if (!itemId) throw new Error("missing item id: pass --item ID or set CWS_ITEM_ID");
 }
 
 function required(name) {
@@ -167,13 +137,13 @@ function parseArgs(argv) {
 
 function usage(msg) {
   if (msg) console.error(`✘ ${msg}\n`);
-  console.log(`Chrome Web Store publisher
+  console.log(`Chrome Web Store publisher (API v2)
 
-  node scripts/publish-chrome.mjs insert  [--zip PATH]
   node scripts/publish-chrome.mjs update  [--zip PATH] [--item ID]
-  node scripts/publish-chrome.mjs publish [--item ID] [--target default|trustedTesters]
-  node scripts/publish-chrome.mjs release [--zip PATH] [--item ID] [--target default]
+  node scripts/publish-chrome.mjs publish [--item ID]
+  node scripts/publish-chrome.mjs status  [--item ID]
+  node scripts/publish-chrome.mjs release [--zip PATH] [--item ID]
 
-Env: CWS_CLIENT_ID CWS_CLIENT_SECRET CWS_REFRESH_TOKEN CWS_ITEM_ID`);
+Env: CWS_CLIENT_ID CWS_CLIENT_SECRET CWS_REFRESH_TOKEN CWS_PUBLISHER_ID CWS_ITEM_ID`);
   process.exit(msg ? 1 : 0);
 }
