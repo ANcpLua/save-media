@@ -3,6 +3,7 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -48,6 +49,7 @@ jobs:
         run: node scripts/publish-edge.mjs release --notes "${GITHUB_REF_NAME} automated release"
 
       - name: Publish to Chrome Web Store
+        if: ${{ !cancelled() }}
         env:
           CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
@@ -57,6 +59,7 @@ jobs:
         run: node scripts/publish-chrome.mjs release
 
       - name: Publish to Firefox Add-ons
+        if: ${{ !cancelled() }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
@@ -67,6 +70,7 @@ jobs:
             --source "savemedia-source-${VERSION}.zip"
 
       - name: Create GitHub release with store zips
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
