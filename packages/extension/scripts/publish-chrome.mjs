@@ -121,7 +121,7 @@ async function publishItem(token, itemId, target) {
     headers: {
       Authorization: `Bearer ${token}`,
       "x-goog-api-version": "2",
-      "Content-Length": "0",
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({ target }),
   });
