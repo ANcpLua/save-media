@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 380px; max-height: 500px; font: 13px/1.4 system-ui, sans-serif; background: #111; color: #eee; }
+  .row { padding: 8px 12px; border-bottom: 1px solid #333; display: flex; gap: 8px; align-items: center; }
+  input { flex: 1; background: #222; border: 1px solid #444; color: #eee; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+  select { background: #222; border: 1px solid #444; color: #eee; padding: 3px 6px; border-radius: 4px; font-size: 11px; }
+  label { color: #888; font-size: 12px; }
+  button { background: #2563eb; color: #fff; border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #555; cursor: default; }
+  .green { background: #16a34a; } .green:hover { background: #15803d; }
+  .gray { background: #333; } .gray:hover { background: #444; }
+  .count { margin-left: auto; color: #888; font-size: 11px; }
+  #status { padding: 8px 12px; color: #f59e0b; font-size: 12px; display: none; }
+  .files { overflow-y: auto; max-height: 380px; }
+  .file { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #222; }
+  .file:hover { background: #1a1a1a; }
+  .file img { width: 48px; height: 36px; object-fit: cover; border-radius: 3px; background: #333; }
+  .file .info { flex: 1; min-width: 0; }
+  .file .title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file .meta { font-size: 10px; color: #888; }
+  .empty { padding: 24px; text-align: center; color: #666; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <input id="apiKey" type="password" placeholder="LuluStream API Key">
+    <button id="loadBtn">Load</button>
+  </div>
+  <div class="row">
+    <label>Quality:</label>
+    <select id="quality">
+      <option value="best" selected>Best</option>
+      <option value="1080">Max 1080p</option>
+      <option value="720">Max 720p</option>
+      <option value="480">Max 480p</option>
+    </select>
+  </div>
+  <div class="row" style="display:none" id="toolbar">
+    <button class="green" id="dlAll">Download All</button>
+    <button class="gray" id="refresh">Refresh</button>
+    <span class="count" id="count"></span>
+  </div>
+  <div id="status"></div>
+  <div class="files" id="files">
+    <div class="empty">Enter API key and click Load</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

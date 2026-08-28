@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuTRZgz47/7v/e0VgyP2+CPPVOk9XIBdKcJEYHijIqpNE2387KSM95QhmsITptCq1NoUgtxEhR+eAw3Niv0HZXMKN2bUgziK9kaaPuaEZOjj5nVB8nX44OVWn0LFVoNGCA6kN1CCc/9n1FknN7/w4GO1jK7DbCiuxySQUf9ubu2WI6lSnKTmGSkSh2DRhYuRyAjgig9P4YjXeREgOdmYkR8g6ij6UfNR/7F7nw3EtXe846Ukk7RbpyVlPn9RiAeDA5MZ4wsoC7zWC6ovmu4aCSHtx4u2cOULTQvgrLJBy2TuJURDnk30b8DLFMhzFCNPs9XXvO2LF0d8Llr+gfsek1wIDAQAB",
+  "name": "Save Media",
+  "version": "1.1.0",
+  "description": "Alt+S / Ctrl+S to save images and videos. LuluStream API integration.",
+  "permissions": ["downloads", "nativeMessaging", "storage"],
+  "action": { "default_popup": "popup.html" },
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["content.js"],
+    "run_at": "document_idle",
+    "all_frames": true
+  }]
+}
