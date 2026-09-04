@@ -67,3 +67,23 @@ host. Short form:
   stdin pipe and stall.
 - Version lives in `packages/extension/manifest.json` and `packages/extension/package.json`
   (root and core package.json lag behind on purpose, they are private).
+
+## Status 2026-09-05 (read this first tomorrow)
+
+The local downloader (commit 949713f) is committed but **untested** in a real browser. Goal:
+every feature works, all three browsers ship the same version, release is scripted.
+
+Verification order:
+
+1. `pnpm install && pnpm typecheck && pnpm test` and `python3 packages/native-host/test_host.py`.
+2. `pnpm --filter @savemedia/extension smoke:native` (Playwright Chromium + host).
+3. Manual: load `dist-chrome` unpacked, switch Local downloader on, run the setup command it
+   shows, save a DASH page. Repeat in Edge (same build) and Firefox (`dist-firefox`, `web-ext run`).
+4. Check the popup refuses DRM in all three and the Alt+S fallback toast appears.
+
+Release path (all three stores are scripted since v0.0.5, see `docs/publishing.md`):
+bump version in `packages/extension/manifest.json` and `package.json`, `pnpm verify`,
+commit, tag `vX.Y.Z`, push the tag. `.github/workflows/release.yml` publishes Edge, Chrome
+and Firefox and creates the GitHub release. Store secrets live in repo Actions secrets.
+The nativeMessaging permission is new, so expect a store re-review; the justification text
+belongs in `docs/privacy-policy.md`.
