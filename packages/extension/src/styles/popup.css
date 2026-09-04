@@ -3,12 +3,20 @@
 @tailwind utilities;
 
 html, body, #root {
-  height: 100%;
   width: 380px;
-  min-height: 440px;
+  min-height: 300px;
+  max-height: 600px;
   background: theme('colors.ink');
   color: #eef3f6;
   font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   overflow-y: auto;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Opened as its own window (?tabId=): fill it and let the window be resized. */
+main[data-window] { min-height: 100vh; }
+html:has(main[data-window]), body:has(main[data-window]), #root:has(main[data-window]) {
+  width: 100%;
+  max-height: none;
+  height: 100%;
 }

@@ -35,7 +35,8 @@
     "test:e2e:firefox-fixtures": "playwright test --project=firefox-fixtures",
     "test:e2e:headed": "playwright test --project=chromium --headed",
     "report:e2e": "playwright show-report playwright-report",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "smoke:native": "pnpm build:chrome && node scripts/smoke-native.mjs"
   },
   "dependencies": {
     "@savemedia/core": "workspace:*",

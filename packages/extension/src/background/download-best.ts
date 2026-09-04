@@ -5,7 +5,11 @@ import {
   type BackgroundToPopupMessage,
   type BridgeToBackgroundMessage,
   type ContentDiscoveryResponse,
+  type HotkeyFeedbackOutcome,
+  type LocalJobView,
 } from "../types/messages";
+import { userMessage } from "@savemedia/core";
+import { isDelegableError } from "../native/local-downloader";
 
 type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
 
@@ -36,7 +40,13 @@ export interface DownloadBestDeps {
    * closed when Alt+S fires, so job-failed messages alone leave the user
    * staring at a page where "nothing happened".
    */
-  readonly showHotkeyFeedback: (tabId: number, outcome: BestDownloadOutcome["kind"]) => void;
+  readonly showHotkeyFeedback: (tabId: number, outcome: HotkeyFeedbackOutcome, detail: string) => void;
+  /**
+   * Optional local downloader (user-installed yt-dlp host). Consulted only
+   * when the in-browser engine has nothing to save or refused for a
+   * non-DRM reason; see DELEGABLE_ERROR_CODES.
+   */
+  readonly localFallback?: (pageUrl: string, tabId: number) => Promise<LocalJobView | null>;
 }
 
 export interface CommandsLike {
@@ -90,15 +100,33 @@ export async function downloadBestForTab(
 ): Promise<void> {
   await discoverPageMediaForTab(deps, tabId, fallbackPageUrl);
   const outcome = await deps.router.startBestDownload(tabId);
-  deps.showHotkeyFeedback(tabId, outcome.kind);
-  if (outcome.kind === "failed") {
-    const msg: BackgroundToPopupMessage = {
-      type: "job-failed",
-      streamId: outcome.streamId,
-      error: outcome.error,
-    };
-    deps.runtime.sendMessage(msg, () => undefined);
+
+  if (outcome.kind === "started") {
+    deps.showHotkeyFeedback(tabId, "started", "Saving best quality");
+    return;
   }
+
+  const delegable = outcome.kind === "no-media" || isDelegableError(outcome.error);
+  if (delegable && deps.localFallback && fallbackPageUrl) {
+    const job = await deps.localFallback(fallbackPageUrl, tabId);
+    if (job) {
+      deps.showHotkeyFeedback(tabId, "delegated", "Handed to local downloader");
+      return;
+    }
+  }
+
+  if (outcome.kind === "no-media") {
+    deps.showHotkeyFeedback(tabId, "no-media", "No supported media on this page");
+    return;
+  }
+
+  deps.showHotkeyFeedback(tabId, "failed", userMessage(outcome.error).title);
+  const msg: BackgroundToPopupMessage = {
+    type: "job-failed",
+    streamId: outcome.streamId,
+    error: outcome.error,
+  };
+  deps.runtime.sendMessage(msg, () => undefined);
 }
 
 export function registerDownloadBestCommand(commands: CommandsLike | undefined, deps: DownloadBestDeps): void {

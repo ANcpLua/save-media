@@ -47,3 +47,5 @@ packages/extension/savemedia-firefox-*/
 # never commit signing keys or packed builds
 *.pem
 *.crx
+__pycache__/
+*.pyc

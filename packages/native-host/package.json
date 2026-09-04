@@ -1,0 +1,9 @@
+{
+  "name": "@savemedia/native-host",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "python3 test_host.py",
+    "build": "python3 -m py_compile host.py"
+  }
+}

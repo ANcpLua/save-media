@@ -8,6 +8,15 @@ import {
 } from "../../../src/background/download-best";
 import { MAIN_BRIDGE_TAG, type ContentDiscoveryResponse } from "../../../src/types/messages";
 import { directDescriptor } from "../popup/helpers/descriptors";
+import type { LocalJobView } from "../../../src/types/messages";
+
+function localJob(): LocalJobView {
+  return {
+    id: "local-1", pageUrl: "https://example.com/watch", tabId: 42, phase: "probing",
+    percent: null, downloadedBytes: null, totalBytes: null, speedBytesPerSec: null, etaSeconds: null,
+    filename: null, failure: null,
+  };
+}
 
 function deps(overrides: Partial<DownloadBestDeps> = {}): DownloadBestDeps {
   const base: DownloadBestDeps = {
@@ -133,7 +142,7 @@ describe("download-best command helpers", () => {
       },
       expect.any(Function),
     );
-    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "failed");
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "failed", expect.any(String));
   });
 
   it("shows no-media feedback instead of failing silently when the page has nothing downloadable", async () => {
@@ -145,7 +154,7 @@ describe("download-best command helpers", () => {
 
     await downloadBestForActiveTab(d);
 
-    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "no-media");
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "no-media", expect.any(String));
     expect(d.runtime.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -162,5 +171,69 @@ describe("download-best command helpers", () => {
     // The listener fires downloadBestForActiveTab without awaiting it; let it
     // finish inside this test so mock resets can't strip its deps mid-flight.
     await vi.waitFor(() => expect(d.showHotkeyFeedback).toHaveBeenCalled());
+  });
+
+  it("hands the page URL to the local downloader when the page has nothing the engine can save", async () => {
+    const localFallback = vi.fn(async () => localJob());
+    const d = deps({
+      router: { startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const) },
+      localFallback,
+    });
+
+    await downloadBestForActiveTab(d);
+
+    expect(localFallback).toHaveBeenCalledWith("https://example.com/watch", 42);
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "delegated", expect.any(String));
+  });
+
+  it("falls back for browser-only limitations such as DASH", async () => {
+    const localFallback = vi.fn(async () => localJob());
+    const d = deps({
+      router: {
+        startBestDownload: vi.fn(async () => ({
+          kind: "failed",
+          streamId: directDescriptor().id,
+          error: { code: "dash_unsupported", severity: "terminal", manifestUrl: "https://cdn.example.com/m.mpd" },
+        }) as const),
+      },
+      localFallback,
+    });
+
+    await downloadBestForActiveTab(d);
+
+    expect(localFallback).toHaveBeenCalled();
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "delegated", expect.any(String));
+    expect(d.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("never delegates protected media to the local downloader", async () => {
+    const localFallback = vi.fn(async () => localJob());
+    const d = deps({
+      router: {
+        startBestDownload: vi.fn(async () => ({
+          kind: "failed",
+          streamId: directDescriptor().id,
+          error: { code: "encrypted_media_detected", severity: "terminal", detectedVia: ["eme-hook"], keySystem: "com.widevine.alpha" },
+        }) as const),
+      },
+      localFallback,
+    });
+
+    await downloadBestForActiveTab(d);
+
+    expect(localFallback).not.toHaveBeenCalled();
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "failed", expect.any(String));
+  });
+
+  it("reports no-media normally when the local downloader declines", async () => {
+    const localFallback = vi.fn(async () => null);
+    const d = deps({
+      router: { startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const) },
+      localFallback,
+    });
+
+    await downloadBestForActiveTab(d);
+
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "no-media", expect.any(String));
   });
 });

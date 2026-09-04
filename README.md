@@ -12,7 +12,11 @@ Video downloader for verified direct files and plain HLS streams. It saves brows
 
 > **Verified files only.** savemedia is not a DRM bypass tool. It refuses DRM, encrypted or live HLS, DASH, and URL-only guesses rather than saving a broken file. Use it only for media you have the right to save.
 
-Full support contract: [`docs/design.md`](docs/design.md) · Privacy policy: [`docs/privacy-policy.md`](docs/privacy-policy.md)
+Full support contract: [`docs/design.md`](docs/design.md) · Privacy policy: [`docs/privacy-policy.md`](docs/privacy-policy.md) · Engineering boundary rules: [`docs/boundary-rules.md`](docs/boundary-rules.md)
+
+## Optional local downloader
+
+For pages the in-browser engine cannot save (DASH, browser memory limits, unusual containers), savemedia can hand the page address to yt-dlp and ffmpeg that you install yourself. It is off by default, asks for the `nativeMessaging` permission only when you switch it on, and refuses protected media exactly like the browser engine does. Setup and the wire protocol are in [`packages/native-host/README.md`](packages/native-host/README.md).
 
 ## License
 

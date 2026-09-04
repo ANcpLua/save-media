@@ -30,6 +30,12 @@ interface DiscoverPageMediaMessage {
   type: "discover-page-media";
 }
 
+interface HotkeyFeedbackMessage {
+  type: "hotkey-feedback";
+  outcome: "started" | "delegated" | "complete" | "no-media" | "failed";
+  detail: string;
+}
+
 window.addEventListener("message", event => {
   if (event.source !== window) return;
   const data = event.data;
@@ -48,10 +54,149 @@ window.addEventListener("message", event => {
 });
 
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
+  if (isHotkeyFeedbackMessage(msg)) {
+    if (window.top === window) showToast(msg.outcome, msg.detail);
+    return false;
+  }
+  if (isRecord(msg) && msg.type === "page-media-snapshot") {
+    sendResponse(pageMediaSnapshot());
+    return false;
+  }
   if (!isDiscoverPageMediaMessage(msg)) return false;
   sendResponse({ pageUrl: location.href, urls: discoverMediaUrls() });
   return false;
 });
+
+// Snapshot of the page's <video> elements for the popup: which one is
+// playing, how big it is, and a small frame so the user can tell entries
+// apart. Frames of cross-origin media taint the canvas; then the poster is
+// used, or nothing.
+const THUMB_WIDTH = 160;
+
+function pageMediaSnapshot(): {
+  pageTitle: string;
+  videos: { src: string; thumbnail: string | null; width: number; height: number; duration: number | null; visible: number; playing: boolean }[];
+} {
+  const title = document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() || document.title;
+  const videos = [...document.querySelectorAll("video")].map(v => ({
+    src: v.currentSrc || v.src || v.querySelector("source")?.src || "",
+    thumbnail: captureFrame(v) ?? (v.poster ? absolute(v.poster) : null),
+    width: v.videoWidth || Math.round(v.getBoundingClientRect().width),
+    height: v.videoHeight || Math.round(v.getBoundingClientRect().height),
+    duration: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null,
+    visible: visibleFraction(v),
+    playing: !v.paused && !v.ended && v.readyState >= 2,
+  })).filter(v => v.src || v.thumbnail);
+  return { pageTitle: title, videos };
+}
+
+function captureFrame(v: HTMLVideoElement): string | null {
+  if (v.readyState < 2 || !v.videoWidth || !v.videoHeight) return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = THUMB_WIDTH;
+    canvas.height = Math.max(1, Math.round(THUMB_WIDTH * v.videoHeight / v.videoWidth));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return null;
+  }
+}
+
+function visibleFraction(el: Element): number {
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return 0;
+  const w = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+  const h = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+  return (w * h) / (r.width * r.height);
+}
+
+function absolute(url: string): string {
+  try { return new URL(url, location.href).href; } catch { return url; }
+}
+
+// In-page feedback for Alt+S. The popup is closed when the hotkey fires and
+// the action badge is easy to miss, so the page itself confirms what
+// happened. Rendered inside a shadow root so page CSS cannot restyle it.
+// The host element is kept as a module-level reference (never looked up by
+// id) so the page cannot substitute its own element.
+const TOAST_COLORS: Record<HotkeyFeedbackMessage["outcome"], string> = {
+  "started": "#16a34a",
+  "delegated": "#2563eb",
+  "complete": "#16a34a",
+  "no-media": "#6b7280",
+  "failed": "#dc2626",
+};
+const TOAST_LABELS: Record<HotkeyFeedbackMessage["outcome"], string> = {
+  "started": "Saving",
+  "delegated": "Local downloader",
+  "complete": "Saved",
+  "no-media": "Nothing to save",
+  "failed": "Not saved",
+};
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+let toastHost: HTMLElement | null = null;
+let toastRoot: ShadowRoot | null = null;
+
+function showToast(outcome: HotkeyFeedbackMessage["outcome"], detail: string): void {
+  if (!document.body) return;
+  if (!toastHost || !toastRoot || !toastHost.isConnected) {
+    const host = document.createElement("div");
+    host.setAttribute("data-savemedia", "feedback");
+    try {
+      toastRoot = host.attachShadow({ mode: "open" });
+    } catch {
+      return;
+    }
+    toastHost = host;
+    document.body.appendChild(host);
+  }
+  const host = toastHost;
+  const root = toastRoot;
+  root.innerHTML = "";
+  const style = document.createElement("style");
+  style.textContent = `
+    :host { all: initial; }
+    .t { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647;
+      display: flex; align-items: center; gap: 10px; max-width: 360px;
+      padding: 10px 14px; border-radius: 8px; background: #0e1b26; color: #eef3f6;
+      font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      box-shadow: 0 6px 20px rgba(0,0,0,.35); opacity: 0; transform: translateY(6px);
+      transition: opacity .18s ease, transform .18s ease; pointer-events: none; }
+    .t.show { opacity: 1; transform: none; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+    .k { font-weight: 600; margin-right: 6px; }
+    .d { color: #9fb2be; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @media (prefers-reduced-motion: reduce) { .t { transition: none; } }
+  `;
+  const el = document.createElement("div");
+  el.className = "t";
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  dot.style.background = TOAST_COLORS[outcome];
+  const label = document.createElement("span");
+  label.className = "k";
+  label.textContent = TOAST_LABELS[outcome];
+  const text = document.createElement("span");
+  text.className = "d";
+  text.textContent = detail;
+  el.append(dot, label, text);
+  root.append(style, el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => {
+      host.remove();
+      if (toastHost === host) {
+        toastHost = null;
+        toastRoot = null;
+      }
+    }, 250);
+  }, outcome === "failed" ? 4_000 : 2_400);
+}
 
 chrome.runtime.sendMessage(
   { type: "ready" },
@@ -125,6 +270,13 @@ function isMainPayload(value: unknown): value is MainPayload {
 
 function isDiscoverPageMediaMessage(value: unknown): value is DiscoverPageMediaMessage {
   return isRecord(value) && value.type === "discover-page-media";
+}
+
+function isHotkeyFeedbackMessage(value: unknown): value is HotkeyFeedbackMessage {
+  return isRecord(value)
+    && value.type === "hotkey-feedback"
+    && (value.outcome === "started" || value.outcome === "delegated" || value.outcome === "complete" || value.outcome === "no-media" || value.outcome === "failed")
+    && typeof value.detail === "string";
 }
 
 function isCaptureKind(value: unknown): value is CaptureKind {

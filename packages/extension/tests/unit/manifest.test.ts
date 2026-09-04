@@ -10,6 +10,7 @@ interface ManifestCommand {
 interface Manifest {
   readonly commands?: Readonly<Record<string, ManifestCommand>>;
   readonly permissions?: readonly string[];
+  readonly optional_permissions?: readonly string[];
   readonly icons?: Readonly<Record<string, string>>;
   readonly action?: { readonly default_icon?: Readonly<Record<string, string>> };
 }
@@ -28,13 +29,22 @@ describe("manifest commands", () => {
     });
   });
 
-  it("does not request unused storage or scripting permissions", () => {
+  it("does not request scripting; storage only for local downloader settings", () => {
     const manifest = JSON.parse(
       readFileSync(resolve(process.cwd(), "manifest.json"), "utf8"),
     ) as Manifest;
 
-    expect(manifest.permissions ?? []).not.toContain("storage");
+    expect(manifest.permissions ?? []).toContain("storage");
     expect(manifest.permissions ?? []).not.toContain("scripting");
+  });
+
+  it("keeps nativeMessaging optional so the store build asks only on opt-in", () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(process.cwd(), "manifest.json"), "utf8"),
+    ) as Manifest;
+
+    expect(manifest.permissions ?? []).not.toContain("nativeMessaging");
+    expect(manifest.optional_permissions).toEqual(["nativeMessaging"]);
   });
 
   it("declares store-ready package and action icons", () => {

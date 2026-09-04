@@ -13,14 +13,15 @@ describe("popup App", () => {
   it("queries the active tab and asks background for the descriptor list", () => {
     render(<App />);
     expect(globalThis.chrome.tabs.query).toHaveBeenCalled();
-    const sendArg = vi.mocked(globalThis.chrome.runtime.sendMessage).mock.calls[0]?.[0];
-    expect(sendArg).toEqual({ type: "list", tabId: 1 });
+    const sent = vi.mocked(globalThis.chrome.runtime.sendMessage).mock.calls.map(c => c[0]);
+    expect(sent).toContainEqual({ type: "list", tabId: 1 });
   });
 
   it("renders the descriptors returned by background", () => {
-    vi.mocked(globalThis.chrome.runtime.sendMessage).mockImplementationOnce(
-      ((_msg: unknown, cb?: (resp: BackgroundToPopupMessage) => void) => {
-        cb?.({ type: "descriptors", tabId: 1, descriptors: [directDescriptor()] });
+    vi.mocked(globalThis.chrome.runtime.sendMessage).mockImplementation(
+      ((msg: { type?: string }, cb?: (resp: BackgroundToPopupMessage | undefined) => void) => {
+        if (msg?.type === "list") cb?.({ type: "descriptors", tabId: 1, descriptors: [directDescriptor()] });
+        else cb?.(undefined);
       }) as never,
     );
     render(<App />);

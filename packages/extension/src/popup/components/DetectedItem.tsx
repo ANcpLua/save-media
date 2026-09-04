@@ -4,6 +4,7 @@ import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/
 import type { PopupToBackgroundMessage } from "../../types/messages";
 import { suggestFilename } from "../../util/filename";
 import { hasDownloadableDemuxedPair } from "../../util/demuxed-pair";
+import { formatDuration, type Preview } from "../preview-match";
 
 export interface JobStatus {
   readonly phase: "queued" | "active" | "complete" | "failed";
@@ -17,14 +18,23 @@ interface Props {
   readonly descriptor: StreamDescriptor;
   readonly status?: JobStatus | undefined;
   readonly onCancel?: ((streamId: StreamDescriptor["id"]) => void) | undefined;
+  readonly preview?: Preview | null | undefined;
+  readonly isMain?: boolean | undefined;
+  readonly pageTitle?: string | null | undefined;
 }
 
-export function DetectedItem({ descriptor, status, onCancel }: Props) {
+export function DetectedItem({ descriptor, status, onCancel, preview = null, isMain = false, pageTitle = null }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [chosenVariantId, setChosenVariantId] = useState<string | null>(null);
 
   const visibleVariants = (descriptor.variants ?? []).filter(v => (v.height ?? 0) >= 720);
   const allBelowMin = descriptor.variants.length > 0 && visibleVariants.length === 0;
-  const variant = visibleVariants[0] ?? descriptor.variants[0];
+  const qualityChoices = [...descriptor.variants]
+    .filter(v => v.videoCodec !== null || v.height !== null)
+    .sort((a, b) => (b.height ?? 0) - (a.height ?? 0) || (b.bitrate ?? 0) - (a.bitrate ?? 0));
+  const variant = descriptor.variants.find(v => v.id === chosenVariantId) ?? visibleVariants[0] ?? descriptor.variants[0];
+  const displayTitle = descriptor.title ?? pageTitle ?? hostOf(descriptor.pageUrl);
+  const previewSize = preview && preview.width > 0 && preview.height > 0 ? `${preview.width}×${preview.height}` : null;
   const vcodec = variant?.videoCodec ?? descriptor.codecs.video;
   const acodec = variant?.audioCodec ?? descriptor.codecs.audio;
   const isDrmBlocked = descriptor.capabilities.drmBlocked;
@@ -81,23 +91,60 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
   }
 
   return (
-    <li className="rounded-lg bg-surface border border-line p-3 text-xs">
-      <button
-        onClick={() => setExpanded(e => !e)}
-        className="flex items-center gap-2 w-full text-left mb-1"
-      >
-        <span className="text-muted">{expanded ? "▼" : "▶"}</span>
-        <span className="font-medium truncate flex-1">{descriptor.title ?? descriptor.pageUrl}</span>
-      </button>
-
-      <div className="text-muted ml-5 leading-relaxed">
-        {variant && <>{variant.width}×{variant.height} · {variant.frameRate ?? "?"} fps · </>}
-        {vcodec ? friendlyVideoCodec(vcodec) : "—"}
-        {acodec && <> + {friendlyAudioCodec(acodec)}</>}
-        {" · "}
-        <code>{descriptor.container}</code>
-        {allBelowMin && <span className="block text-amber-500 mt-0.5">⚠ source below 720p</span>}
+    <li className={`rounded-lg bg-surface border p-3 text-xs ${isMain ? "border-accent/60" : "border-line"}`} data-main={isMain || undefined}>
+      <div className="flex gap-2.5">
+        {preview?.thumbnail ? (
+          <img
+            src={preview.thumbnail}
+            alt=""
+            className="w-[88px] h-[50px] rounded object-cover bg-surface-2 shrink-0"
+            data-testid="preview-thumb"
+          />
+        ) : (
+          <div className="w-[88px] h-[50px] rounded bg-surface-2 shrink-0 flex items-center justify-center text-neutral-500" aria-hidden="true">
+            <span className="text-lg">▶</span>
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="flex items-center gap-1.5 w-full text-left"
+          >
+            {isMain && <span className="shrink-0 rounded bg-accent text-ink font-semibold px-1 text-[10px]" data-testid="main-badge">Main</span>}
+            <span className="font-medium truncate flex-1" title={displayTitle}>{displayTitle}</span>
+            <span className="text-muted shrink-0">{expanded ? "▼" : "▶"}</span>
+          </button>
+          <div className="text-muted leading-relaxed mt-0.5">
+            {variant && variant.width && variant.height
+              ? <>{variant.width}×{variant.height}</>
+              : previewSize ? <>{previewSize}</> : <>size unknown</>}
+            {preview?.duration ? <> · {formatDuration(preview.duration)}</> : null}
+            {variant?.estimatedSize ? <> · {formatBytes(variant.estimatedSize)}</> : null}
+            {" · "}
+            {vcodec ? friendlyVideoCodec(vcodec) : <code>{descriptor.container}</code>}
+            {acodec && <> + {friendlyAudioCodec(acodec)}</>}
+            {allBelowMin && <span className="block text-amber-500 mt-0.5">⚠ source below 720p</span>}
+          </div>
+        </div>
       </div>
+
+      {qualityChoices.length > 1 && !status && (
+        <label className="mt-2 ml-5 flex items-center gap-2 text-muted">
+          Quality
+          <select
+            className="bg-surface-2 rounded-md px-1.5 py-0.5 text-[12px] text-white"
+            value={variant?.id ?? ""}
+            onChange={e => setChosenVariantId(e.target.value)}
+            data-testid="quality-select"
+          >
+            {qualityChoices.map(v => (
+              <option key={v.id} value={v.id}>
+                {v.height ? `${v.height}p` : v.id}{v.frameRate && v.frameRate > 30 ? ` ${Math.round(v.frameRate)}` : ""}{v.estimatedSize ? ` · ${formatBytes(v.estimatedSize)}` : v.bitrate ? ` · ${(v.bitrate / 1e6).toFixed(1)} Mbps` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {expanded && (
         <div className="mt-2 ml-5 space-y-1.5 text-muted">
@@ -163,6 +210,10 @@ export function DetectedItem({ descriptor, status, onCancel }: Props) {
       </div>
     </li>
   );
+}
+
+function hostOf(url: string): string {
+  try { return new URL(url).host; } catch { return url; }
 }
 
 function outputActionLabel(d: StreamDescriptor): string {
