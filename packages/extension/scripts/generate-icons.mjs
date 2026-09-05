@@ -1,112 +1,51 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
+/**
+ * Derive the manifest icons from the designed logo master
+ * (store-assets/logo/logo-1024-transparent.png), composited on the brand
+ * navy so the toolbar tile matches the store assets.
+ *
+ * Outputs (public/icons/): icon-16.png, icon-32.png, icon-48.png, icon-128.png
+ * Also refreshes store-assets/logo/logo-{256,300,512,1024}.png from the same master.
+ *
+ * Requires ImageMagick (`magick`). Run: pnpm --filter @savemedia/extension icons
+ * Then run `pnpm --filter @savemedia/extension store:assets` for the store files.
+ */
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deflateSync } from "node:zlib";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const outDir = resolve(here, "../public/icons");
-const storeDir = resolve(here, "../store-assets");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const MASTER = resolve(root, "store-assets/logo/logo-1024-transparent.png");
+const ICONS = resolve(root, "public/icons");
+const LOGOS = resolve(root, "store-assets/logo");
+const NAVY = "#202a35";
 
-mkdirSync(outDir, { recursive: true });
-for (const size of [16, 32, 48, 128]) {
-  writeFileSync(resolve(outDir, `icon-${size}.png`), makeIcon(size));
+const magick = ["magick", "convert"].find(bin => spawnSync(bin, ["-version"], { stdio: "ignore" }).status === 0);
+if (!magick) {
+  console.error("✘ ImageMagick not found (need `magick` or `convert` on PATH)");
+  process.exit(1);
 }
-console.log(`icons -> ${outDir}`);
+if (!existsSync(MASTER)) {
+  console.error(`✘ logo master missing: ${MASTER}`);
+  process.exit(1);
+}
 
-// Store-listing logo only (not a manifest icon, so it is not shipped in the
-// package). Chrome Web Store and Edge Add-ons recommend a 300x300 1:1 logo.
-mkdirSync(storeDir, { recursive: true });
-writeFileSync(resolve(storeDir, "store-logo-300.png"), makeIcon(300));
-console.log(`store logo -> ${storeDir}/store-logo-300.png`);
+mkdirSync(ICONS, { recursive: true });
+const targets = [
+  ...[16, 32, 48, 128].map(size => ({ out: resolve(ICONS, `icon-${size}.png`), size })),
+  ...[256, 300, 512, 1024].map(size => ({ out: resolve(LOGOS, `logo-${size}.png`), size })),
+];
 
-function makeIcon(size) {
-  const pixels = new Uint8Array(size * size * 4);
-  const scale = size / 128;
-  const set = (x, y, rgba) => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    const i = (y * size + x) * 4;
-    pixels[i] = rgba[0];
-    pixels[i + 1] = rgba[1];
-    pixels[i + 2] = rgba[2];
-    pixels[i + 3] = rgba[3];
-  };
-  const rect = (x, y, w, h, rgba) => {
-    for (let yy = Math.round(y * scale); yy < Math.round((y + h) * scale); yy++) {
-      for (let xx = Math.round(x * scale); xx < Math.round((x + w) * scale); xx++) set(xx, yy, rgba);
-    }
-  };
-  const poly = (points, rgba) => {
-    const scaled = points.map(([x, y]) => [x * scale, y * scale]);
-    const minY = Math.floor(Math.min(...scaled.map(p => p[1])));
-    const maxY = Math.ceil(Math.max(...scaled.map(p => p[1])));
-    for (let y = minY; y <= maxY; y++) {
-      const hits = [];
-      for (let i = 0, j = scaled.length - 1; i < scaled.length; j = i++) {
-        const [xi, yi] = scaled[i];
-        const [xj, yj] = scaled[j];
-        if ((yi > y) !== (yj > y)) hits.push(((xj - xi) * (y - yi)) / (yj - yi) + xi);
-      }
-      hits.sort((a, b) => a - b);
-      for (let h = 0; h < hits.length; h += 2) {
-        for (let x = Math.ceil(hits[h]); x <= Math.floor(hits[h + 1]); x++) set(x, y, rgba);
-      }
-    }
-  };
-
-  const bg = [17, 44, 62, 255];
-  const panel = [34, 111, 118, 255];
-  const play = [255, 205, 86, 255];
-  const white = [245, 248, 250, 255];
-
-  rect(0, 0, 128, 128, bg);
-  rect(18, 24, 92, 58, panel);
-  rect(18, 80, 92, 8, [12, 26, 38, 255]);
-  poly([[52, 38], [52, 68], [78, 53]], play);
-  rect(59, 80, 10, 26, white);
-  poly([[47, 99], [81, 99], [64, 116]], white);
-
-  const scanlines = [0, 0, 0, 30];
-  for (let y = 8; y < 128; y += 12) rect(0, y, 128, 2, scanlines);
-
-  const rows = [];
-  for (let y = 0; y < size; y++) {
-    rows.push(Buffer.from([0]));
-    rows.push(Buffer.from(pixels.subarray(y * size * 4, (y + 1) * size * 4)));
+for (const t of targets) {
+  const r = spawnSync(magick, [
+    "-size", `${t.size}x${t.size}`, `xc:${NAVY}`,
+    MASTER, "-filter", "Lanczos", "-resize", `${t.size}x${t.size}`, "-gravity", "center", "-composite",
+    `PNG32:${t.out}`,
+  ], { stdio: "inherit" });
+  if (r.status !== 0) {
+    console.error(`✘ failed to build ${t.out}`);
+    process.exit(r.status ?? 1);
   }
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk("IHDR", Buffer.concat([
-      u32(size),
-      u32(size),
-      Buffer.from([8, 6, 0, 0, 0]),
-    ])),
-    chunk("IDAT", deflateSync(Buffer.concat(rows))),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
-}
-
-function chunk(type, data) {
-  const typeBuffer = Buffer.from(type, "ascii");
-  return Buffer.concat([
-    u32(data.length),
-    typeBuffer,
-    data,
-    u32(crc32(Buffer.concat([typeBuffer, data]))),
-  ]);
-}
-
-function u32(value) {
-  const b = Buffer.alloc(4);
-  b.writeUInt32BE(value >>> 0);
-  return b;
-}
-
-function crc32(buffer) {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return (crc ^ 0xffffffff) >>> 0;
+  console.log(`✓ ${t.out} (${t.size}x${t.size})`);
 }

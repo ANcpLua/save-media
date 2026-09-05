@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
- * Derive store-listing image assets from the REAL designed logo
- * (public/icons/icon-128.png), not from generate-icons.mjs — that script draws
- * a procedural placeholder, which is a different image. Store uploaders also
- * reject PNGs with an alpha channel, so every output is flattened onto the
- * brand navy and exported as 24-bit RGB (no alpha).
+ * Derive store-listing image assets from the designed logo
+ * (public/icons/icon-128.png, produced by generate-icons.mjs from the logo
+ * master). Store uploaders reject PNGs with an alpha channel, so every output
+ * is flattened onto the brand navy and exported as 24-bit RGB (no alpha).
  *
  * Outputs (store-assets/):
  *   store-logo-300.png        Edge logo (300x300, RGB)

@@ -20,6 +20,7 @@ From the **second** release onward, both stores are fully scriptable with
 - Chrome: `packages/extension/savemedia-chrome-0.0.5.zip`
 - Edge:   `packages/extension/savemedia-edge-0.0.5.zip` (byte-identical to Chrome — Edge ships the Chromium build verbatim)
 - Store logo: `packages/extension/store-assets/store-logo-300.png` (300×300, 1:1)
+- Logo pipeline: the master is `packages/extension/store-assets/logo/logo-1024-transparent.png`. `pnpm --filter @savemedia/extension icons` derives the manifest icons and logo sizes from it, `pnpm --filter @savemedia/extension store:assets` flattens the store files. Never edit the PNGs by hand.
 - Screenshots: `packages/extension/store-assets/screenshots/01-direct-video.png`, `02-hls-vod.png`, `03-refusal-safety.png` (real popup render, regenerate with `pnpm --filter @savemedia/extension screenshots`)
 - Optional promo tile: `packages/extension/store-assets/promo-440x280.png`
 - Privacy policy: `docs/privacy-policy.md` (host at a public URL; both stores require a link)
