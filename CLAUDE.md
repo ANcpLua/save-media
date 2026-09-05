@@ -87,3 +87,11 @@ commit, tag `vX.Y.Z`, push the tag. `.github/workflows/release.yml` publishes Ed
 and Firefox and creates the GitHub release. Store secrets live in repo Actions secrets.
 The nativeMessaging permission is new, so expect a store re-review; the justification text
 belongs in `docs/privacy-policy.md`.
+
+## History pointers
+
+- Archive branch `native-host-v1.1.0` holds the March 2026 plain-JS variant of the local
+  downloader (from `~/Developer/cv/save-media-v1.1.0.zip`).
+- Boundary rules artifact: https://claude.ai/code/artifact/497bcfea-3a88-43db-8de6-094e9178b3d7
+- The Alt+S fallback toast lives in `content/bridge.ts`; delegation goes only through the
+  `DELEGABLE_ERROR_CODES` allowlist.
