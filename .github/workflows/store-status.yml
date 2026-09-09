@@ -3,6 +3,11 @@ name: store-status
 on:
   workflow_dispatch:
     inputs:
+      store:
+        description: Which store to query (read-only, publishes nothing)
+        type: choice
+        default: chrome
+        options: [chrome, firefox]
       item:
         description: Chrome Web Store item id (blank = this extension)
         type: string
@@ -12,7 +17,7 @@ permissions: {}
 
 jobs:
   status:
-    name: Fetch Chrome Web Store item status
+    name: Fetch store item status
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -23,7 +28,8 @@ jobs:
         with:
           node-version: 22.11.0
 
-      - name: Fetch status
+      - name: Chrome Web Store status
+        if: ${{ inputs.store == 'chrome' }}
         env:
           CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
@@ -36,3 +42,10 @@ jobs:
           else
             node scripts/publish-chrome.mjs status
           fi
+
+      - name: Firefox Add-ons status
+        if: ${{ inputs.store == 'firefox' }}
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: node scripts/publish-firefox.mjs status
