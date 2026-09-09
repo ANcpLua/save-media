@@ -4,6 +4,12 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      stores:
+        description: Which stores to publish to
+        type: choice
+        default: all
+        options: [all, edge, chrome, firefox]
 
 permissions:
   contents: write
@@ -27,14 +33,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: .
 
-      - name: Check tag matches package version
+      - name: Resolve version
+        id: v
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
           PKG=$(node -p "require('./package.json').version")
-          if [ "$TAG" != "$PKG" ]; then
-            echo "::error::tag v$TAG does not match packages/extension version $PKG"
-            exit 1
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$TAG" != "$PKG" ]; then
+              echo "::error::tag v$TAG does not match packages/extension version $PKG"
+              exit 1
+            fi
           fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+          echo "notes=v$PKG automated release" >> "$GITHUB_OUTPUT"
 
       - run: pnpm --filter @savemedia/core build
         working-directory: .
@@ -42,14 +53,15 @@ jobs:
         run: pnpm zip
 
       - name: Publish to Edge Add-ons
+        if: ${{ contains(fromJSON('["all","edge"]'), inputs.stores || 'all') }}
         env:
           EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
           EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
           EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-        run: node scripts/publish-edge.mjs release --notes "${GITHUB_REF_NAME} automated release"
+        run: node scripts/publish-edge.mjs release --notes "${{ steps.v.outputs.notes }}"
 
       - name: Publish to Chrome Web Store
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && contains(fromJSON('["all","chrome"]'), inputs.stores || 'all') }}
         env:
           CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
@@ -59,18 +71,17 @@ jobs:
         run: node scripts/publish-chrome.mjs release
 
       - name: Publish to Firefox Add-ons
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && contains(fromJSON('["all","firefox"]'), inputs.stores || 'all') }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           node scripts/publish-firefox.mjs release \
-            --notes "${GITHUB_REF_NAME} automated release" \
-            --source "savemedia-source-${VERSION}.zip"
+            --notes "${{ steps.v.outputs.notes }}" \
+            --source "savemedia-source-${{ steps.v.outputs.version }}.zip"
 
       - name: Create GitHub release with store zips
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.ref_type == 'tag' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
