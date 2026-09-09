@@ -200,7 +200,7 @@ function installHotkey(): void {
 
 function isDownloadBestHotkey(event: KeyboardEvent): boolean {
   if (event.repeat || event.metaKey || event.shiftKey) return false;
-  const sKey = event.code === "KeyS" || event.key.toLowerCase() === "s";
+  const sKey = event.code === "KeyS" || (typeof event.key === "string" && event.key.toLowerCase() === "s");
   if (!sKey) return false;
   return (event.altKey && !event.ctrlKey) || (event.ctrlKey && !event.altKey);
 }
