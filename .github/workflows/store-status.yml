@@ -1,0 +1,38 @@
+name: store-status
+
+on:
+  workflow_dispatch:
+    inputs:
+      item:
+        description: Chrome Web Store item id (blank = this extension)
+        type: string
+        required: false
+
+permissions: {}
+
+jobs:
+  status:
+    name: Fetch Chrome Web Store item status
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/extension
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.11.0
+
+      - name: Fetch status
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CWS_ITEM_ID: ${{ secrets.CWS_ITEM_ID }}
+        run: |
+          if [ -n "${{ inputs.item }}" ]; then
+            node scripts/publish-chrome.mjs status --item "${{ inputs.item }}"
+          else
+            node scripts/publish-chrome.mjs status
+          fi
