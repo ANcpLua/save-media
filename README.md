@@ -14,7 +14,9 @@ Video downloader for verified direct files and plain HLS streams. It saves brows
 
 Full support contract: [`docs/design.md`](docs/design.md) · Privacy policy: [`docs/privacy-policy.md`](docs/privacy-policy.md) · Engineering boundary rules: [`docs/boundary-rules.md`](docs/boundary-rules.md)
 
-## Optional local downloader
+## Optional local downloader (not in a released build yet)
+
+This feature is on `main` but is not part of v0.0.7, the version published in the stores. If you installed savemedia from a store, you do not have it yet.
 
 For pages the in-browser engine cannot save (DASH, browser memory limits, unusual containers), savemedia can hand the page address to yt-dlp and ffmpeg that you install yourself. It is off by default, asks for the `nativeMessaging` permission only when you switch it on, and refuses protected media exactly like the browser engine does. Setup and the wire protocol are in [`packages/native-host/README.md`](packages/native-host/README.md).
 
