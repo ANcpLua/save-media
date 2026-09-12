@@ -32,7 +32,7 @@ const SCENES: readonly Scene[] = [
   {
     id: "02-stream-support",
     caption: "Knows what it can finish",
-    sub: "Direct MP4/WebM/MKV and plain HLS VOD — assembled locally, no remote server.",
+    sub: "Direct MP4, WebM, MKV and plain HLS VOD, assembled locally, no remote server.",
     descriptors: [
       hlsDescriptor({ title: "documentary-1080p.m3u8" }),
     ],
