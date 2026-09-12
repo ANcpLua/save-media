@@ -18,9 +18,10 @@ Two traps this text must keep avoiding:
 
 Both dashboards take this text by hand: neither store has an API for listing
 text. Chrome Web Store: developer dashboard, Store listing tab. Edge: Partner
-Center, Store listings, English. Applied to Edge on 2026-09-12 (in review);
-the Chrome dashboard still carries the old text until someone signed in
-pastes this one.
+Center, Store listings, English. Applied to both on 2026-09-12; both
+submissions are in review. The same day the single purpose statement and the
+privacy policy URL in both dashboards were corrected as well (the URL had a
+typo in the account name and was dead).
 
 savemedia saves browser-visible video when it can verify and finish one
 playable file.
