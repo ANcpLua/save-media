@@ -1,6 +1,5 @@
 # Node
 node_modules/
-.pnpm-store/
 dist/
 dist-build/
 dist-chrome/
@@ -49,3 +48,6 @@ packages/extension/savemedia-firefox-*/
 *.crx
 __pycache__/
 *.pyc
+
+# Playwright MCP session artifacts
+.playwright-mcp/

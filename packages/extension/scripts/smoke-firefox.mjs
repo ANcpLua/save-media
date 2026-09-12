@@ -30,7 +30,7 @@ if (!ffprobe) {
 }
 
 if (!existsSync(resolve(dist, "manifest.json")) || !existsSync(resolve(dist, "background.js"))) {
-  console.error("Firefox smoke not run: dist-firefox is missing. Run `pnpm --filter @savemedia/extension build:firefox` first.");
+  console.error("Firefox smoke not run: dist-firefox is missing. Run `bun run --filter @savemedia/extension build:firefox` first.");
   process.exit(2);
 }
 

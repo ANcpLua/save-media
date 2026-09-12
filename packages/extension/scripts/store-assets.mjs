@@ -9,7 +9,7 @@
  *   store-logo-300.png        Edge logo (300x300, RGB)
  *   store-icon-128-chrome.png Chrome Web Store icon (128x128, RGB)
  *
- * Requires ImageMagick (`magick`). Run: pnpm --filter @savemedia/extension store:assets
+ * Requires ImageMagick (`magick`). Run: bun run --filter @savemedia/extension store:assets
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";

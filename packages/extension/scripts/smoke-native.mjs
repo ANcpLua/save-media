@@ -22,7 +22,7 @@ const hostPy = resolve(root, "../native-host/host.py");
 const ffprobe = ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"].find(existsSync) ?? "ffprobe";
 
 if (!existsSync(join(dist, "manifest.json"))) {
-  console.error("Native smoke not run: dist-chrome missing. Run `pnpm build:chrome` first.");
+  console.error("Native smoke not run: dist-chrome missing. Run `bun run build:chrome` first.");
   process.exit(2);
 }
 

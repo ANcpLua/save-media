@@ -7,8 +7,8 @@
  * Outputs (public/icons/): icon-16.png, icon-32.png, icon-48.png, icon-128.png
  * Also refreshes store-assets/logo/logo-{256,300,512,1024}.png from the same master.
  *
- * Requires ImageMagick (`magick`). Run: pnpm --filter @savemedia/extension icons
- * Then run `pnpm --filter @savemedia/extension store:assets` for the store files.
+ * Requires ImageMagick (`magick`). Run: bun run --filter @savemedia/extension icons
+ * Then run `bun run --filter @savemedia/extension store:assets` for the store files.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";

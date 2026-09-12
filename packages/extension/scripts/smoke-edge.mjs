@@ -21,7 +21,7 @@ if (!edgeExecutable) {
   console.error([
     "Edge smoke not run: Microsoft Edge executable not found.",
     "Install Microsoft Edge or set SAVEMEDIA_EDGE_EXECUTABLE to the Edge binary, then run:",
-    "  pnpm --filter @savemedia/extension smoke:edge",
+    "  bun run --filter @savemedia/extension smoke:edge",
     "On macOS the expected binary is:",
     "  /Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   ].join("\n"));
@@ -29,7 +29,7 @@ if (!edgeExecutable) {
 }
 
 if (!existsSync(resolve(dist, "manifest.json")) || !existsSync(resolve(dist, "background.js"))) {
-  console.error("Edge smoke not run: dist-chrome is missing. Run `pnpm --filter @savemedia/extension build:chrome` first.");
+  console.error("Edge smoke not run: dist-chrome is missing. Run `bun run --filter @savemedia/extension build:chrome` first.");
   process.exit(2);
 }
 if (!ffprobe) {

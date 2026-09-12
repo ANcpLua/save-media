@@ -20,14 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      # bun installs the workspace; Node still runs Vite, Vitest and Playwright.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          version: 9.12.0
+          bun-version-file: package.json
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22.11.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          node-version-file: .nvmrc
+      - run: bun install --frozen-lockfile
 
       # Every version field in store.config.json's versionFiles must agree,
       # and on a tag push the tag must agree with them.
@@ -35,28 +35,28 @@ jobs:
         id: v
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
-            VERSION=$(pnpm exec store-publish version --tag "$GITHUB_REF_NAME")
+            VERSION=$(bunx store-publish version --tag "$GITHUB_REF_NAME")
           else
-            VERSION=$(pnpm exec store-publish version)
+            VERSION=$(bunx store-publish version)
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "notes=v$VERSION automated release" >> "$GITHUB_OUTPUT"
 
       # The listing text and the README store table are release artifacts too:
       # a forbidden word or a stale id must stop the release before any upload.
-      - run: pnpm exec store-publish lint
-      - run: pnpm exec store-publish readme --check
+      - run: bunx store-publish lint
+      - run: bunx store-publish readme --check
 
-      - run: pnpm --filter @savemedia/core build
+      - run: bun run --filter @savemedia/core build
       - name: Build and pack all targets
-        run: pnpm --filter @savemedia/extension zip
+        run: bun run --filter @savemedia/extension zip
 
       - name: Publish to Edge Add-ons
         if: ${{ contains(fromJSON('["all","edge"]'), inputs.stores || 'all') }}
         env:
           EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
           EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-        run: pnpm exec store-publish edge release --notes "${{ steps.v.outputs.notes }}"
+        run: bunx store-publish edge release --notes "${{ steps.v.outputs.notes }}"
 
       - name: Publish to Chrome Web Store
         if: ${{ !cancelled() && contains(fromJSON('["all","chrome"]'), inputs.stores || 'all') }}
@@ -65,14 +65,14 @@ jobs:
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
           CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
-        run: pnpm exec store-publish chrome release
+        run: bunx store-publish chrome release
 
       - name: Publish to Firefox Add-ons
         if: ${{ !cancelled() && contains(fromJSON('["all","firefox"]'), inputs.stores || 'all') }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-        run: pnpm exec store-publish firefox release --notes "${{ steps.v.outputs.notes }}" --source
+        run: bunx store-publish firefox release --notes "${{ steps.v.outputs.notes }}" --source
 
       - name: Create GitHub release with store zips
         if: ${{ !cancelled() && github.ref_type == 'tag' }}

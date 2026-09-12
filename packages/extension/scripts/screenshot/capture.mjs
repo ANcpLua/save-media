@@ -25,8 +25,8 @@ const SCENES = ["01-direct-video", "02-stream-support", "03-refusal-safety"];
 const manifestVersion = JSON.parse(await readFile(resolve(ext, "manifest.json"), "utf8")).version;
 
 const build = spawnSync(
-  "pnpm",
-  ["exec", "vite", "build", "--config", resolve(here, "vite.config.ts")],
+  "bunx",
+  ["vite", "build", "--config", resolve(here, "vite.config.ts")],
   { cwd: ext, stdio: "inherit" },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);

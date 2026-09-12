@@ -89,7 +89,7 @@ async function closeExtensionRuntime(runtime: ExtensionRuntime | undefined): Pro
 function readBuiltManifest(): ExtensionManifest {
   const manifestPath = resolve(dist, "manifest.json");
   if (!existsSync(manifestPath)) {
-    throw new Error(`Chrome extension build missing at ${manifestPath}. Run \`pnpm --filter @savemedia/extension build:chrome\` before Playwright E2E.`);
+    throw new Error(`Chrome extension build missing at ${manifestPath}. Run \`bun run --filter @savemedia/extension build:chrome\` before Playwright E2E.`);
   }
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExtensionManifest;
   if (manifest.manifest_version !== 3) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Pack chrome + firefox + edge release zips from the already-built dist
- * directories. Run `pnpm build:all` first so dist-chrome and dist-firefox
+ * directories. Run `bun run build:all` first so dist-chrome and dist-firefox
  * exist; this script does not invoke vite itself so CI can decouple the
  * pack step from the build step and parallelise.
  */
@@ -25,7 +25,7 @@ const targets = [
 for (const t of targets) {
   const src = resolve(root, t.dir);
   if (!existsSync(src)) {
-    console.error(`✘ ${t.dir} missing — run pnpm build:all first`);
+    console.error(`✘ ${t.dir} missing — run bun run build:all first`);
     process.exit(1);
   }
   const out = resolve(root, `savemedia-${t.name}-${version}.zip`);

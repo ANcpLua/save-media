@@ -2,13 +2,14 @@
 import { spawnSync } from "node:child_process";
 
 const steps = [
-  ["pnpm", ["--filter", "@savemedia/core", "build"]],
-  ["pnpm", ["-r", "typecheck"]],
-  ["pnpm", ["-r", "test"]],
-  ["pnpm", ["-r", "build"]],
-  ["pnpm", ["--filter", "@savemedia/extension", "build:firefox"]],
-  ["pnpm", ["--filter", "@savemedia/extension", "screenshots"]],
-  ["pnpm", ["--filter", "@savemedia/extension", "test:e2e"]],
+  ["bun", ["run", "typecheck"]],
+  ["bun", ["run", "test"]],
+  ["bun", ["run", "build:all"]],
+  ["bunx", ["store-publish", "lint"]],
+  ["bunx", ["store-publish", "readme", "--check"]],
+  ["bunx", ["store-publish", "version"]],
+  ["bun", ["run", "--filter", "@savemedia/extension", "screenshots"]],
+  ["bun", ["run", "--filter", "@savemedia/extension", "test:e2e"]],
 ];
 
 for (const [cmd, args] of steps) {

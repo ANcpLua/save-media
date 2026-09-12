@@ -9,7 +9,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const buildDir = resolve(root, "dist-build");
 const out = resolve(root, "dist-chrome");
 
-const vite = spawnSync("pnpm", ["exec", "vite", "build"], {
+const vite = spawnSync("bunx", ["vite", "build"], {
   cwd: root,
   env: { ...process.env, SAVEMEDIA_BROWSER: "chromium" },
   stdio: "inherit",

@@ -9,7 +9,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const buildDir = resolve(root, "dist-firefox-build");
 const out = resolve(root, "dist-firefox");
 
-const vite = spawnSync("pnpm", ["exec", "vite", "build"], {
+const vite = spawnSync("bunx", ["vite", "build"], {
   cwd: root,
   env: { ...process.env, SAVEMEDIA_BROWSER: "firefox" },
   stdio: "inherit",

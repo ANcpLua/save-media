@@ -22,28 +22,32 @@
     "hls"
   ],
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "node": ">=22.11.0",
-    "pnpm": ">=9.12.0"
+    "bun": ">=1.4.0"
   },
+  "packageManager": "bun@1.4.2",
   "scripts": {
-    "build": "pnpm -r build",
-    "build:all": "pnpm -r build && pnpm --filter @savemedia/extension build:firefox",
-    "test": "pnpm -r test",
-    "test:e2e": "pnpm --filter @savemedia/extension test:e2e",
-    "test:e2e:chromium": "pnpm --filter @savemedia/extension test:e2e:chromium",
-    "test:e2e:firefox-fixtures": "pnpm --filter @savemedia/extension test:e2e:firefox-fixtures",
-    "test:e2e:headed": "pnpm --filter @savemedia/extension test:e2e:headed",
-    "lint": "pnpm --filter @savemedia/core build && pnpm -r lint",
-    "typecheck": "pnpm --filter @savemedia/core build && pnpm -r typecheck",
-    "report:e2e": "pnpm --filter @savemedia/extension report:e2e",
-    "smoke:edge": "pnpm --filter @savemedia/extension smoke:edge",
-    "smoke:firefox": "pnpm --filter @savemedia/extension smoke:firefox",
+    "build": "bun run --filter @savemedia/core build && bun run --filter @savemedia/extension build",
+    "build:all": "bun run build && bun run --filter @savemedia/extension build:firefox",
+    "test": "bun run --filter './packages/*' test",
+    "test:e2e": "bun run --filter @savemedia/extension test:e2e",
+    "test:e2e:chromium": "bun run --filter @savemedia/extension test:e2e:chromium",
+    "test:e2e:firefox-fixtures": "bun run --filter @savemedia/extension test:e2e:firefox-fixtures",
+    "test:e2e:headed": "bun run --filter @savemedia/extension test:e2e:headed",
+    "lint": "bun run --filter @savemedia/core build && bun run --filter './packages/*' lint",
+    "typecheck": "bun run --filter @savemedia/core build && bun run --filter './packages/*' typecheck",
+    "report:e2e": "bun run --filter @savemedia/extension report:e2e",
+    "smoke:edge": "bun run --filter @savemedia/extension smoke:edge",
+    "smoke:firefox": "bun run --filter @savemedia/extension smoke:firefox",
+    "smoke:native": "bun run --filter @savemedia/extension smoke:native",
     "verify": "node scripts/verify.mjs"
   },
   "devDependencies": {
     "@ancplua/store-publish": "github:ANcpLua/store-publish#v1.1.0",
     "typescript": "5.9.3"
-  },
-  "packageManager": "pnpm@9.12.0"
+  }
 }

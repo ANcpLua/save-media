@@ -63,10 +63,10 @@ with the other extension repository. Every store-specific value comes from
 ```sh
 # 1. bump the version in packages/extension/manifest.json and packages/extension/package.json
 # 2. check everything locally
-pnpm verify
-pnpm exec store-publish lint            # listing text: no forbidden words, no comma chains
-pnpm exec store-publish readme --check  # README store table matches store.config.json
-pnpm exec store-publish version         # manifest.json and package.json carry the same version
+bun run verify
+bunx store-publish lint            # listing text: no forbidden words, no comma chains
+bunx store-publish readme --check  # README store table matches store.config.json
+bunx store-publish version         # manifest.json and package.json carry the same version
 # 3. commit, tag, push the tag
 git commit -am "Release 0.0.8"
 git tag v0.0.8
@@ -93,7 +93,7 @@ The AMO description is written from there by the workflow below. Chrome and
 Edge have no API for listing text; paste the "Chrome and Edge description"
 section into the two dashboards when it changes. Screenshots and the store
 icon are under `packages/extension/store-assets/`, regenerated with
-`pnpm --filter @savemedia/extension screenshots` and `store:assets`.
+`bun run --filter @savemedia/extension screenshots` and `store:assets`.
 
 Store review traps, each one has already cost a rejection or a takedown:
 
@@ -122,12 +122,15 @@ gh run watch -R ANcpLua/save-media
 ```
 
 Locally, with the credentials in the environment, the same commands are
-`pnpm exec store-publish chrome status`, `edge status`, `firefox status` and
+`bunx store-publish chrome status`, `edge status`, `firefox status` and
 `amo-listing diff`.
 
 ## Development
 
-pnpm workspace, Node 22.11 or newer.
+Bun workspace. Bun (`packageManager` in `package.json`, 1.4 or newer) installs
+and runs scripts; Node (`.nvmrc`) still executes Vite, Vitest and Playwright,
+because MV3 needs Vite's output and the popup tests need jsdom. Bun replaces
+the package manager only, not the bundler and not the unit test runner.
 
 - `packages/core`: media classification, HLS and DASH parsing, verification,
   dispatch. Pure TypeScript, no browser APIs. Must be built before the
@@ -141,20 +144,24 @@ pnpm workspace, Node 22.11 or newer.
   user's own yt-dlp and ffmpeg. Protocol in its README.
 
 ```sh
-pnpm install
-pnpm build            # core + chrome build
-pnpm build:all        # plus firefox
-pnpm test             # vitest in every package
-pnpm typecheck        # builds core first
-pnpm test:e2e         # playwright, chromium
-pnpm --filter @savemedia/extension dev            # vite watch, load dist-chrome unpacked
-pnpm --filter @savemedia/extension smoke:native   # local downloader end to end
+bun install
+bun run build            # core + chrome build
+bun run build:all        # plus firefox
+bun run test             # vitest in every package, python tests in the native host
+bun run typecheck        # builds core first
+bun run test:e2e         # playwright, chromium
+bun run --filter @savemedia/extension dev            # vite watch, load dist-chrome unpacked
+bun run --filter @savemedia/extension smoke:native   # local downloader end to end
 python3 packages/native-host/test_host.py
-pnpm verify           # full pre-release check
+bun run verify           # full pre-release check
 ```
 
-Unit tests run on Vitest (the popup tests need jsdom and testing-library).
-End-to-end tests run on Playwright. Google Chrome 137 and newer ignores
+Toolchain decision, shared with the other extension repository so a third
+extension can copy either as a template: bun is the package manager, Vitest
+is the unit test runner (invoked through bun, running on Node), Playwright is
+the end-to-end runner. `bun test` was not adopted: it is a third runner with
+its own mock and snapshot API, and the popup tests depend on jsdom and
+testing-library, which Vitest handles and `bun test` does not. Google Chrome 137 and newer ignores
 `--load-extension`, so the e2e suite uses Playwright's Chromium; with a custom
 `--user-data-dir` the native host manifest must be in
 `<user-data-dir>/NativeMessagingHosts`.
@@ -202,7 +209,7 @@ The feature is on `main` and is not part of 0.0.7, the last version released
 to the stores. It ships in the next release after the checklist below is
 green:
 
-- `pnpm --filter @savemedia/extension smoke:native` passes: Playwright
+- `bun run --filter @savemedia/extension smoke:native` passes: Playwright
   Chromium plus the real host and the user's own yt-dlp and ffmpeg. Verified
   on 2026-09-12 (yt-dlp 2026.08.19, ffmpeg 9.0.1, saved file checked with
   ffprobe).
