@@ -14,9 +14,10 @@ downloader. The privacy policy is [`docs/privacy-policy.md`](docs/privacy-policy
 
 ## Stores
 
-Version in the stores: 0.0.7 on all three. The table is rendered from
-[`store.config.json`](store.config.json) by `store-publish readme --write`;
-CI fails when the two disagree.
+The table is rendered from [`store.config.json`](store.config.json) by
+`store-publish readme --write`; CI fails when the two disagree. Which version
+each store serves is a question for `store-status.yml` below, not for this
+file.
 
 <!-- store-config:start -->
 | Store | Listing | Dashboard | API docs | Credentials (GitHub Actions secrets) | Notes |
@@ -65,6 +66,7 @@ with the other extension repository. Every store-specific value comes from
 pnpm verify
 pnpm exec store-publish lint            # listing text: no forbidden words, no comma chains
 pnpm exec store-publish readme --check  # README store table matches store.config.json
+pnpm exec store-publish version         # manifest.json and package.json carry the same version
 # 3. commit, tag, push the tag
 git commit -am "Release 0.0.8"
 git tag v0.0.8
@@ -196,14 +198,18 @@ that the user installs themselves. It is off by default, asks for the
 exactly like the browser engine does. Setup and the wire protocol are in
 [`packages/native-host/README.md`](packages/native-host/README.md).
 
-The feature is on `main` and is not part of 0.0.7, the version in the stores.
-It ships in the next release after the checklist below is green:
+The feature is on `main` and is not part of 0.0.7, the last version released
+to the stores. It ships in the next release after the checklist below is
+green:
 
-- `pnpm --filter @savemedia/extension smoke:native` passes (Playwright Chromium
-  plus the real host and the user's yt-dlp).
-- Manual run in Chrome, Edge and Firefox: switch Local downloader on, run the
-  setup command the popup shows, save a DASH page, confirm the popup refuses
-  DRM and the Alt+S fallback toast appears.
+- `pnpm --filter @savemedia/extension smoke:native` passes: Playwright
+  Chromium plus the real host and the user's own yt-dlp and ffmpeg. Verified
+  on 2026-09-12 (yt-dlp 2026.08.19, ffmpeg 9.0.1, saved file checked with
+  ffprobe).
+- Manual run in Chrome, Edge and Firefox with the built extension: switch
+  Local downloader on, run the setup command the popup shows, save a DASH
+  page, confirm the popup refuses DRM and the Alt+S fallback toast appears.
+  Still open.
 - The `nativeMessaging` permission is new for the stores, so expect a
   re-review. The justification text is in `docs/privacy-policy.md`.
 

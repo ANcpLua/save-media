@@ -29,19 +29,18 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # Every version field in store.config.json's versionFiles must agree,
+      # and on a tag push the tag must agree with them.
       - name: Resolve version
         id: v
         run: |
-          PKG=$(node -p "require('./packages/extension/manifest.json').version")
           if [ "$GITHUB_REF_TYPE" = tag ]; then
-            TAG="${GITHUB_REF_NAME#v}"
-            if [ "$TAG" != "$PKG" ]; then
-              echo "::error::tag v$TAG does not match packages/extension/manifest.json version $PKG"
-              exit 1
-            fi
+            VERSION=$(pnpm exec store-publish version --tag "$GITHUB_REF_NAME")
+          else
+            VERSION=$(pnpm exec store-publish version)
           fi
-          echo "version=$PKG" >> "$GITHUB_OUTPUT"
-          echo "notes=v$PKG automated release" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "notes=v$VERSION automated release" >> "$GITHUB_OUTPUT"
 
       # The listing text and the README store table are release artifacts too:
       # a forbidden word or a stale id must stop the release before any upload.

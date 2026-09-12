@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@ancplua/store-publish':
-        specifier: github:ANcpLua/store-publish#v1.0.1
-        version: https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923
+        specifier: github:ANcpLua/store-publish#v1.1.0
+        version: https://codeload.github.com/ANcpLua/store-publish/tar.gz/f1b97787f0d20055767b18f9bfc62cacddfaba6d
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -115,9 +115,9 @@ packages:
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
 
-  '@ancplua/store-publish@https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923':
-    resolution: {tarball: https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923}
-    version: 1.0.1
+  '@ancplua/store-publish@https://codeload.github.com/ANcpLua/store-publish/tar.gz/f1b97787f0d20055767b18f9bfc62cacddfaba6d':
+    resolution: {tarball: https://codeload.github.com/ANcpLua/store-publish/tar.gz/f1b97787f0d20055767b18f9bfc62cacddfaba6d}
+    version: 1.1.0
     engines: {node: '>=22.11.0'}
     hasBin: true
 
@@ -2714,7 +2714,7 @@ snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
 
-  '@ancplua/store-publish@https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923': {}
+  '@ancplua/store-publish@https://codeload.github.com/ANcpLua/store-publish/tar.gz/f1b97787f0d20055767b18f9bfc62cacddfaba6d': {}
 
   '@asamuzakjp/css-color@3.2.0':
     dependencies:
