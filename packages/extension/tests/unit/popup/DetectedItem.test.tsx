@@ -43,7 +43,7 @@ describe("DetectedItem — direct stream card", () => {
     fireEvent.click(dl);
     expect(globalThis.chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
     const arg = vi.mocked(globalThis.chrome.runtime.sendMessage).mock.calls[0]?.[0] as unknown as { choice: { filename: string } };
-    expect(arg.choice.filename).toBe("My Clip Bad_ Name.mp4");
+    expect(arg.choice.filename).toBe("My Clip Bad!! Name.mp4");
   });
 });
 

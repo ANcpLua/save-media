@@ -15,7 +15,11 @@ describe("sanitizeFilename", () => {
   });
 
   it("collapses consecutive replacement underscores", () => {
-    expect(sanitizeFilename("emoji 😀 here")).toBe("emoji _ here");
+    expect(sanitizeFilename("a<<>>b")).toBe("a_b");
+  });
+
+  it("keeps letters and digits of every script, and emoji", () => {
+    expect(sanitizeFilename("Café Überblick 東京 😀")).toBe("Café Überblick 東京 😀");
   });
 
   it("truncates at the default maxLength of 80", () => {
@@ -30,8 +34,15 @@ describe("sanitizeFilename", () => {
     expect(sanitizeFilename("filename...")).toBe("filename");
   });
 
-  it("returns a fallback when input cleans to empty", () => {
-    expect(sanitizeFilename("///")).toBe("video");
+  it("returns null when nothing with a letter or digit is left", () => {
+    expect(sanitizeFilename("///")).toBeNull();
+    expect(sanitizeFilename("???")).toBeNull();
+    expect(sanitizeFilename("_")).toBeNull();
+    expect(sanitizeFilename("- . -")).toBeNull();
+  });
+
+  it("strips trailing spaces together with trailing dots", () => {
+    expect(sanitizeFilename("name . . ")).toBe("name");
   });
 });
 
@@ -58,5 +69,15 @@ describe("suggestFilename", () => {
 
   it("strips path separators from titles before suffixing the container", () => {
     expect(suggestFilename({ title: "My/Clip", pageUrl: "https://x.com/" })).toBe("MyClip.mp4");
+  });
+
+  it("never produces an underscore-only name: a symbol-only title falls back to the page URL", () => {
+    expect(suggestFilename({ title: "???", pageUrl: "https://x.com/watch/lecture-3.html" })).toBe("lecture-3.mp4");
+    expect(suggestFilename({ title: "_", pageUrl: "https://video.example.com/" })).toBe("video.example.com.mp4");
+    expect(suggestFilename({ title: " ", pageUrl: "not-a-url" })).toBe("video.mp4");
+  });
+
+  it("keeps non-ASCII titles instead of replacing them with underscores", () => {
+    expect(suggestFilename({ title: "Vorlesung Übersicht", pageUrl: "https://x.com/" })).toBe("Vorlesung Übersicht.mp4");
   });
 });
