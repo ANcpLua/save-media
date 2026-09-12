@@ -21,8 +21,10 @@ text. Entered in both on 2026-09-12 together with the corrected single purpose
 statement and privacy policy URL (the URL had a typo in the account name).
 Applied with the dashboards, not with a script.
 
-savemedia saves browser-visible video when it can verify and finish one
-playable file.
+savemedia saves the video you are watching as an MP4, WebM or MKV file in
+your Downloads folder, when the browser already receives it unprotected. DRM,
+encrypted streams, live streams and anything behind a paywall or sign-in are
+refused, and it never leaves a half-downloaded file behind.
 
 Press Alt+S to save the best supported video on the current page, or open the
 popup to pick from everything detected. The popup shows for each item whether
@@ -32,9 +34,8 @@ Supported: direct MP4, WebM, and MKV files verified by headers or bytes; plain
 HLS VOD with MPEG-TS segments remuxed locally to MP4; clear HLS fMP4/CMAF
 streams assembled locally after MP4 box validation.
 
-Refused: DRM, encrypted HLS, DASH, live streams, and anything that is only
-reachable behind a paywall or a sign-in. savemedia saves what the browser has
-already received in the clear, and refuses rather than write a broken file.
+Not supported: encrypted HLS and DASH. When something cannot be saved, the
+popup says so instead of writing a broken file.
 
 Everything runs locally in the browser. No telemetry, ads, accounts, or
 developer-operated server.
@@ -45,15 +46,16 @@ Video downloader for verified direct files and plain HLS streams.
 
 ## AMO description
 
-savemedia saves browser-visible video when it can verify and finish one
-playable file.
+savemedia saves the video you are watching as an MP4, WebM or MKV file in
+your Downloads folder, when the browser already receives it unprotected. DRM,
+encrypted streams, live streams and anything behind a paywall or sign-in are
+refused, and it never leaves a half-downloaded file behind.
 
 Supported: direct MP4, WebM, and MKV files; plain HLS VOD with MPEG-TS
 segments; clear HLS fMP4/CMAF streams.
 
-Refused: DRM, encrypted HLS, DASH, live streams, and anything that is only
-reachable behind a paywall or a sign-in. savemedia saves what the browser has
-already received in the clear, and refuses rather than write a broken file.
+Not supported: encrypted HLS and DASH. When something cannot be saved, the
+popup says so instead of writing a broken file.
 
 Everything runs locally in the browser. No telemetry, ads, accounts, or
 developer-operated server.
