@@ -42,6 +42,7 @@
     "verify": "node scripts/verify.mjs"
   },
   "devDependencies": {
+    "@ancplua/store-publish": "github:ANcpLua/store-publish#v1.0.1",
     "typescript": "5.9.3"
   },
   "packageManager": "pnpm@9.12.0"

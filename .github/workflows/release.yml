@@ -18,9 +18,6 @@ jobs:
   release:
     name: Publish to Chrome, Edge, and Firefox stores
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/extension
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -31,34 +28,36 @@ jobs:
           node-version: 22.11.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-        working-directory: .
 
       - name: Resolve version
         id: v
         run: |
-          PKG=$(node -p "require('./package.json').version")
+          PKG=$(node -p "require('./packages/extension/manifest.json').version")
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             TAG="${GITHUB_REF_NAME#v}"
             if [ "$TAG" != "$PKG" ]; then
-              echo "::error::tag v$TAG does not match packages/extension version $PKG"
+              echo "::error::tag v$TAG does not match packages/extension/manifest.json version $PKG"
               exit 1
             fi
           fi
           echo "version=$PKG" >> "$GITHUB_OUTPUT"
           echo "notes=v$PKG automated release" >> "$GITHUB_OUTPUT"
 
+      # The listing text and the README store table are release artifacts too:
+      # a forbidden word or a stale id must stop the release before any upload.
+      - run: pnpm exec store-publish lint
+      - run: pnpm exec store-publish readme --check
+
       - run: pnpm --filter @savemedia/core build
-        working-directory: .
       - name: Build and pack all targets
-        run: pnpm zip
+        run: pnpm --filter @savemedia/extension zip
 
       - name: Publish to Edge Add-ons
         if: ${{ contains(fromJSON('["all","edge"]'), inputs.stores || 'all') }}
         env:
-          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
           EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
           EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-        run: node scripts/publish-edge.mjs release --notes "${{ steps.v.outputs.notes }}"
+        run: pnpm exec store-publish edge release --notes "${{ steps.v.outputs.notes }}"
 
       - name: Publish to Chrome Web Store
         if: ${{ !cancelled() && contains(fromJSON('["all","chrome"]'), inputs.stores || 'all') }}
@@ -67,21 +66,18 @@ jobs:
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
           CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
-          CWS_ITEM_ID: ${{ secrets.CWS_ITEM_ID }}
-        run: node scripts/publish-chrome.mjs release
+        run: pnpm exec store-publish chrome release
 
       - name: Publish to Firefox Add-ons
         if: ${{ !cancelled() && contains(fromJSON('["all","firefox"]'), inputs.stores || 'all') }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-        run: |
-          node scripts/publish-firefox.mjs release \
-            --notes "${{ steps.v.outputs.notes }}" \
-            --source "savemedia-source-${{ steps.v.outputs.version }}.zip"
+        run: pnpm exec store-publish firefox release --notes "${{ steps.v.outputs.notes }}" --source
 
       - name: Create GitHub release with store zips
         if: ${{ !cancelled() && github.ref_type == 'tag' }}
+        working-directory: packages/extension
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -1,0 +1,37 @@
+{
+  "name": "savemedia",
+  "zipPrefix": "savemedia",
+  "zipDir": "packages/extension",
+  "versionFrom": "packages/extension/manifest.json",
+  "listing": "packages/extension/store-assets/listing.md",
+  "readme": "README.md",
+  "stores": {
+    "chrome": {
+      "id": "negbodmpgjhkacmdkbfdpocjanaklifn",
+      "url": "https://chromewebstore.google.com/detail/savemedia/negbodmpgjhkacmdkbfdpocjanaklifn",
+      "dashboard": "https://chrome.google.com/webstore/devconsole",
+      "apiDocs": "https://developer.chrome.com/docs/webstore/using-api",
+      "env": ["CWS_CLIENT_ID", "CWS_CLIENT_SECRET", "CWS_REFRESH_TOKEN", "CWS_PUBLISHER_ID"],
+      "notes": "OAuth client and refresh token live in ~/.config/vitals (see keys.json)"
+    },
+    "edge": {
+      "id": "214e0682-5cde-4319-9608-ed25de6643b7",
+      "crxId": "mmkdllnjmommekajhadhokanofjlglhk",
+      "url": "https://microsoftedge.microsoft.com/addons/detail/savemedia/mmkdllnjmommekajhadhokanofjlglhk",
+      "dashboard": "https://partner.microsoft.com/en-us/dashboard/microsoftedge/214e0682-5cde-4319-9608-ed25de6643b7/packages/dashboard",
+      "apiDocs": "https://learn.microsoft.com/microsoft-edge/extensions/update/api/using-addons-api",
+      "env": ["EDGE_API_KEY", "EDGE_CLIENT_ID"],
+      "expires": "2026-11-21",
+      "notes": "Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then run ~/.config/vitals/set-store-secrets.sh"
+    },
+    "firefox": {
+      "id": "savemedia@ancplua.dev",
+      "slug": "save-media",
+      "url": "https://addons.mozilla.org/firefox/addon/save-media/",
+      "dashboard": "https://addons.mozilla.org/developers/addon/save-media/edit",
+      "apiDocs": "https://mozilla.github.io/addons-server/topics/api/addons.html",
+      "env": ["AMO_JWT_ISSUER", "AMO_JWT_SECRET"],
+      "notes": "One key pair per Mozilla account, shared with the other extension repo. Readable copy in the macOS keychain (see keys.json). Never regenerate"
+    }
+  }
+}

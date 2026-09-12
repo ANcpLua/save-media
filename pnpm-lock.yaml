@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@ancplua/store-publish':
+        specifier: github:ANcpLua/store-publish#v1.0.1
+        version: https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -108,6 +111,12 @@ packages:
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
+
+  '@ancplua/store-publish@https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923':
+    resolution: {tarball: https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923}
+    version: 1.0.1
+    engines: {node: '>=22.11.0'}
+    hasBin: true
 
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
@@ -743,6 +752,7 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1271,6 +1281,7 @@ packages:
   eslint@9.39.4:
     resolution: {integrity: sha512-XoMjdBOwe/esVgEvLmNsD3IRHkm7fbKIUGvrleloJXUZgDHig2IPWNniv+GwjyJXzuNqVjlr5+4yVUZjycJwfQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -2696,6 +2707,8 @@ snapshots:
   '@adobe/css-tools@4.5.0': {}
 
   '@alloc/quick-lru@5.2.0': {}
+
+  '@ancplua/store-publish@https://codeload.github.com/ANcpLua/store-publish/tar.gz/6af6779c4f714865ff67bfc0ae1250dbd013d923': {}
 
   '@asamuzakjp/css-color@3.2.0':
     dependencies:

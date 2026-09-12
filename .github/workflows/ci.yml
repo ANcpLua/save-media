@@ -25,6 +25,9 @@ jobs:
       - run: pnpm --filter @savemedia/core build
       - run: pnpm -r typecheck
       - run: pnpm -r test
+      # Store text and the README table are checked like code.
+      - run: pnpm exec store-publish lint
+      - run: pnpm exec store-publish readme --check
 
   build-extension:
     name: Build extension (${{ matrix.target }})

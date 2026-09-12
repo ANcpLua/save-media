@@ -4,29 +4,27 @@ on:
   workflow_dispatch:
     inputs:
       store:
-        description: Which store to query (read-only, publishes nothing)
+        description: What to query. Everything is read-only except amo-listing-apply, which writes the AMO description from the repo.
         type: choice
         default: chrome
-        options: [chrome, firefox, amo-listing-diff, amo-listing-apply]
-      item:
-        description: Chrome Web Store item id (blank = this extension)
-        type: string
-        required: false
+        options: [chrome, edge, firefox, amo-listing-diff, amo-listing-apply]
 
 permissions: {}
 
 jobs:
   status:
-    name: Fetch store item status
+    name: Store status (${{ inputs.store }})
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/extension
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.11.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
 
       - name: Chrome Web Store status
         if: ${{ inputs.store == 'chrome' }}
@@ -35,31 +33,32 @@ jobs:
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
           CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
-          CWS_ITEM_ID: ${{ secrets.CWS_ITEM_ID }}
-        run: |
-          if [ -n "${{ inputs.item }}" ]; then
-            node scripts/publish-chrome.mjs status --item "${{ inputs.item }}"
-          else
-            node scripts/publish-chrome.mjs status
-          fi
+        run: pnpm exec store-publish chrome status
+
+      - name: Edge credential probe and key expiry
+        if: ${{ inputs.store == 'edge' }}
+        env:
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+        run: pnpm exec store-publish edge status
 
       - name: Firefox Add-ons status
         if: ${{ inputs.store == 'firefox' }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-        run: node scripts/publish-firefox.mjs status
+        run: pnpm exec store-publish firefox status
 
-      - name: AMO listing diff (read-only)
+      - name: AMO listing diff
         if: ${{ inputs.store == 'amo-listing-diff' }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-        run: node scripts/update-amo-listing.mjs diff
+        run: pnpm exec store-publish amo-listing diff
 
       - name: AMO listing apply
         if: ${{ inputs.store == 'amo-listing-apply' }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-        run: node scripts/update-amo-listing.mjs apply
+        run: pnpm exec store-publish lint && pnpm exec store-publish amo-listing apply

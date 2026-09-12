@@ -14,6 +14,34 @@ Two traps this text must keep avoiding:
   keyword bait, and rejected Video Transcript for it in August. Formats belong
   in a sentence that says what they are for, never in a comma-separated row.
 
+## Chrome and Edge description
+
+Both dashboards take this text by hand: neither store has an API for listing
+text. Chrome Web Store: developer dashboard, Store listing tab. Edge: Partner
+Center, Store listings, English. Applied to both on 2026-09-12.
+
+savemedia saves browser-visible video when it can verify and finish one
+playable file.
+
+Press Alt+S to save the best supported video on the current page, or open the
+popup to pick from everything detected. The popup shows for each item whether
+savemedia can save it, and why not when it cannot.
+
+Supported: direct MP4, WebM, and MKV files verified by headers or bytes; plain
+HLS VOD with MPEG-TS segments remuxed locally to MP4; clear HLS fMP4/CMAF
+streams assembled locally after MP4 box validation.
+
+Refused: DRM, encrypted HLS, DASH, live streams, and anything that is only
+reachable behind a paywall or a sign-in. savemedia saves what the browser has
+already received in the clear, and refuses rather than write a broken file.
+
+Everything runs locally in the browser. No telemetry, ads, accounts, or
+developer-operated server.
+
+## Chrome and Edge summary
+
+Video downloader for verified direct files and plain HLS streams.
+
 ## AMO description
 
 savemedia saves browser-visible video when it can verify and finish one
