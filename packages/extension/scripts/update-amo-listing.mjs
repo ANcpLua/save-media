@@ -26,7 +26,11 @@ import { createHmac, randomUUID } from "node:crypto";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const API_ROOT = "https://addons.mozilla.org/api/v5";
 const ADDON_ID = "save-media";
-const LOCALE = "en-US";
+// The add-on stores its text under whatever locale it was first created with,
+// which for both of these is "de" even though the prose is English. Writing to
+// a hardcoded locale would add a second translation and leave the one users
+// actually see untouched, so the locale is read from the add-on itself.
+let localeCache = null;
 const LISTING = "store-assets/listing.md";
 
 main().catch((err) => {
@@ -57,10 +61,12 @@ async function main() {
   }
 
   if (command === "apply") {
+    const locale = await addonLocale();
+    console.log(`writing description for locale ${locale}`);
     await api(`/addons/addon/${ADDON_ID}/`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description: { [LOCALE]: local } }),
+      body: JSON.stringify({ description: { [locale]: local } }),
     });
     const live = await liveDescription();
     if (normalize(live) !== normalize(local)) {
@@ -88,10 +94,22 @@ function localDescription() {
   return body;
 }
 
+async function addonLocale() {
+  if (localeCache) return localeCache;
+  const json = await api(`/addons/addon/${ADDON_ID}/`);
+  localeCache = json.default_locale ?? "en-US";
+  return localeCache;
+}
+
 async function liveDescription() {
-  const json = await api(`/addons/addon/${ADDON_ID}/?lang=${LOCALE}`);
-  const raw = json.description?.[LOCALE] ?? json.description ?? "";
-  return String(raw).replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+  const locale = await addonLocale();
+  const json = await api(`/addons/addon/${ADDON_ID}/`);
+  const field = json.description;
+  const raw = typeof field === "string" ? field : field?.[locale];
+  if (typeof raw !== "string") {
+    throw new Error(`no description for locale ${locale}; found ${JSON.stringify(Object.keys(field ?? {}))}`);
+  }
+  return raw.replace(/<br\s*\/?>/gi, String.fromCharCode(10)).replace(/<[^>]+>/g, "").trim();
 }
 
 /** Compare ignoring whitespace-only differences AMO introduces on render. */
