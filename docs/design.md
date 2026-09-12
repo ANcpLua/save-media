@@ -11,7 +11,9 @@ required byte and produce one playable final file with tested code.
 It refuses instead of guessing when any of these are true:
 
 - the stream is protected by DRM or ClearKey/CENC sample encryption;
-- the stream is encrypted HLS, HLS Live/DVR, or malformed HLS fMP4/CMAF;
+- the stream is HLS whose key only a protected media module can unwrap (any
+  KEYFORMAT other than identity, SAMPLE-AES, SAMPLE-AES-CTR), HLS Live/DVR, or
+  malformed HLS fMP4/CMAF;
 - the stream is DASH without a clear, fully addressed video+audio pair
   (dynamic/live MPD, byte-range addressing, or no audio AdaptationSet);
 - the server denies access, rate-limits, or is busy after retries;
@@ -35,7 +37,8 @@ files as video.
 | Clear DASH video+audio → single merged MP4 | Implemented | DASH MPDs with a clear, fully addressed video+audio AdaptationSet pair dispatch to the same av-merge engine (dispatch unit tests); anything less refuses with `dash_unsupported`. The merge engine itself is gated by the demuxed-HLS e2e `ffprobe` spec. |
 | DASH refusal (encrypted, dynamic/live, byte-range, or audio-less) | Implemented | DASH fixtures produce descriptors and download refuses with `dash_unsupported`; dynamic-MPD fixture stays unmaterialized. |
 | YouTube adaptive H.264+AAC merge — unlisted builds only | Implemented | MAIN-world resolver reads the page's own InnerTube player response, picks an H.264 video itag (137/136/135/134) + AAC itag (140), and the pair merges to one MP4 via the av-merge engine; `googlevideo.com` is captured as an extractor-managed host. Unit tests cover the resolver (golden fixture), registry, and host capture. Chrome Web Store prohibits YouTube-download extensions, so this capability ships only in unlisted/personal builds. |
-| HLS AES-128 detection/refusal | Implemented | AES fixture refuses with `hls_encryption_unsupported` before key/ciphertext download. |
+| HLS AES-128 with a key served in the clear | Implemented | Chrome e2e and `smoke:edge` download the AES-128 fixture and `ffprobe` verifies the output; a unit test decrypts the fixture ciphertext and asserts the job writes the plaintext byte for byte. Key fetch is one 16-byte request per key URI, cached across segments. |
+| HLS key that a CDM owns → refusal | Implemented | FairPlay (`KEYFORMAT="com.apple.streamingkeydelivery"`) and SAMPLE-AES fixtures refuse with `cdm_required` without the key URI ever being requested; a key URI answering 401/402/403, or with other than 16 bytes, refuses with `license_bound_stream`. |
 | HLS fMP4/CMAF internal-piece filtering | Implemented | Fixture verifies init/fragment URLs are not surfaced as standalone downloads. |
 | DRM detection | Implemented | Widevine fixture is refused with `cdm_required`. |
 | ClearKey/CENC detection | Implemented | ClearKey fixture is refused with `clearkey_deferred`. |
@@ -57,7 +60,10 @@ files as video.
 - YouTube above 1080p (VP9/AV1 itags would require WebM merge output) and any
   YouTube support in a store-listed build — listing and YouTube-download are
   mutually exclusive under Chrome Web Store policy.
-- HLS AES-128/SAMPLE-AES download.
+- SAMPLE-AES or SAMPLE-AES-CTR download, and AES-128 whose key is only
+  available through a CDM or as a licence response.
+- AES-128 on a demuxed variant (av-merge fetches its two tracks by URL and
+  carries no key, so it keeps the `hls_encryption_unsupported` refusal).
 - HLS Live/DVR recording.
 - Direct `.mov`, `.avi`, `.wmv`, `.flv`, or URL-only media guesses.
 - Standalone audio downloads.
@@ -142,10 +148,19 @@ Supported:
   to the plain path: if the audio track cannot be planned, the job refuses
   rather than saving silent video.
 
+Decrypted: `EXT-X-KEY:METHOD=AES-128` with KEYFORMAT absent or `identity`.
+The key is one 16-byte GET over the same HTTP the player uses, cached per key
+URI so rotation costs one fetch per key; the IV is the tag's `IV` attribute or
+the media sequence number as a 128-bit big-endian integer (RFC 8216 5.2);
+AES-CBC with the PKCS#7 padding WebCrypto removes.
+
 Refused:
 
 - missing `EXT-X-ENDLIST`;
-- AES-128, SAMPLE-AES, SAMPLE-AES-CTR, or any `EXT-X-KEY`;
+- SAMPLE-AES, SAMPLE-AES-CTR, or AES-128 with a non-identity KEYFORMAT;
+- a key URI that answers 401, 402, 403, or with other than 16 bytes;
+- a ciphertext segment whose length is not whole AES blocks;
+- AES-128 on a demuxed (audio-group) variant;
 - malformed `EXT-X-MAP` fMP4/CMAF playlists;
 - unknown first-segment bytes.
 

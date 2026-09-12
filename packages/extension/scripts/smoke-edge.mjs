@@ -128,10 +128,19 @@ try {
   await emptyPage.close();
   console.log("✓ Edge Alt+S on a media-free page flashes the ∅ feedback badge");
 
+  await clearDownloadHistory(probe);
+  const aes = await firstDescriptor(context, probe, baseURL, "hls-aes", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const aesName = `edge-hls-aes-${Date.now()}.mp4`;
+  await startDescriptorDownload(probe, aes, aesName);
+  const aesFile = await waitForDownloadedFile(probe, aesName);
+  expectPlayable(aesFile, /mp4|mov/);
+  console.log("✓ Edge decrypted an AES-128 HLS fixture whose key is served in the clear");
+
   await expectFailure(context, probe, baseURL, "dash", d => d.protocol === "dash", "dash_unsupported");
-  await expectFailure(context, probe, baseURL, "hls-aes", d => d.protocol === "hls", "hls_encryption_unsupported");
   await expectFailure(context, probe, baseURL, "hls-live", d => d.protocol === "hls", "hls_live_unsupported");
-  console.log("✓ Edge surfaced DASH, encrypted HLS, and live HLS refusals");
+  await expectFailure(context, probe, baseURL, "hls-fairplay", d => d.protocol === "hls", "cdm_required");
+  await expectFailure(context, probe, baseURL, "hls-sample-aes", d => d.protocol === "hls", "cdm_required");
+  console.log("✓ Edge surfaced DASH, live HLS, FairPlay and SAMPLE-AES refusals");
 
   console.log("✓ Edge runtime smoke passed");
 } finally {

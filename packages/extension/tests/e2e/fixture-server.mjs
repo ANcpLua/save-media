@@ -9,7 +9,8 @@
  *   /hls-fmp4-mp4/* .mp4-named init/fragments — verifies chunk suppression
  *   /av-merge/master.m3u8 + EXT-X-MEDIA audio group + video/audio playlists
  *     + per-track init/m4s fragments — demuxed HLS for the a/v merge engine
- *   /hls-aes/key + master + media + ciphertext segments — refused encryption
+ *   /hls-aes/key + master + media + ciphertext segments — AES-128 in the clear
+ *   /hls-fairplay/*, /hls-sample-aes/*     — key tags a CDM owns, refused
  *   /dash/clip.mpd                         — clear DASH descriptor, refused download
  *   /drm/widevine.mpd                      — DASH with Widevine ContentProtection
  *   /drm/clearkey.mpd                      — DASH with ClearKey refusal
@@ -88,6 +89,40 @@ function fixture(rel) {
   return readFileSync(join(mediaRoot, rel));
 }
 
+const HLS_FAIRPLAY_MASTER = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"
+media.m3u8
+`;
+
+// METHOD says AES-128, KEYFORMAT says the URI answers with a FairPlay
+// licence. Not a key in the clear, so not ours to fetch.
+const HLS_FAIRPLAY_MEDIA = `#EXTM3U
+#EXT-X-VERSION:5
+#EXT-X-TARGETDURATION:2
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=AES-128,URI="skd://keys.test/fairplay",KEYFORMAT="com.apple.streamingkeydelivery",KEYFORMATVERSIONS="1"
+#EXTINF:2.000000,
+seg000.ts
+#EXT-X-ENDLIST
+`;
+
+const HLS_SAMPLE_AES_MASTER = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"
+media.m3u8
+`;
+
+const HLS_SAMPLE_AES_MEDIA = `#EXTM3U
+#EXT-X-VERSION:5
+#EXT-X-TARGETDURATION:2
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://keys.test/sample",KEYFORMAT="com.apple.streamingkeydelivery"
+#EXTINF:2.000000,
+seg000.ts
+#EXT-X-ENDLIST
+`;
+
 const routes = {
   // Direct files
   "/direct/clip.mp4":  { type: "video/mp4", body: fixture("direct/clip.mp4") },
@@ -144,6 +179,15 @@ seg000.ts
   "/hls-aes/key.bin":     { type: "application/octet-stream", body: fixture("hls-aes/key.bin") },
   "/hls-aes/seg000.ts":   { type: "video/mp2t", body: fixture("hls-aes/seg000.ts") },
 
+  // Same ciphertext, but the key tags say a CDM holds the key. Both must be
+  // refused as cdm_required, never fetched, never "decrypted".
+  "/hls-fairplay/master.m3u8": { type: "application/vnd.apple.mpegurl", body: Buffer.from(HLS_FAIRPLAY_MASTER) },
+  "/hls-fairplay/media.m3u8":  { type: "application/vnd.apple.mpegurl", body: Buffer.from(HLS_FAIRPLAY_MEDIA) },
+  "/hls-fairplay/seg000.ts":   { type: "video/mp2t", body: fixture("hls-aes/seg000.ts") },
+  "/hls-sample-aes/master.m3u8": { type: "application/vnd.apple.mpegurl", body: Buffer.from(HLS_SAMPLE_AES_MASTER) },
+  "/hls-sample-aes/media.m3u8":  { type: "application/vnd.apple.mpegurl", body: Buffer.from(HLS_SAMPLE_AES_MEDIA) },
+  "/hls-sample-aes/seg000.ts":   { type: "video/mp2t", body: fixture("hls-aes/seg000.ts") },
+
   // DASH detection/refusal only. Segment bytes are intentionally not served.
   "/dash/clip.mpd":     { type: "application/dash+xml", body: Buffer.from(DASH_MPD) },
 
@@ -184,6 +228,8 @@ const pages = {
     window.__savemediaFixture = {"stream":{"url":"\\/hls\\/master.m3u8","urls":{"1080p":"\\/hls-fmp4\\/master.m3u8"}}};
   </script><p>embedded hls fixture</p>`),
   "hls-aes": html("hls-aes", `<script>fetch("/hls-aes/master.m3u8");</script><p>hls-aes fixture</p>`),
+  "hls-fairplay": html("hls-fairplay", `<script>fetch("/hls-fairplay/master.m3u8");fetch("/hls-fairplay/media.m3u8");</script><p>hls fairplay fixture</p>`),
+  "hls-sample-aes": html("hls-sample-aes", `<script>fetch("/hls-sample-aes/master.m3u8");fetch("/hls-sample-aes/media.m3u8");</script><p>hls sample-aes fixture</p>`),
   dash: html("dash", `<script>fetch("/dash/clip.mpd");</script><p>dash fixture</p>`),
   widevine: html("widevine", `<script>fetch("/drm/widevine.mpd");</script><p>widevine fixture</p>`),
   clearkey: html("clearkey", `<script>fetch("/drm/clearkey.mpd");</script><p>clearkey fixture</p>`),

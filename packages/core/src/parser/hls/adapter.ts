@@ -1,6 +1,7 @@
 import { Parser } from "m3u8-parser";
 import type { Variant, VariantId, AudioRenditionId } from "../../types/codec";
 import { parseVideoCodec, parseAudioCodec } from "../../classifier/codec-registry";
+import { parseHlsKeyDeclarations, type HlsKeyDeclaration } from "./keys";
 
 export interface HlsMasterParseResult {
   readonly variants: readonly Variant[];
@@ -21,7 +22,11 @@ export interface HlsMediaPlaylistParseResult {
     readonly method: string;
     readonly uri: string;
     readonly iv: Uint8Array | null;
+    /** KEYFORMAT as written, lowercased; "identity" when the tag omits it. */
+    readonly keyFormat: string;
   } | null;
+  /** Every EXT-X-KEY in the text, so callers can judge the whole playlist. */
+  readonly keyDeclarations: readonly HlsKeyDeclaration[];
 }
 
 function splitCodecs(codecs: string): [string | null, string | null] {
@@ -146,12 +151,28 @@ export function parseHlsMediaPlaylist(manifestText: string, manifestUrl: string)
     ? { method: segKey.method, uri: segKey.uri, iv: segKey.iv ?? null }
     : contentProtectionKey;
 
+  // m3u8-parser drops KEYFORMAT, so the tags are read from the text too and
+  // the declaration matching this key supplies it.
+  const declarations = parseHlsKeyDeclarations(manifestText, manifestUrl);
+  const declarationFor = (uri: string) => {
+    const absolute = new URL(uri, manifestUrl).href;
+    return declarations.find(d => d.keyUri === absolute) ?? null;
+  };
+
   return {
     initSegmentUrl: firstMap?.uri ? new URL(firstMap.uri, manifestUrl).href : null,
     isVod: manifest.endList === true,
     segments: segs.map(s => ({ uri: new URL(s.uri, manifestUrl).href, duration: s.duration })),
     encryption: rawKey
-      ? { method: rawKey.method, uri: new URL(rawKey.uri, manifestUrl).href, iv: rawKey.iv }
+      ? {
+          method: rawKey.method,
+          uri: new URL(rawKey.uri, manifestUrl).href,
+          // The declaration's IV is parsed from the hex text; m3u8-parser's
+          // is a Uint32Array whose raw bytes are word-reversed.
+          iv: declarationFor(rawKey.uri)?.iv ?? null,
+          keyFormat: declarationFor(rawKey.uri)?.keyFormat ?? "identity",
+        }
       : null,
+    keyDeclarations: declarations,
   };
 }

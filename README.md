@@ -3,8 +3,10 @@
 Browser extension for Chrome, Edge and Firefox that saves browser-visible video
 when it can prove the bytes are one complete, playable file. It saves direct
 MP4, WebM and MKV files, plain HLS VOD with MPEG-TS segments (remuxed locally to
-MP4), and clear HLS fMP4/CMAF streams. It refuses DRM, encrypted HLS, DASH,
-live streams, and anything it cannot verify, rather than writing a broken file.
+MP4), clear HLS fMP4/CMAF streams, and AES-128 HLS whose key the server hands
+over in the clear (decrypted locally with WebCrypto). It refuses DRM, keys only
+a CDM can unwrap, DASH, live streams, and anything it cannot verify, rather
+than writing a broken file.
 Everything runs in the browser. There is no telemetry, no account and no server.
 
 The support contract is [`docs/design.md`](docs/design.md). The legal and
@@ -181,8 +183,10 @@ Rules that override everything else, short form of `docs/boundary-rules.md`:
 - Observe, do not defeat. Save what the browser already received in the
   clear. Never touch DRM, CDM keys, EME, PSSH, signature or n-cipher solving,
   paywalls, geo or login restrictions.
-- Refuse loudly. Every EXT-X-KEY method except AES-128 is refused. Keep the
-  refusal tests.
+- Refuse loudly. Only EXT-X-KEY METHOD=AES-128 with an identity KEYFORMAT is
+  decrypted: the key is 16 bytes fetched over the same HTTP the player uses.
+  Every other method, every other KEYFORMAT, and a key URI that answers 401,
+  402 or 403 are refused. Keep the refusal tests.
 - The native host never bundles, downloads or installs yt-dlp or ffmpeg. DRM
   refusals are never delegated to it: `DELEGABLE_ERROR_CODES` in
   `src/native/local-downloader.ts` is an allowlist.

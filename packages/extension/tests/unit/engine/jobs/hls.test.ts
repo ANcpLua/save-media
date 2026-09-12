@@ -34,16 +34,6 @@ const LIVE_PLAYLIST = `#EXTM3U
 seg33.ts
 `;
 
-const AES_PLAYLIST = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:10
-#EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-KEY:METHOD=AES-128,URI="https://x/key.bin"
-#EXTINF:10.0,
-seg1.ts
-#EXT-X-ENDLIST
-`;
-
 const SAMPLE_AES_PLAYLIST = `#EXTM3U
 #EXT-X-VERSION:5
 #EXT-X-TARGETDURATION:10
@@ -62,6 +52,44 @@ const FMP4_MEDIA_PLAYLIST = `#EXTM3U
 seg1.m4s
 #EXT-X-ENDLIST
 `;
+
+// AES-128 over fMP4: the init segment stays clear (RFC 8216), only the
+// fragments are ciphertext, and the IV is declared so the test controls it.
+const AES_FMP4_PLAYLIST = `#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:10
+#EXT-X-KEY:METHOD=AES-128,URI="key.bin",IV=0x000102030405060708090a0b0c0d0e0f
+#EXT-X-MAP:URI="init.mp4"
+#EXTINF:10.0,
+seg1.m4s
+#EXT-X-ENDLIST
+`;
+
+// METHOD=AES-128, but the key lives behind a CDM: refuse, never fetch.
+const FAIRPLAY_PLAYLIST = `#EXTM3U
+#EXT-X-VERSION:5
+#EXT-X-TARGETDURATION:10
+#EXT-X-KEY:METHOD=AES-128,URI="skd://keys.test/fp",KEYFORMAT="com.apple.streamingkeydelivery"
+#EXTINF:10.0,
+seg1.ts
+#EXT-X-ENDLIST
+`;
+
+const AES_KEY_BYTES = new Uint8Array([
+  0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+  0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+]);
+const AES_IV_BYTES = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+async function encryptForFixture(plaintext: Uint8Array): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey("raw", AES_KEY_BYTES as unknown as ArrayBuffer, { name: "AES-CBC" }, false, ["encrypt"]);
+  const cipher = await crypto.subtle.encrypt(
+    { name: "AES-CBC", iv: AES_IV_BYTES as unknown as ArrayBuffer },
+    key,
+    plaintext as unknown as ArrayBuffer,
+  );
+  return new Uint8Array(cipher);
+}
 
 let originalFetch: typeof fetch;
 
@@ -176,15 +204,69 @@ describe("runHlsJob — supported plain VOD boundary", () => {
       .rejects.toMatchObject({ code: "hls_live_unsupported" });
   });
 
-  it("refuses HLS AES-128 before fetching keys or ciphertext", async () => {
+  it("decrypts AES-128 fragments and writes the plaintext, nothing else", async () => {
+    const ciphertext = await encryptForFixture(FMP4_FRAGMENT_BYTES);
     const fetch = vi.fn(async (url: string) => {
-      if (url.endsWith(".m3u8")) return textResponse(AES_PLAYLIST);
+      if (url.endsWith(".m3u8")) return textResponse(AES_FMP4_PLAYLIST);
+      if (url.endsWith("key.bin")) return bytesResponse(AES_KEY_BYTES);
+      if (url.endsWith("init.mp4")) return bytesResponse(FMP4_INIT_BYTES);
+      if (url.endsWith("seg1.m4s")) return bytesResponse(ciphertext);
+      throw new Error(`should not fetch ${url}`);
+    });
+    patchFetch(fetch);
+    const sink = new CapturingSink();
+
+    const result = await runHlsJob(plainPlan(), hlsDescriptor(), vi.fn(), new AbortController().signal, sink);
+
+    expect(result.filename).toBe("out.mp4");
+    expect(sink.aborted).toBe(false);
+    // The decrypted fragment, byte for byte — not the ciphertext, and with
+    // the PKCS#7 padding removed.
+    expect(concatBytes(sink.writes)).toEqual(concatBytes([FMP4_INIT_BYTES, FMP4_FRAGMENT_BYTES]));
+    // The key is fetched once, when the first ciphertext segment needs it.
+    expect(fetch.mock.calls.map(call => call[0])).toEqual([
+      "https://example.com/master.m3u8",
+      "https://example.com/init.mp4",
+      "https://example.com/seg1.m4s",
+      "https://example.com/key.bin",
+    ]);
+  });
+
+  it("a key URI that answers 403 is a licence server: license_bound_stream", async () => {
+    patchFetch(async url => {
+      if (url.endsWith(".m3u8")) return textResponse(AES_FMP4_PLAYLIST);
+      if (url.endsWith("init.mp4")) return bytesResponse(FMP4_INIT_BYTES);
+      if (url.endsWith("seg1.m4s")) return bytesResponse(new Uint8Array(32));
+      if (url.endsWith("key.bin")) return new Response("forbidden", { status: 403 });
+      throw new Error(`should not fetch ${url}`);
+    });
+
+    await expect(runHlsJob(plainPlan(), hlsDescriptor(), vi.fn(), new AbortController().signal))
+      .rejects.toMatchObject({ code: "license_bound_stream", httpStatus: 403 });
+  });
+
+  it("a key URI that answers with something other than 16 bytes is refused", async () => {
+    patchFetch(async url => {
+      if (url.endsWith(".m3u8")) return textResponse(AES_FMP4_PLAYLIST);
+      if (url.endsWith("init.mp4")) return bytesResponse(FMP4_INIT_BYTES);
+      if (url.endsWith("seg1.m4s")) return bytesResponse(new Uint8Array(32));
+      if (url.endsWith("key.bin")) return bytesResponse(new Uint8Array(32));
+      throw new Error(`should not fetch ${url}`);
+    });
+
+    await expect(runHlsJob(plainPlan(), hlsDescriptor(), vi.fn(), new AbortController().signal))
+      .rejects.toMatchObject({ code: "license_bound_stream" });
+  });
+
+  it("refuses AES-128 behind a FairPlay KEYFORMAT without touching the key URI", async () => {
+    const fetch = vi.fn(async (url: string) => {
+      if (url.endsWith(".m3u8")) return textResponse(FAIRPLAY_PLAYLIST);
       throw new Error(`should not fetch ${url}`);
     });
     patchFetch(fetch);
 
     await expect(runHlsJob(plainPlan(), hlsDescriptor(), vi.fn(), new AbortController().signal))
-      .rejects.toMatchObject({ code: "hls_encryption_unsupported", method: "AES-128" });
+      .rejects.toMatchObject({ code: "cdm_required", keySystem: "com.apple.streamingkeydelivery" });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

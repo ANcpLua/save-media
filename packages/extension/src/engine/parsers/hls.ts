@@ -8,6 +8,8 @@ import type {
 import type { ProgressFn } from "../job";
 import { fetchWithRetry } from "../net/fetch-with-retry";
 import { classifyNetworkFailure } from "../net/error-classification";
+import { parseHlsKeyDeclarations } from "@savemedia/core";
+import type { HlsKeyDeclaration } from "@savemedia/core";
 
 /**
  * Runtime media-playlist parser used by the engine after the master is
@@ -34,6 +36,8 @@ export interface RuntimeSegment {
   readonly duration: number;
   readonly iv: Uint8Array | null;
   readonly mediaSequence: number | null;
+  /** Absolute URI of the key covering this segment; null when it is clear. */
+  readonly keyUri: string | null;
 }
 
 export interface RuntimePlaylist {
@@ -42,6 +46,12 @@ export interface RuntimePlaylist {
   readonly targetDuration: number | null;
   readonly isVod: boolean;
   readonly encryption: RuntimeEncryption | null;
+  /**
+   * Every EXT-X-KEY in the playlist, read from the text rather than from
+   * m3u8-parser: the library drops KEYFORMAT, and KEYFORMAT is what
+   * separates a key served in the clear from one a CDM holds.
+   */
+  readonly keyDeclarations: readonly HlsKeyDeclaration[];
 }
 
 export function parseHlsMediaPlaylistRuntime(text: string, playlistUrl: string): RuntimePlaylist {
@@ -54,8 +64,9 @@ export function parseHlsMediaPlaylistRuntime(text: string, playlistUrl: string):
   const segs: RuntimeSegment[] = (m.segments ?? []).map((s, i) => ({
     uri: new URL(s.uri, playlistUrl).href,
     duration: s.duration,
-    iv: s.key?.iv ? copyToUint8(s.key.iv) : null,
+    iv: s.key?.iv ? ivToBytes(s.key.iv) : null,
     mediaSequence: startSeq + i,
+    keyUri: s.key?.uri ? new URL(s.key.uri, playlistUrl).href : null,
   }));
 
   const firstKey = (m.segments ?? []).find(s => s.key)?.key ?? null;
@@ -63,7 +74,7 @@ export function parseHlsMediaPlaylistRuntime(text: string, playlistUrl: string):
     ? {
         method: String(firstKey.method ?? "").toUpperCase(),
         keyUri: new URL(firstKey.uri, playlistUrl).href,
-        iv: firstKey.iv ? copyToUint8(firstKey.iv) : null,
+        iv: firstKey.iv ? ivToBytes(firstKey.iv) : null,
       }
     : null;
 
@@ -73,6 +84,7 @@ export function parseHlsMediaPlaylistRuntime(text: string, playlistUrl: string):
     targetDuration: typeof m.targetDuration === "number" ? m.targetDuration : null,
     isVod: m.endList === true,
     encryption,
+    keyDeclarations: parseHlsKeyDeclarations(text, playlistUrl),
   };
 }
 
@@ -80,6 +92,23 @@ function copyToUint8(view: ArrayBufferView): Uint8Array {
   const dst = new Uint8Array(view.byteLength);
   dst.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
   return dst;
+}
+
+/**
+ * m3u8-parser hands back an EXT-X-KEY IV as a Uint32Array of four big-endian
+ * words. Copying its raw bytes on a little-endian machine reverses each word
+ * and yields an IV that decrypts to garbage, so the words are written out
+ * big endian here instead.
+ */
+function ivToBytes(view: ArrayBufferView): Uint8Array {
+  if (view instanceof Uint8Array) return copyToUint8(view);
+  const out = new Uint8Array(view.byteLength);
+  const words = new Uint32Array(view.buffer, view.byteOffset, Math.floor(view.byteLength / 4));
+  const dst = new DataView(out.buffer);
+  for (let i = 0; i < words.length; i++) {
+    dst.setUint32(i * 4, words[i]!);
+  }
+  return out;
 }
 
 /**

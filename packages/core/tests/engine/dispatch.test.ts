@@ -244,11 +244,15 @@ describe("dispatch — HLS", () => {
     }
   });
 
-  it("AES-128 HLS → refuses instead of producing a decrypt plan", () => {
+  it("AES-128 HLS with a key in the clear → hls-plain plan, the engine decrypts", () => {
     const enc: HlsEncryption = { method: "AES-128", keyUri: "https://x/key.bin", iv: null };
     const d = makeHls(enc);
-    const r = dispatch(d, originalChoice);
-    expect(r).toEqual({ kind: "refuse", reason: "hls_encryption_unsupported" });
+    const r = dispatch(d, { ...originalChoice, variantId: "v-1080" as VariantId });
+    expect(r.kind).toBe("hls-plain");
+    if (r.kind === "hls-plain") {
+      expect(r.variantId).toBe("v-1080");
+      expect(r.steps.find(s => s.op === "remux")).toBeDefined();
+    }
   });
 
   it("SAMPLE-AES HLS variant → refuses with cdm_required", () => {
@@ -307,6 +311,22 @@ describe("dispatch — demuxed HLS (av-merge)", () => {
     const d = makeDemuxedHls({ variants: [variant({ audioRenditionId: AUDIO_EN })] });
     const r = dispatch(d, originalChoice);
     expect(r).toEqual({ kind: "refuse", reason: "no_usable_variant" });
+  });
+
+  it("demuxed AES-128 refuses: av-merge fetches by URL and carries no key", () => {
+    const aesKey: HlsEncryption = { method: "AES-128", keyUri: "https://x/key.bin", iv: null };
+    const d = makeDemuxedHls();
+    const keyed = {
+      ...d,
+      variants: d.variants.map(v => ({
+        ...v,
+        segmentRef: v.segmentRef.kind === "hls-segments"
+          ? { ...v.segmentRef, encryption: aesKey }
+          : v.segmentRef,
+      })),
+    };
+    const r = dispatch(keyed, originalChoice);
+    expect(r).toEqual({ kind: "refuse", reason: "hls_encryption_unsupported" });
   });
 
   it("demuxed variant whose rendition is missing from the descriptor refuses", () => {

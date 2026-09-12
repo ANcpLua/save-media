@@ -450,14 +450,43 @@ test.describe("extension classifies real fixture pages", () => {
     }
   });
 
-  test("download pipeline refuses HLS AES-128 instead of writing decrypted or encrypted bytes", async () => {
+  test("download pipeline decrypts HLS AES-128 whose key is served in the clear", async () => {
     await clearDownloadHistory();
     const page = await openFixtureAndWait("hls-aes", ds => ds.some(d => d.protocol === "hls"));
     try {
       const descriptor = (await descriptorsForUrlContaining("/page/hls-aes.html")).find(d => d.protocol === "hls");
       expect(descriptor).toBeDefined();
-      await expect(startDescriptorDownloadExpectFailure(descriptor!, "e2e-hls-aes.mp4"))
-        .resolves.toBe("hls_encryption_unsupported");
+      await startDescriptorDownload(descriptor!, "e2e-hls-aes.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-hls-aes.mp4");
+      // ffprobe reads it: the ciphertext became real MPEG-TS and then a real
+      // MP4. An undecrypted file would not probe as playable media.
+      expectPlayable(file, /mp4|mov/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline refuses AES-128 behind a FairPlay KEYFORMAT", async () => {
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("hls-fairplay", ds => ds.some(d => d.protocol === "hls"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/hls-fairplay.html")).find(d => d.protocol === "hls");
+      expect(descriptor).toBeDefined();
+      await expect(startDescriptorDownloadExpectFailure(descriptor!, "e2e-hls-fairplay.mp4"))
+        .resolves.toBe("cdm_required");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline refuses SAMPLE-AES", async () => {
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("hls-sample-aes", ds => ds.some(d => d.protocol === "hls"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/hls-sample-aes.html")).find(d => d.protocol === "hls");
+      expect(descriptor).toBeDefined();
+      await expect(startDescriptorDownloadExpectFailure(descriptor!, "e2e-hls-sample-aes.mp4"))
+        .resolves.toBe("cdm_required");
     } finally {
       await page.close();
     }

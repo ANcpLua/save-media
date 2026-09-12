@@ -18,6 +18,7 @@ export type { UserMessage, ActionKind } from "./errors/messages";
 export type { VerifiedOutput, UnverifiedOutput, VerifyCheck, VerifyResult } from "./engine/verify";
 export type { ClassifyInput } from "./classifier/classify";
 export type { RetryClass } from "./coordinator/retry";
+export type { HlsKeyDeclaration, HlsKeyPlan } from "./parser/hls/keys";
 
 export { classify } from "./classifier/classify";
 export { dispatch, BROWSER_OUTPUT_LIMIT_BYTES } from "./engine/dispatch";
@@ -28,3 +29,11 @@ export { computeBackoffMs, isRetryableStatus, RETRY_POLICY } from "./coordinator
 export { parseVideoCodec, parseAudioCodec, friendlyVideoCodec, friendlyAudioCodec } from "./classifier/codec-registry";
 export { detectContainerFromBytes, detectContainerFromMime } from "./classifier/container-registry";
 export { probeInitSegment } from "./parser/init-segment/probe";
+export {
+  AES_128_KEY_BYTES,
+  isClearAes128,
+  isDecryptableLength,
+  parseHlsKeyDeclarations,
+  planHlsKeys,
+  segmentIv,
+} from "./parser/hls/keys";

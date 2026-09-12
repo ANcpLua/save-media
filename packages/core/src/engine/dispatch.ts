@@ -213,7 +213,12 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
     if (enc.kind === "drm-blocked") {
       return { kind: "refuse", reason: "cdm_required" };
     }
-    if (enc.kind === "encrypted") {
+    // AES-128 with an identity key is decryptable: the engine fetches the
+    // 16 key bytes over the same HTTP the player uses and decrypts each
+    // segment (boundary rule G1). A demuxed variant is still refused —
+    // av-merge fetches its two tracks by URL alone and carries no key, so
+    // it would write an encrypted file and call it saved.
+    if (enc.kind === "encrypted" && demuxed) {
       return { kind: "refuse", reason: "hls_encryption_unsupported" };
     }
     if (demuxed) {

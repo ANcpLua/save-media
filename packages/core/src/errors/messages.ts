@@ -106,8 +106,8 @@ export function userMessage(err: JobError): UserMessage {
 
     case "hls_encryption_unsupported":
       return {
-        title: "Encrypted HLS is not supported",
-        body: `This HLS playlist uses ${err.method}. savemedia does not download encrypted HLS streams; it only downloads plain HLS VOD playlists.`,
+        title: "This encrypted HLS stream cannot be saved",
+        body: `The playlist at ${err.manifestUrl} uses ${err.method} in a shape savemedia cannot assemble in the browser: a separate audio track, or segments that are not whole cipher blocks. AES-128 with a key served in the clear is saved normally.`,
         action: null,
       };
 

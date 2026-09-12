@@ -1,8 +1,11 @@
 import type {
   HlsPlainPlan,
+  HlsKeyDeclaration,
+  HlsKeyPlan,
   StreamDescriptor,
   Variant,
 } from "@savemedia/core";
+import { isDecryptableLength, planHlsKeys, segmentIv } from "@savemedia/core";
 import type { JobResult, ProgressFn } from "../job";
 import {
   parseHlsMediaPlaylistRuntime,
@@ -10,6 +13,7 @@ import {
   type RuntimeEncryption,
 } from "../parsers/hls";
 import { fetchWithRetry } from "../net/fetch-with-retry";
+import { HlsKeyring, KeyMaterialError, decryptSegment } from "../crypto/hls-aes";
 import { classifyNetworkFailure } from "../net/error-classification";
 import { InMemorySink, type JobSink } from "../sink";
 import { remuxTsToMp4 } from "../remux/ts-to-mp4";
@@ -72,15 +76,27 @@ export async function runHlsJob(
     };
   }
 
-  assertSupportedPlainVod(media, playlistUrl);
+  const keyPlan = assertSupportedVod(media, playlistUrl);
+  const keyring = keyPlan.kind === "aes-128"
+    ? new HlsKeyring(keyUri => fetchKeyBytes(keyUri, signal))
+    : null;
 
-  return fetchSegments(media, plan, onProgress, signal, externalSink);
+  return fetchSegments(media, plan, onProgress, signal, externalSink, keyring);
 }
 
-function assertSupportedPlainVod(
-  media: { readonly isVod: boolean; readonly encryption: RuntimeEncryption | null },
+/**
+ * Live is refused as before. Encryption is refused only when the key does
+ * not reach us in the clear: AES-128 with an identity KEYFORMAT is fetched
+ * and used (boundary rule G1), everything else is a CDM key system (R1).
+ */
+function assertSupportedVod(
+  media: {
+    readonly isVod: boolean;
+    readonly encryption: RuntimeEncryption | null;
+    readonly keyDeclarations: readonly HlsKeyDeclaration[];
+  },
   playlistUrl: string,
-): void {
+): HlsKeyPlan {
   if (!media.isVod) {
     throw {
       code: "hls_live_unsupported",
@@ -88,20 +104,84 @@ function assertSupportedPlainVod(
       manifestUrl: playlistUrl,
     };
   }
-  if (media.encryption) {
-    const method = media.encryption.method.toUpperCase();
-    if (method === "AES-128") {
-      throw {
-        code: "hls_encryption_unsupported",
-        severity: "terminal",
-        manifestUrl: playlistUrl,
-        method,
-      };
-    }
+  const plan = planHlsKeys(media.keyDeclarations);
+  if (plan.kind === "drm") {
     throw {
       code: "cdm_required",
       severity: "terminal",
-      keySystem: method,
+      keySystem: plan.keySystem,
+    };
+  }
+  return plan;
+}
+
+/**
+ * The key is a 16-byte file on the same HTTP the player uses. A server that
+ * answers 401/402/403 is handing out licences, not keys: that stream is
+ * license bound and stays refused.
+ */
+async function fetchKeyBytes(keyUri: string, signal: AbortSignal): Promise<Uint8Array> {
+  try {
+    const resp = await fetchWithRetry(keyUri, signal, "manifest");
+    return new Uint8Array(await resp.arrayBuffer());
+  } catch (err) {
+    if (signal.aborted) throw err;
+    const status = (err as { status?: number | string } | null)?.status;
+    if (typeof status === "number" && [401, 402, 403].includes(status)) {
+      throw {
+        code: "license_bound_stream",
+        severity: "terminal",
+        keyUri,
+        httpStatus: status,
+      };
+    }
+    throw classifyNetworkFailure(err, "manifest", keyUri) ?? {
+      code: "license_bound_stream",
+      severity: "terminal",
+      keyUri,
+      httpStatus: 0,
+    };
+  }
+}
+
+/**
+ * Decrypts one segment if a key covers it. A ciphertext that is not whole
+ * AES blocks is not an AES-128 segment, and guessing at it would write
+ * garbage: refuse instead.
+ */
+async function plainSegmentBytes(
+  body: Uint8Array,
+  seg: RuntimeSegment,
+  keyring: HlsKeyring | null,
+  playlistUrl: string,
+): Promise<Uint8Array> {
+  if (!keyring || seg.keyUri === null) return body;
+  if (!isDecryptableLength(body.byteLength)) {
+    throw {
+      code: "hls_encryption_unsupported",
+      severity: "terminal",
+      manifestUrl: playlistUrl,
+      method: "AES-128",
+    };
+  }
+  try {
+    const key = await keyring.keyFor(seg.keyUri);
+    return await decryptSegment(key, segmentIv(seg.iv, seg.mediaSequence), body);
+  } catch (err) {
+    if (err instanceof KeyMaterialError) {
+      throw {
+        code: "license_bound_stream",
+        severity: "terminal",
+        keyUri: err.keyUri,
+        httpStatus: 200,
+      };
+    }
+    if (isTerminalThrown(err)) throw err;
+    throw {
+      code: "hls_encryption_unsupported",
+      severity: "terminal",
+      manifestUrl: playlistUrl,
+      method: "AES-128",
     };
   }
 }
@@ -121,10 +201,11 @@ async function fetchSegments(
   onProgress: ProgressFn,
   signal: AbortSignal,
   externalSink: JobSink | undefined,
+  keyring: HlsKeyring | null,
 ): Promise<JobResult> {
   const { initSegmentUrl, segments } = media;
   if (initSegmentUrl) {
-    return fetchFmp4Segments(initSegmentUrl, segments, plan, onProgress, signal, externalSink);
+    return fetchFmp4Segments(initSegmentUrl, segments, plan, onProgress, signal, externalSink, keyring);
   }
 
   const failed: number[] = [];
@@ -144,7 +225,12 @@ async function fetchSegments(
     const seg = segments[i]!;
     try {
       const resp = await fetchWithRetry(seg.uri, signal, "segment");
-      let body: Uint8Array = new Uint8Array(await resp.arrayBuffer());
+      let body: Uint8Array = await plainSegmentBytes(
+        new Uint8Array(await resp.arrayBuffer()),
+        seg,
+        keyring,
+        seg.uri,
+      );
       if (firstBytes === null) {
         firstBytes = body;
         const { mime, filename } = honestOutput(body, seg.uri, plan, false);
@@ -222,6 +308,7 @@ async function fetchFmp4Segments(
   onProgress: ProgressFn,
   signal: AbortSignal,
   externalSink: JobSink | undefined,
+  keyring: HlsKeyring | null,
 ): Promise<JobResult> {
   const failed: number[] = [];
   let bytesWritten = 0;
@@ -252,7 +339,12 @@ async function fetchFmp4Segments(
       currentUrl = seg.uri;
       currentIndex = i;
       const resp = await fetchWithRetry(seg.uri, signal, "segment");
-      const body = new Uint8Array(await resp.arrayBuffer());
+      const body = await plainSegmentBytes(
+        new Uint8Array(await resp.arrayBuffer()),
+        seg,
+        keyring,
+        seg.uri,
+      );
       assertFmp4MediaSegment(body, seg.uri);
       await sink.write(body);
       bytesWritten += body.byteLength;

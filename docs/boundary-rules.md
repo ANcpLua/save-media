@@ -32,7 +32,7 @@ builds, or with conditions. **R** never.
 | G4 | Use the user's own session cookies. The tool adds no access. |
 | G5 | Delegate to yt-dlp or ffmpeg the user installed. Never bundle or auto-install them. |
 | G6 | Read the page's own API responses in the MAIN world. Do not call undocumented endpoints with tokens the page did not issue. |
-| G7 | Refuse loudly: detect EME and any non-AES-128 key method and stop with visible feedback. Keep the refusal tests. |
+| G7 | Refuse loudly: detect EME, any non-AES-128 key method, and any KEYFORMAT other than identity, and stop with visible feedback. A key URI that answers 401, 402 or 403 is a licence server, not a key in the clear: refuse, never retry. Keep the refusal tests. |
 | A1 | Site adapters for platforms whose terms forbid downloading: legal in principle, but store policies are stricter. Keep such adapters in unlisted builds. No platform names in listings or the README. |
 | A2 | Solving signature or "n" ciphers in your own code: contested in the US, treated as circumvention by a German court in 2023. Red for EU distribution. |
 | A3 | Static deobfuscation of player JavaScript to find a hidden URL: if the URL reaches the network during playback, capture it there instead. |
