@@ -132,7 +132,7 @@ export type EngineToBackgroundMessage =
 // content/bridge.ts runs in every frame of every page and keeps its own
 // hand-written guards on purpose: zod would more than double that file.
 
-const record = z.object({}).passthrough();
+const record = z.looseObject({});
 const streamId = z.string();
 const stringOrNull = z.string().nullable();
 const numberOrNull = z.number().nullable();
@@ -142,7 +142,7 @@ const pageCaptureSchema = z.object({
   kind: z.enum(CAPTURE_KINDS),
   url: stringOrNull,
   pageUrl: z.string(),
-  responseHeaders: z.record(z.string()).optional(),
+  responseHeaders: z.record(z.string(), z.string()).optional(),
   responseBodyHeadB64: z.string().optional(),
   keySystem: z.string().optional(),
   mimeType: z.string().optional(),
