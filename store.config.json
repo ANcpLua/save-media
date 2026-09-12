@@ -8,6 +8,12 @@
     "packages/extension/package.json"
   ],
   "listing": "packages/extension/store-assets/listing.md",
+  "lint": {
+    "forbidden": [],
+    "textFiles": [
+      "packages/extension/scripts/screenshot/harness.tsx"
+    ]
+  },
   "manifests": [
     "packages/extension/manifest.json"
   ],

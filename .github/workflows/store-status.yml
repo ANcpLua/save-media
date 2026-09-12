@@ -7,7 +7,12 @@ on:
         description: What to query. Everything is read-only except amo-listing-apply, which writes the AMO description from the repo.
         type: choice
         default: chrome
-        options: [status, chrome, edge, firefox, amo-listing-diff, amo-listing-apply, amo-icon-diff, amo-icon-apply, amo-previews-list, amo-previews-apply, amo-previews-replace]
+        options: [status, chrome, edge, firefox, amo-listing-diff, amo-listing-apply, amo-icon-diff, amo-icon-apply, amo-previews-list, amo-previews-apply, amo-previews-replace, amo-previews-delete]
+
+      arg:
+        description: Argument for amo-previews-delete (0-based position or #id)
+        type: string
+        required: false
 
 permissions: {}
 
@@ -105,6 +110,13 @@ jobs:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: bunx store-publish lint && bunx store-publish firefox previews set --replace
+
+      - name: AMO previews delete one
+        if: ${{ inputs.store == 'amo-previews-delete' }}
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: bunx store-publish firefox previews delete "${{ inputs.arg }}"
 
       - name: AMO listing apply
         if: ${{ inputs.store == 'amo-listing-apply' }}
