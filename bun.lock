@@ -5,7 +5,7 @@
     "": {
       "name": "savemedia",
       "devDependencies": {
-        "@ancplua/store-publish": "github:ANcpLua/store-publish#v1.4.1",
+        "@ancplua/store-publish": "github:ANcpLua/store-publish#v1.4.2",
         "typescript": "5.9.3",
       },
     },
@@ -62,7 +62,7 @@
 
     "@alloc/quick-lru": ["@alloc/quick-lru@5.3.0", "", {}, "sha512-U4+70Pc5ZS9osnCBCE5Jha/ciHM+Yp+CNMNC/7HvYbNRk1Ldd+f7qO65W5qfhu/TCv+/ozljlXXe9Nj8419DMA=="],
 
-    "@ancplua/store-publish": ["@ancplua/store-publish@github:ANcpLua/store-publish#c2f25eb", { "bin": { "store-publish": "./bin/store-publish.mjs" } }, "ANcpLua-store-publish-c2f25eb", "sha512-GE16psnz4NEuy/+c5dylNXzq3Bec1k8CTQKS9LKkdCUnFkujTAGgE37D4V5EwN1tqeArGF0zswtYgLXNqgAZbw=="],
+    "@ancplua/store-publish": ["@ancplua/store-publish@github:ANcpLua/store-publish#22ba74a", { "bin": { "store-publish": "./bin/store-publish.mjs" } }, "ANcpLua-store-publish-22ba74a", "sha512-nV5T97/uehIetOfKkHULhhoIAZx/Sc9DSdXDgT7aCFEYbsp7top+SroG2tShq7szdywkxM9ONwXLxU4FpIBXTQ=="],
 
     "@asamuzakjp/css-color": ["@asamuzakjp/css-color@3.2.0", "", { "dependencies": { "@csstools/css-calc": "^2.1.3", "@csstools/css-color-parser": "^3.0.9", "@csstools/css-parser-algorithms": "^3.0.4", "@csstools/css-tokenizer": "^3.0.3", "lru-cache": "^10.4.3" } }, "sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw=="],
 
