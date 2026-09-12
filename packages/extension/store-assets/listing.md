@@ -16,12 +16,10 @@ Two traps this text must keep avoiding:
 
 ## Chrome and Edge description
 
-Both dashboards take this text by hand: neither store has an API for listing
-text. Chrome Web Store: developer dashboard, Store listing tab. Edge: Partner
-Center, Store listings, English. Applied to both on 2026-09-12; both
-submissions are in review. The same day the single purpose statement and the
-privacy policy URL in both dashboards were corrected as well (the URL had a
-typo in the account name and was dead).
+Both dashboards take this text by hand, neither store has an API for listing
+text. Entered in both on 2026-09-12 together with the corrected single purpose
+statement and privacy policy URL (the URL had a typo in the account name).
+Applied with the dashboards, not with a script.
 
 savemedia saves browser-visible video when it can verify and finish one
 playable file.

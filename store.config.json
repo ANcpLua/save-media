@@ -68,6 +68,12 @@
     "firefox": {
       "id": "savemedia@ancplua.dev",
       "slug": "save-media",
+      "icon": "packages/extension/store-assets/logo/logo-300.png",
+      "previews": [
+        "packages/extension/store-assets/screenshots/01-direct-video.png",
+        "packages/extension/store-assets/screenshots/02-hls-vod.png",
+        "packages/extension/store-assets/screenshots/03-refusal-safety.png"
+      ],
       "url": "https://addons.mozilla.org/firefox/addon/save-media/",
       "dashboard": "https://addons.mozilla.org/developers/addon/save-media/edit",
       "apiDocs": "https://mozilla.github.io/addons-server/topics/api/addons.html",

@@ -95,6 +95,11 @@ section into the two dashboards when it changes. Screenshots and the store
 icon are under `packages/extension/store-assets/`, regenerated with
 `bun run --filter @savemedia/extension screenshots` and `store:assets`.
 
+Store icons and screenshots are listing fields on all three stores, not
+package contents: Chrome (Store listing, Graphic assets) and Edge (Details
+page, Extension logo) take them in the dashboard, AMO through the two
+workflow options above. A new package never changes them.
+
 Store review traps, each one has already cost a rejection or a takedown:
 
 - No platform or brand names in the extension name, listing, screenshots,
@@ -118,7 +123,11 @@ gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=chrom
 gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=firefox            # versions and their review status
 gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=edge               # credential probe, key length, days until the key expires
 gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=amo-listing-diff   # repo listing vs live AMO description
-gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=amo-listing-apply  # writes the AMO description (the one write in this workflow)
+gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=amo-listing-apply  # writes the AMO description
+gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=amo-icon-diff       # which icon AMO serves (the manifest icon is not used there)
+gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=amo-icon-apply      # uploads stores.firefox.icon
+gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=amo-previews-list   # listing screenshots on AMO
+gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=amo-previews-apply  # replaces them with stores.firefox.previews
 gh run watch -R ANcpLua/save-media
 ```
 
