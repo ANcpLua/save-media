@@ -1,0 +1,41 @@
+# Merges Dependabot's "minor-and-patch" group PRs after the ci workflow
+# succeeded on them. Major bumps are never merged here. No branch protection
+# is needed: this waits for the ci run itself, not for a required check.
+name: dependabot-auto-merge
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge the minor-and-patch PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -eu
+          PR=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$HEAD_BRANCH" --state open --json number,title,headRefOid --jq '.[0]')
+          [ -n "$PR" ] || { echo "no open PR for $HEAD_BRANCH"; exit 0; }
+          NUMBER=$(printf '%s' "$PR" | jq -r .number)
+          TITLE=$(printf '%s' "$PR" | jq -r .title)
+          SHA=$(printf '%s' "$PR" | jq -r .headRefOid)
+          [ "$SHA" = "$HEAD_SHA" ] || { echo "PR head moved since this ci run; skipping"; exit 0; }
+          case "$TITLE" in
+            *minor-and-patch*) ;;
+            *) echo "not a minor-and-patch PR: $TITLE"; exit 0 ;;
+          esac
+          gh pr merge "$NUMBER" -R "$GITHUB_REPOSITORY" --squash --delete-branch
+          echo "merged #$NUMBER ($TITLE)"

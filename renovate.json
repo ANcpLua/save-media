@@ -1,4 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>ANcpLua/github-settings-automation"]
+  "enabled": false,
+  "description": "Dependency updates come from Dependabot (.github/dependabot.yml) since 2026-09-12; Renovate stays off so the two do not open duplicate PRs."
 }
