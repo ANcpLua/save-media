@@ -11,7 +11,8 @@
  *     + per-track init/m4s fragments — demuxed HLS for the a/v merge engine
  *   /hls-aes/key + master + media + ciphertext segments — AES-128 in the clear
  *   /hls-fairplay/*, /hls-sample-aes/*     — key tags a CDM owns, refused
- *   /dash/clip.mpd                         — clear DASH descriptor, refused download
+ *   /dash/clip.mpd                         — audio-less DASH, refused download
+ *   /dash-clear/clip.mpd + init/chunks     — real clear DASH video+audio, downloads
  *   /drm/widevine.mpd                      — DASH with Widevine ContentProtection
  *   /drm/clearkey.mpd                      — DASH with ClearKey refusal
  *   /low/clip.mp4                            — sub-720p video
@@ -22,7 +23,7 @@
  * ffmpeg-generated containers so download e2e can verify playable output.
  */
 import http from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -123,6 +124,22 @@ seg000.ts
 #EXT-X-ENDLIST
 `;
 
+/**
+ * The clear DASH fixture is a real ffmpeg packaging (one MPD plus init and
+ * chunk files per stream), so its routes are read from the directory instead
+ * of being listed one by one. Regenerate with
+ * `node scripts/generate-dash-fixtures.mjs`.
+ */
+function dashClearRoutes() {
+  const dir = join(mediaRoot, "dash-clear");
+  const typeFor = name => (name.endsWith(".mpd") ? "application/dash+xml" : "video/mp4");
+  return Object.fromEntries(
+    readdirSync(dir)
+      .filter(name => !name.startsWith("."))
+      .map(name => [`/dash-clear/${name}`, { type: typeFor(name), body: fixture(`dash-clear/${name}`) }]),
+  );
+}
+
 const routes = {
   // Direct files
   "/direct/clip.mp4":  { type: "video/mp4", body: fixture("direct/clip.mp4") },
@@ -188,6 +205,8 @@ seg000.ts
   "/hls-sample-aes/media.m3u8":  { type: "application/vnd.apple.mpegurl", body: Buffer.from(HLS_SAMPLE_AES_MEDIA) },
   "/hls-sample-aes/seg000.ts":   { type: "video/mp2t", body: fixture("hls-aes/seg000.ts") },
 
+  ...dashClearRoutes(),
+
   // DASH detection/refusal only. Segment bytes are intentionally not served.
   "/dash/clip.mpd":     { type: "application/dash+xml", body: Buffer.from(DASH_MPD) },
 
@@ -231,6 +250,7 @@ const pages = {
   "hls-fairplay": html("hls-fairplay", `<script>fetch("/hls-fairplay/master.m3u8");fetch("/hls-fairplay/media.m3u8");</script><p>hls fairplay fixture</p>`),
   "hls-sample-aes": html("hls-sample-aes", `<script>fetch("/hls-sample-aes/master.m3u8");fetch("/hls-sample-aes/media.m3u8");</script><p>hls sample-aes fixture</p>`),
   dash: html("dash", `<script>fetch("/dash/clip.mpd");</script><p>dash fixture</p>`),
+  "dash-clear": html("dash-clear", `<script>fetch("/dash-clear/clip.mpd");</script><p>clear dash video+audio fixture</p>`),
   widevine: html("widevine", `<script>fetch("/drm/widevine.mpd");</script><p>widevine fixture</p>`),
   clearkey: html("clearkey", `<script>fetch("/drm/clearkey.mpd");</script><p>clearkey fixture</p>`),
   negative: html("negative", `<img src="/negative/asset.jpg"><img src="/negative/asset.jpeg"><img src="/negative/asset.png"><iframe src="/negative/page.html"></iframe><link rel="stylesheet" href="/negative/asset.css"><script src="/negative/asset.js"></script><audio src="/negative/asset.mp3" controls></audio><a href="/negative/asset.m4a">audio</a>`),

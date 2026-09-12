@@ -136,11 +136,19 @@ try {
   expectPlayable(aesFile, /mp4|mov/);
   console.log("✓ Edge decrypted an AES-128 HLS fixture whose key is served in the clear");
 
+  await clearDownloadHistory(probe);
+  const dashClear = await firstDescriptor(context, probe, baseURL, "dash-clear", d => d.protocol === "dash" && d.capabilities?.drmBlocked === false);
+  const dashClearName = `edge-dash-clear-${Date.now()}.mp4`;
+  await startDescriptorDownload(probe, dashClear, dashClearName);
+  const dashClearFile = await waitForDownloadedFile(probe, dashClearName);
+  expectPlayable(dashClearFile, /mp4|mov/);
+  console.log("✓ Edge merged a clear DASH video+audio fixture into one MP4");
+
   await expectFailure(context, probe, baseURL, "dash", d => d.protocol === "dash", "dash_unsupported");
   await expectFailure(context, probe, baseURL, "hls-live", d => d.protocol === "hls", "hls_live_unsupported");
   await expectFailure(context, probe, baseURL, "hls-fairplay", d => d.protocol === "hls", "cdm_required");
   await expectFailure(context, probe, baseURL, "hls-sample-aes", d => d.protocol === "hls", "cdm_required");
-  console.log("✓ Edge surfaced DASH, live HLS, FairPlay and SAMPLE-AES refusals");
+  console.log("✓ Edge surfaced audio-less DASH, live HLS, FairPlay and SAMPLE-AES refusals");
 
   console.log("✓ Edge runtime smoke passed");
 } finally {

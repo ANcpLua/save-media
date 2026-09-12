@@ -84,7 +84,26 @@ test.describe("fixture server", () => {
     expect(Number(key.headers()["content-length"])).toBe(16);
   });
 
-  test("serves a clear DASH MPD for detection/refusal", async ({ page }) => {
+  test("serves the clear DASH packaging: static MPD, SegmentTemplate, init and chunk bytes", async ({ page }) => {
+    await page.goto("/page/dash-clear.html");
+    const mpd = await page.request.get("/dash-clear/clip.mpd");
+    expect(mpd.headers()["content-type"]).toContain("application/dash+xml");
+    const text = await mpd.text();
+    expect(text).toContain('type="static"');
+    expect(text).toContain("<SegmentTemplate");
+    expect(text).not.toContain("<SegmentBase");
+    expect(text).not.toContain("<ContentProtection");
+    expect(text).toContain('mimeType="video/mp4"');
+    expect(text).toContain('mimeType="audio/mp4"');
+    // Real bytes for both streams, not a manifest pointing at nothing.
+    for (const name of ["init-stream0.m4s", "chunk-stream0-00001.m4s", "init-stream1.m4s", "chunk-stream1-00001.m4s"]) {
+      const segment = await page.request.get(`/dash-clear/${name}`);
+      expect(segment.status(), name).toBe(200);
+      expect((await segment.body()).byteLength, name).toBeGreaterThan(100);
+    }
+  });
+
+  test("serves an audio-less DASH MPD for detection/refusal", async ({ page }) => {
     await page.goto("/page/dash.html");
     const mpd = await page.request.get("/dash/clip.mpd");
     const text = await mpd.text();

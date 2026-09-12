@@ -15,7 +15,8 @@ It refuses instead of guessing when any of these are true:
   KEYFORMAT other than identity, SAMPLE-AES, SAMPLE-AES-CTR), HLS Live/DVR, or
   malformed HLS fMP4/CMAF;
 - the stream is DASH without a clear, fully addressed video+audio pair
-  (dynamic/live MPD, byte-range addressing, or no audio AdaptationSet);
+  (dynamic/live MPD, byte-range/SegmentBase addressing, or no audio
+  AdaptationSet);
 - the server denies access, rate-limits, or is busy after retries;
 - a required manifest or media segment cannot be fetched;
 - the output would exceed the browser in-memory Blob limit;
@@ -34,8 +35,8 @@ files as video.
 | Plain HLS VOD with MPEG-TS segments | Implemented | Chrome e2e remuxes a real TS fixture to playable MP4. |
 | Plain HLS VOD with clear fMP4/CMAF segments | Implemented | Chrome e2e downloads a real `EXT-X-MAP` fixture to playable MP4 after init/fragment validation. |
 | Demuxed HLS (`EXT-X-MEDIA` audio group) → single merged MP4 | Implemented | Chrome e2e downloads a real demuxed fMP4 fixture (separate video/audio media playlists) and `ffprobe` verifies the output MP4 carries both an h264 video and an aac audio stream. A demuxed variant never falls back to the plain-HLS path, so a silent video-only file cannot be saved. |
-| Clear DASH video+audio → single merged MP4 | Implemented | DASH MPDs with a clear, fully addressed video+audio AdaptationSet pair dispatch to the same av-merge engine (dispatch unit tests); anything less refuses with `dash_unsupported`. The merge engine itself is gated by the demuxed-HLS e2e `ffprobe` spec. |
-| DASH refusal (encrypted, dynamic/live, byte-range, or audio-less) | Implemented | DASH fixtures produce descriptors and download refuses with `dash_unsupported`; dynamic-MPD fixture stays unmaterialized. |
+| Clear DASH video+audio → single merged MP4 | Implemented | Chrome e2e and `smoke:edge` download a real ffmpeg DASH packaging (static MPD, SegmentTemplate addressing, H.264 video and AAC audio AdaptationSets, committed init and chunk bytes) and `ffprobe` verifies the output MP4 carries both streams; `smoke:firefox` carries the same check. Core unit tests assert the same manifest text materializes both AdaptationSets and dispatches to av-merge. Regenerate the fixture with `node scripts/generate-dash-fixtures.mjs`. |
+| DASH refusal (encrypted, dynamic/live, byte-range, or audio-less) | Implemented | The audio-less SegmentList fixture produces a descriptor and refuses with `dash_unsupported`; dynamic-MPD fixture stays unmaterialized. Encrypted MPDs refuse with `cdm_required` or `clearkey_deferred`. |
 | YouTube adaptive H.264+AAC merge — unlisted builds only | Implemented | MAIN-world resolver reads the page's own InnerTube player response, picks an H.264 video itag (137/136/135/134) + AAC itag (140), and the pair merges to one MP4 via the av-merge engine; `googlevideo.com` is captured as an extractor-managed host. Unit tests cover the resolver (golden fixture), registry, and host capture. Chrome Web Store prohibits YouTube-download extensions, so this capability ships only in unlisted/personal builds. |
 | HLS AES-128 with a key served in the clear | Implemented | Chrome e2e and `smoke:edge` download the AES-128 fixture and `ffprobe` verifies the output; a unit test decrypts the fixture ciphertext and asserts the job writes the plaintext byte for byte. Key fetch is one 16-byte request per key URI, cached across segments. |
 | HLS key that a CDM owns → refusal | Implemented | FairPlay (`KEYFORMAT="com.apple.streamingkeydelivery"`) and SAMPLE-AES fixtures refuse with `cdm_required` without the key URI ever being requested; a key URI answering 401/402/403, or with other than 16 bytes, refuses with `license_bound_stream`. |
@@ -45,8 +46,8 @@ files as video.
 | Twitter/X & Instagram progressive MP4 | Implemented | MAIN-world site resolvers (`content/sites/*`) read the page's own API responses and surface the muxed progressive MP4 as a verified direct download. Unit tests cover the resolvers (golden fixtures) and the fetch/XHR interceptor wiring; generic discovery is suppressed on these hosts so the demuxed video-only stream cannot outrank it. |
 | `Alt+S` best download command | Implemented | Automated tests check command registration; headed Playwright does not reliably fire extension shortcuts. |
 | Local downloader (opt-in) | Implemented | Optional `nativeMessaging` permission requested from the popup. Background hands only the page URL to `packages/native-host` (user-installed yt-dlp and ffmpeg) when the user asks, or as the Alt+S fallback when the in-browser engine has nothing to save or refuses for a non-DRM reason (`DELEGABLE_ERROR_CODES` allowlist). Protected media never reaches the host. Progress, completion, and failures stream back to the popup and to an in-page toast. See `docs/boundary-rules.md`. |
-| Edge runtime | Release-gated | `smoke:edge` launches Edge with the unpacked Chromium build, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. |
-| Firefox runtime | Release-gated | `smoke:firefox` temporarily installs the extension, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, and verifies refusal fixtures. |
+| Edge runtime | Release-gated | `smoke:edge` launches Edge with the unpacked Chromium build, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, decrypts AES-128 HLS, merges clear DASH, presses Alt+S, and verifies the refusal fixtures. |
+| Firefox runtime | Release-gated | `smoke:firefox` temporarily installs the extension, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, decrypts AES-128 HLS, merges clear DASH, and verifies the refusal fixtures. Firefox 155 with selenium-webdriver 4.44 refuses to navigate to `moz-extension://` over classic WebDriver ("Navigation to … is not allowed in this context"), so this smoke needs a driver or Firefox version where that step works; the Chromium e2e and `smoke:edge` cover the same capabilities meanwhile. |
 
 ## Unsupported
 

@@ -3,10 +3,11 @@
 Browser extension for Chrome, Edge and Firefox that saves browser-visible video
 when it can prove the bytes are one complete, playable file. It saves direct
 MP4, WebM and MKV files, plain HLS VOD with MPEG-TS segments (remuxed locally to
-MP4), clear HLS fMP4/CMAF streams, and AES-128 HLS whose key the server hands
-over in the clear (decrypted locally with WebCrypto). It refuses DRM, keys only
-a CDM can unwrap, DASH, live streams, and anything it cannot verify, rather
-than writing a broken file.
+MP4), clear HLS fMP4/CMAF streams, AES-128 HLS whose key the server hands over
+in the clear (decrypted locally with WebCrypto), and clear DASH with a fully
+addressed video+audio pair (merged locally into one MP4). It refuses DRM, keys
+only a CDM can unwrap, live streams, dynamic or byte-range-addressed DASH, and
+anything it cannot verify, rather than writing a broken file.
 Everything runs in the browser. There is no telemetry, no account and no server.
 
 The support contract is [`docs/design.md`](docs/design.md). The legal and

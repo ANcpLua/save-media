@@ -20,12 +20,25 @@ const fixtureBaseURL = `http://127.0.0.1:${process.env.SAVEMEDIA_FIXTURE_PORT ??
  * chrome.runtime message path the popup uses in production.
  */
 
+type SegmentRef =
+  | { kind: "direct"; url: string }
+  | { kind: "byte-range"; url: string }
+  | { kind: "hls-segments"; playlistUrl: string; initSegmentUrl: string | null; segmentUrls: string[] }
+  | { kind: "dash-segments"; initUrl: string; mediaUrls: string[] };
+
 interface Descriptor {
   id: string;
   protocol: string;
   container: string;
   pageUrl: string;
-  variants: Array<{ id: string; height: number | null; bitrate: number | null; audioRenditionId: string | null }>;
+  variants: Array<{
+    id: string;
+    height: number | null;
+    bitrate: number | null;
+    audioRenditionId: string | null;
+    segmentRef: SegmentRef;
+  }>;
+  audioRenditions?: Array<{ id: string; audioRenditionId: string | null; segmentRef: SegmentRef }>;
   drm: null | { reason: string };
   capabilities: { drmBlocked: boolean; directDownload: boolean };
 }
@@ -578,6 +591,35 @@ test.describe("extension classifies real fixture pages", () => {
       expect(descriptor).toBeDefined();
       await expect(startDescriptorDownloadExpectFailure(descriptor!, "e2e-hls-live.mp4"))
         .resolves.toBe("hls_live_unsupported");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("download pipeline merges clear DASH video+audio into one MP4 carrying both streams", async () => {
+    test.skip(!ffprobeAvailable(), "ffprobe not found. Install ffmpeg/ffprobe or put ffprobe on PATH.");
+    await clearDownloadHistory();
+    const page = await openFixtureAndWait("dash-clear", ds => ds.some(d => d.protocol === "dash"));
+    try {
+      const descriptor = (await descriptorsForUrlContaining("/page/dash-clear.html")).find(d => d.protocol === "dash");
+      expect(descriptor).toBeDefined();
+      expect(descriptor!.drm, `a clear MPD must carry no DRM status: ${JSON.stringify(descriptor!.drm)}`).toBeNull();
+      // Both AdaptationSets must have survived parsing with fetchable URLs;
+      // that pair is what routes the download through the merge engine
+      // instead of the dash_unsupported refusal.
+      expect(descriptor!.variants.some(v => v.segmentRef.kind === "dash-segments" && v.segmentRef.mediaUrls.length > 0),
+        `expected a materialized video AdaptationSet, got ${JSON.stringify(descriptor!.variants)}`).toBe(true);
+      expect((descriptor!.audioRenditions ?? []).length,
+        `expected an audio AdaptationSet, got ${JSON.stringify(descriptor!.audioRenditions)}`).toBeGreaterThan(0);
+
+      await startDescriptorDownload(descriptor!, "e2e-dash-clear.mp4");
+      const file = await waitForCompletedDownload(page, "e2e-dash-clear.mp4");
+      expectPlayable(file, /mp4|mov/);
+      const streams = probeStreams(file);
+      expect(streams.some(st => st.codec_type === "video" && st.codec_name === "h264"),
+        `expected an h264 video stream, got ${JSON.stringify(streams)}`).toBe(true);
+      expect(streams.some(st => st.codec_type === "audio" && st.codec_name === "aac"),
+        `expected an aac audio stream, got ${JSON.stringify(streams)}`).toBe(true);
     } finally {
       await page.close();
     }

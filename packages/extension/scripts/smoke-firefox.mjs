@@ -105,10 +105,27 @@ try {
   expectPlayable(fmp4File, /mp4|mov/);
   console.log("✓ Firefox downloaded a clear HLS fMP4/CMAF fixture");
 
+  await clearDownloadHistory();
+  const aes = await firstDescriptor("hls-aes", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const aesName = `firefox-hls-aes-${Date.now()}.mp4`;
+  await startDescriptorDownload(aes, aesName);
+  const aesFile = await waitForDownloadedFile(aesName);
+  expectPlayable(aesFile, /mp4|mov/);
+  console.log("✓ Firefox decrypted an AES-128 HLS fixture whose key is served in the clear");
+
+  await clearDownloadHistory();
+  const dashClear = await firstDescriptor("dash-clear", d => d.protocol === "dash" && d.capabilities?.drmBlocked === false);
+  const dashClearName = `firefox-dash-clear-${Date.now()}.mp4`;
+  await startDescriptorDownload(dashClear, dashClearName);
+  const dashClearFile = await waitForDownloadedFile(dashClearName);
+  expectPlayable(dashClearFile, /mp4|mov/);
+  console.log("✓ Firefox merged a clear DASH video+audio fixture into one MP4");
+
   await expectFailure("dash", d => d.protocol === "dash", "dash_unsupported");
-  await expectFailure("hls-aes", d => d.protocol === "hls", "hls_encryption_unsupported");
   await expectFailure("hls-live", d => d.protocol === "hls", "hls_live_unsupported");
-  console.log("✓ Firefox surfaced DASH, encrypted HLS, and live HLS refusals");
+  await expectFailure("hls-fairplay", d => d.protocol === "hls", "cdm_required");
+  await expectFailure("hls-sample-aes", d => d.protocol === "hls", "cdm_required");
+  console.log("✓ Firefox surfaced audio-less DASH, live HLS, FairPlay and SAMPLE-AES refusals");
 
   console.log("✓ Firefox runtime smoke passed");
 

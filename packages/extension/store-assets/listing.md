@@ -21,11 +21,12 @@ text. Entered in both on 2026-09-12 together with the corrected single purpose
 statement and privacy policy URL (the URL had a typo in the account name).
 Applied with the dashboards, not with a script.
 
-Third trap, added 2026-09-12 with AES-128 support: **claim only what a test
-covers.** A draft read "supports unencrypted HLS and DASH streams", and clear
-DASH is refused by the in-browser engine (`dash_unsupported`), so that line
-promised a feature the code does not have. Every capability sentence below
-maps to a test in `tests/e2e/classification.spec.ts`.
+Third trap, added 2026-09-12: **claim only what a test covers.** A draft read
+"supports unencrypted HLS and DASH streams" while clear DASH had no end-to-end
+proof and AES-128 was refused outright. Both are now real and tested, so the
+sentence is allowed, but the rule stands: every capability sentence below maps
+to a test in `tests/e2e/classification.spec.ts` that downloads the fixture and
+lets `ffprobe` read the result.
 
 savemedia saves the video you are watching as an MP4, WebM or MKV file in
 your Downloads folder, when the browser already receives it unprotected. DRM,
@@ -41,18 +42,20 @@ Supported: direct MP4, WebM, and MKV files verified by headers or bytes; plain
 HLS VOD with MPEG-TS segments remuxed locally to MP4; clear HLS fMP4/CMAF
 streams assembled locally after MP4 box validation; AES-128 HLS when the
 server hands the key to the page in the clear, decrypted locally with the
-browser's own WebCrypto.
+browser's own WebCrypto; and complete DASH presentations that carry a video
+and an audio track without protection, merged locally into one MP4.
 
-Not supported: DASH, live streams, and any stream whose key is held by a
-protected media module. When something cannot be saved, the popup says so
-instead of writing a broken file.
+Not supported: live or still-growing presentations, DASH that addresses its
+media by byte ranges, and any stream whose key is held by a protected media
+module. When something cannot be saved, the popup says so instead of writing a
+broken file.
 
 Everything runs locally in the browser. No telemetry, ads, accounts, or
 developer-operated server.
 
 ## Chrome and Edge summary
 
-Video downloader for verified direct files and plain HLS streams.
+Video downloader for verified direct files and unprotected HLS and DASH.
 
 ## AMO description
 
@@ -64,15 +67,16 @@ half-downloaded file behind.
 
 Supported: direct MP4, WebM, and MKV files; plain HLS VOD with MPEG-TS
 segments; clear HLS fMP4/CMAF streams; AES-128 HLS when the key is served to
-the page in the clear.
+the page in the clear; complete unprotected DASH with a video and an audio
+track, merged into one MP4.
 
-Not supported: DASH, live streams, and any stream whose key is held by a
-protected media module. When something cannot be saved, the popup says so
-instead of writing a broken file.
+Not supported: live or still-growing presentations, DASH addressed by byte
+ranges, and any stream whose key is held by a protected media module. When
+something cannot be saved, the popup says so instead of writing a broken file.
 
 Everything runs locally in the browser. No telemetry, ads, accounts, or
 developer-operated server.
 
 ## AMO summary
 
-Save verified direct video files and plain HLS streams.
+Save verified direct video files and unprotected HLS and DASH streams.
