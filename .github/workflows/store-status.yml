@@ -7,7 +7,7 @@ on:
         description: What to query. Everything is read-only except amo-listing-apply, which writes the AMO description from the repo.
         type: choice
         default: chrome
-        options: [chrome, edge, firefox, amo-listing-diff, amo-listing-apply]
+        options: [status, chrome, edge, firefox, amo-listing-diff, amo-listing-apply]
 
 permissions: {}
 
@@ -25,6 +25,21 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: bun install --frozen-lockfile
+
+      # One table for all three stores: live version from the public listings,
+      # review state and credential check through the APIs.
+      - name: All stores (markdown table)
+        if: ${{ inputs.store == 'status' }}
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: bunx store-publish status --markdown | tee "$GITHUB_STEP_SUMMARY"
 
       - name: Chrome Web Store status
         if: ${{ inputs.store == 'chrome' }}

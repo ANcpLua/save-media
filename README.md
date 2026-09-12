@@ -113,6 +113,7 @@ Store review traps, each one has already cost a rejection or a takedown:
 publishes nothing:
 
 ```sh
+gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=status            # one table: live version, review state, credential check for all three
 gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=chrome             # review and publish state
 gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=firefox            # versions and their review status
 gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=edge               # credential probe, key length, days until the key expires
@@ -217,9 +218,9 @@ green:
   request validation, output directory containment, progress parsing,
   cancel and timeout, partial-file cleanup, log rotation, and install.sh and
   setup.sh against a temporary HOME.
-- Manual run in Chrome, Edge and Firefox with the built extension: switch
-  Local downloader on, run the setup command the popup shows, save a DASH
-  page, confirm the popup refuses DRM and the Alt+S fallback toast appears.
+- Manual run in Edge and Firefox with the built extension, the one step
+  that needs a person because of the permission prompt. Checklist:
+  [`docs/manual-check-local-downloader.md`](docs/manual-check-local-downloader.md).
   Still open.
 - The `nativeMessaging` permission is new for the stores, so expect a
   re-review. The justification text is in `docs/privacy-policy.md`.
