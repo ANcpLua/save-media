@@ -154,17 +154,29 @@ class HostProtocolTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(log), log)
 
 
-def load_host_module():
+def load_host_module(case: unittest.TestCase):
+    """Import host.py in-process with its log redirected to a temp dir that is
+    removed, and the log handle closed, when the test case ends."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("savemedia_host", HOST)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    log_dir = tempfile.mkdtemp(prefix="savemedia-host-log-")
+    module._log_path = lambda: os.path.join(log_dir, "host.log")
+
+    def cleanup() -> None:
+        if module._log_file is not None:
+            module._log_file.close()
+            module._log_file = None
+        shutil.rmtree(log_dir, ignore_errors=True)
+
+    case.addCleanup(cleanup)
     return module
 
 
 class ClassifierTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.host = load_host_module()
+        self.host = load_host_module(self)
 
     def test_drm_word_boundary_and_url_stripping(self) -> None:
         c = self.host.classify_stderr
@@ -201,7 +213,7 @@ class FramingTest(unittest.TestCase):
     """read_frame / encode_frame against in-memory streams."""
 
     def setUp(self) -> None:
-        self.host = load_host_module()
+        self.host = load_host_module(self)
 
     def frame(self, payload: bytes) -> "io.BytesIO":
         import io
@@ -241,7 +253,7 @@ class FramingTest(unittest.TestCase):
 
 class ValidationTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.host = load_host_module()
+        self.host = load_host_module(self)
         self.home = tempfile.mkdtemp(prefix="savemedia-host-home-")
         self.old_home = os.environ.get("HOME")
         os.environ["HOME"] = self.home
@@ -303,7 +315,7 @@ class ValidationTest(unittest.TestCase):
 
 class JobTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.host = load_host_module()
+        self.host = load_host_module(self)
         self.sent = []
         self.host.send = lambda message: self.sent.append(message)
         self.work = tempfile.mkdtemp(prefix="savemedia-job-")
@@ -376,7 +388,7 @@ class JobTest(unittest.TestCase):
 
 class LogRotationTest(unittest.TestCase):
     def test_rotation_keeps_a_bounded_number_of_files(self) -> None:
-        host = load_host_module()
+        host = load_host_module(self)
         work = tempfile.mkdtemp(prefix="savemedia-log-")
         try:
             path = os.path.join(work, "host.log")
