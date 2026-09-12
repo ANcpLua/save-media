@@ -84,7 +84,7 @@ const localDownloader = createLocalDownloader({
     set: items => chrome.storage.local.set(items),
   },
   permissions: {
-    contains: perm => chrome.permissions.contains({ permissions: [...perm.permissions] }),
+    contains: perm => chrome.permissions.contains({ permissions: [...perm.permissions] as chrome.runtime.ManifestPermission[] }),
   },
   env: { browser: __BROWSER__, userAgent: navigator.userAgent },
   onJobUpdate: job => broadcastLocalJob(job),
@@ -153,7 +153,7 @@ chrome.runtime.onInstalled.addListener(details => {
       remove: keys => chrome.storage.local.remove([...keys]),
     },
     permissions: {
-      contains: perm => chrome.permissions.contains({ permissions: [...perm.permissions] }),
+      contains: perm => chrome.permissions.contains({ permissions: [...perm.permissions] as chrome.runtime.ManifestPermission[] }),
     },
     log: message => logger.info(message),
   }, chrome.runtime.getManifest().version);
