@@ -7,7 +7,7 @@ on:
         description: Which store to query (read-only, publishes nothing)
         type: choice
         default: chrome
-        options: [chrome, firefox]
+        options: [chrome, firefox, amo-listing-diff, amo-listing-apply]
       item:
         description: Chrome Web Store item id (blank = this extension)
         type: string
@@ -49,3 +49,17 @@ jobs:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: node scripts/publish-firefox.mjs status
+
+      - name: AMO listing diff (read-only)
+        if: ${{ inputs.store == 'amo-listing-diff' }}
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: node scripts/update-amo-listing.mjs diff
+
+      - name: AMO listing apply
+        if: ${{ inputs.store == 'amo-listing-apply' }}
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: node scripts/update-amo-listing.mjs apply
