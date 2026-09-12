@@ -48,6 +48,6 @@
   },
   "devDependencies": {
     "@ancplua/store-publish": "github:ANcpLua/store-publish#v1.4.3",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }
