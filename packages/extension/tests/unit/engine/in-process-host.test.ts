@@ -51,7 +51,7 @@ describe("in-process engine host", () => {
       sendToBackground: () => undefined,
       downloadJob: vi.fn((_descriptor, _choice, _progress, abortSignal) => {
         signal = abortSignal;
-        return new Promise(() => undefined);
+        return new Promise<never>(() => undefined);
       }),
     });
 

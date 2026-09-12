@@ -1,22 +1,30 @@
 import { vi, beforeEach, afterEach } from "vitest";
 
+/**
+ * vitest 5 infers `Mock<Procedure>` for a bare `vi.fn()`, and `Procedure` is
+ * internal to vitest, so a declaration-emitting file cannot name the inferred
+ * type (TS2883). Naming the signature ourselves keeps the loose vitest 1
+ * behaviour these chrome stubs rely on.
+ */
+export type AnyMockFn = (...args: any[]) => any;
+
 export function makeChromeMock() {
   return {
     runtime: {
-      onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+      onMessage: { addListener: vi.fn<AnyMockFn>(), removeListener: vi.fn<AnyMockFn>() },
       sendMessage: vi.fn((_msg: unknown, cb?: (resp: unknown) => void) => { if (cb) cb(undefined); }),
       getURL: (path: string) => `chrome-extension://abcdef/${path}`,
       lastError: undefined as undefined | { message: string },
-      openOptionsPage: vi.fn(),
-      connect: vi.fn(),
-      connectNative: vi.fn(),
+      openOptionsPage: vi.fn<AnyMockFn>(),
+      connect: vi.fn<AnyMockFn>(),
+      connectNative: vi.fn<AnyMockFn>(),
       getContexts: vi.fn(async () => []),
     },
     tabs: {
-      onRemoved: { addListener: vi.fn() },
-      onUpdated: { addListener: vi.fn() },
+      onRemoved: { addListener: vi.fn<AnyMockFn>() },
+      onUpdated: { addListener: vi.fn<AnyMockFn>() },
       query: vi.fn((_q: unknown, cb: (tabs: { id: number }[]) => void) => cb([{ id: 1 }])),
-      sendMessage: vi.fn(),
+      sendMessage: vi.fn<AnyMockFn>(),
     },
     downloads: {
       download: vi.fn(async () => 1),

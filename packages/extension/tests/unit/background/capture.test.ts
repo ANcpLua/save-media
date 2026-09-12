@@ -64,7 +64,7 @@ function captureMsg(url: string, audioUrl?: string): CaptureMessage {
 
 function harness(fetchImpl: CaptureDeps["fetchFn"]) {
   const fetchFn = vi.fn(fetchImpl);
-  const onDescriptor = vi.fn<[number, StreamDescriptor], void>();
+  const onDescriptor = vi.fn<(tabId: number, descriptor: StreamDescriptor) => void>();
   const handle = createCaptureHandler({ fetchFn, onDescriptor });
   return { fetchFn, onDescriptor, handle };
 }
