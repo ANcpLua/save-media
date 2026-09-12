@@ -65,7 +65,7 @@ export function userMessage(err: JobError): UserMessage {
     case "missing_video_track":
       return {
         title: "No video track in source",
-        body: `The source advertises no video track in its ${err.declaredIn}. savemedia only handles complete video items — audio-only streams are out of scope.`,
+        body: `The source advertises no video track in its ${err.declaredIn}. savemedia only handles complete video items; audio-only streams are out of scope.`,
         action: null,
       };
 
