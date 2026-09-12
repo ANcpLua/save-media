@@ -39,7 +39,7 @@ Where the credentials live:
 
 | Credential | Location |
 | --- | --- |
-| All ten store secrets | GitHub Actions secrets in this repository (`gh api repos/ANcpLua/save-media/actions/secrets --jq '.secrets[].name'`). GitHub never returns values; they can only be exercised in a workflow run. `CWS_ITEM_ID` and `EDGE_PRODUCT_ID` are still set but unused, the ids come from `store.config.json`. |
+| The eight store secrets | GitHub Actions secrets in this repository (`gh api repos/ANcpLua/save-media/actions/secrets --jq '.secrets[].name'`). GitHub never returns values; they can only be exercised in a workflow run. Item and product ids are not secrets, they live in `store.config.json`. |
 | Chrome OAuth client and refresh token | `~/.config/vitals/cws-client.json` and `~/.config/vitals/cws-refresh-token.txt`. Google Cloud project `server` (`uplifted-nuance-408417`), OAuth client "Desktop client 2", consent screen in production, so the refresh token does not expire on its own. |
 | Edge API key and client id | `~/.config/vitals/store-secrets.env`, pushed to both repositories by `~/.config/vitals/set-store-secrets.sh`. |
 | AMO JWT issuer and secret | macOS keychain item `AMO API (addons.mozilla.org)`, issuer in the account field. Presence check: `security find-generic-password -s "AMO API (addons.mozilla.org)"` without `-w`. |
@@ -152,7 +152,7 @@ bun run typecheck        # builds core first
 bun run test:e2e         # playwright, chromium
 bun run --filter @savemedia/extension dev            # vite watch, load dist-chrome unpacked
 bun run --filter @savemedia/extension smoke:native   # local downloader end to end
-python3 packages/native-host/test_host.py
+python3 -m unittest discover -s packages/native-host   # protocol, host internals, install.sh, setup.sh
 bun run verify           # full pre-release check
 ```
 
@@ -213,6 +213,10 @@ green:
   Chromium plus the real host and the user's own yt-dlp and ffmpeg. Verified
   on 2026-09-12 (yt-dlp 2026.08.19, ffmpeg 9.0.1, saved file checked with
   ffprobe).
+- `python3 -m unittest discover -s packages/native-host` passes: framing,
+  request validation, output directory containment, progress parsing,
+  cancel and timeout, partial-file cleanup, log rotation, and install.sh and
+  setup.sh against a temporary HOME.
 - Manual run in Chrome, Edge and Firefox with the built extension: switch
   Local downloader on, run the setup command the popup shows, save a DASH
   page, confirm the popup refuses DRM and the Alt+S fallback toast appears.

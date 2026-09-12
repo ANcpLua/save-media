@@ -30,6 +30,14 @@ PROTOCOL_VERSION = 1
 DOWNLOAD_TIMEOUT_SECONDS = 30 * 60
 KILL_GRACE_SECONDS = 3.0
 PROGRESS_MIN_INTERVAL = 0.25
+# Native messaging caps: the browser accepts at most 1 MB from a host; a host
+# accepts up to 4 GB by spec. Nothing this host receives is ever more than a
+# few hundred bytes, so a smaller inbound cap protects against a corrupt
+# frame header making read_message wait for gigabytes that never arrive.
+MAX_INBOUND_BYTES = 1024 * 1024
+MAX_OUTBOUND_BYTES = 1024 * 1024
+LOG_MAX_BYTES = 2 * 1024 * 1024
+LOG_BACKUPS = 3
 
 ALLOWED_QUALITIES = ("best", "1080", "720", "480")
 ALLOWED_COOKIE_BROWSERS = ("chrome", "chromium", "edge", "firefox", "brave")
@@ -65,6 +73,22 @@ _log_lock = threading.Lock()
 _log_file = None
 
 
+def _rotate_log(path: str) -> None:
+    """Keep the log bounded: host.log -> host.log.1 -> ... -> host.log.N."""
+    try:
+        if os.path.getsize(path) < LOG_MAX_BYTES:
+            return
+    except OSError:
+        return
+    for index in range(LOG_BACKUPS, 0, -1):
+        older = "%s.%d" % (path, index)
+        newer = path if index == 1 else "%s.%d" % (path, index - 1)
+        if os.path.exists(older):
+            os.remove(older)
+        if os.path.exists(newer):
+            os.rename(newer, older)
+
+
 def log(message: str) -> None:
     global _log_file
     with _log_lock:
@@ -72,6 +96,7 @@ def log(message: str) -> None:
             if _log_file is None:
                 path = _log_path()
                 os.makedirs(os.path.dirname(path), exist_ok=True)
+                _rotate_log(path)
                 _log_file = open(path, "a", encoding="utf-8")
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             _log_file.write("%s %s\n" % (stamp, message))
@@ -89,8 +114,19 @@ _stdout = sys.stdout.buffer
 _stdin = sys.stdin.buffer
 
 
-def send(message: Dict[str, Any]) -> None:
+def encode_frame(message: Dict[str, Any]) -> bytes:
     data = json.dumps(message, ensure_ascii=False).encode("utf-8")
+    if len(data) > MAX_OUTBOUND_BYTES:
+        # The browser would drop the connection on an oversize frame. Only a
+        # runaway error message could get here; keep the shape, cut the text.
+        trimmed = dict(message)
+        trimmed["message"] = str(message.get("message", ""))[:1000] + " [truncated]"
+        data = json.dumps(trimmed, ensure_ascii=False).encode("utf-8")
+    return data
+
+
+def send(message: Dict[str, Any]) -> None:
+    data = encode_frame(message)
     with _stdout_lock:
         _stdout.write(struct.pack("@I", len(data)))
         _stdout.write(data)
@@ -98,15 +134,23 @@ def send(message: Dict[str, Any]) -> None:
 
 
 def read_message() -> Optional[Dict[str, Any]]:
-    header = _stdin.read(4)
+    return read_frame(_stdin)
+
+
+def read_frame(stream: Any) -> Optional[Dict[str, Any]]:
+    """One length-prefixed JSON object; None on EOF or a frame that cannot be trusted."""
+    header = stream.read(4)
     if not header or len(header) < 4:
         return None
     (length,) = struct.unpack("@I", header)
     if length == 0:
         return {}
+    if length > MAX_INBOUND_BYTES:
+        log("inbound frame of %d bytes exceeds the %d byte cap; closing" % (length, MAX_INBOUND_BYTES))
+        return None
     body = b""
     while len(body) < length:
-        chunk = _stdin.read(length - len(body))
+        chunk = stream.read(length - len(body))
         if not chunk:
             return None
         body += chunk
