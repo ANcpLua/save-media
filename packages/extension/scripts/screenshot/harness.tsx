@@ -40,7 +40,7 @@ const SCENES: readonly Scene[] = [
   {
     id: "03-refusal-safety",
     caption: "Protected media is refused",
-    sub: "DRM, DASH, encrypted, and live streams are detected and never bypassed.",
+    sub: "DRM, DASH, encrypted, and live streams are detected and refused.",
     descriptors: [
       drmDescriptor("cdm_required"),
       dashDescriptor({ title: "adaptive.mpd", id: "stream-dash-shot" as StreamId }),
