@@ -3,14 +3,16 @@ import type {
   UserChoice,
   JobError,
 } from "@savemedia/core";
+import { z } from "zod";
 import {
-  isLocalFailureCode,
-  isLocalQuality,
+  LOCAL_FAILURE_CODES,
+  LOCAL_QUALITIES,
+  COOKIE_BROWSERS,
   type HostPong,
   type LocalFailureCode,
   type LocalPhase,
 } from "./native";
-import { isCookieSource, type CookieSource, type LocalDownloaderSettings } from "../native/settings";
+import type { CookieSource, LocalDownloaderSettings } from "../native/settings";
 
 export const MAIN_BRIDGE_TAG = "__savemedia" as const;
 
@@ -29,9 +31,10 @@ export interface PageCaptureMessage {
   readonly elementTag?: "video" | "audio";
   readonly elementSrc?: string;
   /**
-   * Companion audio-track URL for demuxed captures (YouTube adaptive itags):
-   * `url` is then the video-only half and the pair downloads as one merged
-   * MP4. Mirrored in content/bridge.ts's duplicated validator — update both.
+   * Companion audio-track URL for demuxed captures (separate video-only and
+   * audio-only tracks): `url` is then the video-only half and the pair
+   * downloads as one merged MP4. Mirrored in content/bridge.ts's hand-written
+   * validator: update both.
    */
   readonly audioUrl?: string;
   readonly pageUrl: string;
@@ -124,160 +127,118 @@ export type EngineToBackgroundMessage =
   | { readonly type: "complete"; readonly streamId: StreamDescriptor["id"]; readonly blobUrl: string; readonly filename: string; readonly checksum: string }
   | { readonly type: "failed"; readonly streamId: StreamDescriptor["id"]; readonly error: JobError };
 
+// Runtime validation. These guards run in the background service worker, the
+// offscreen engine document and the popup, where zod's size is irrelevant.
+// content/bridge.ts runs in every frame of every page and keeps its own
+// hand-written guards on purpose: zod would more than double that file.
+
+const record = z.object({}).passthrough();
+const streamId = z.string();
+const stringOrNull = z.string().nullable();
+const numberOrNull = z.number().nullable();
+
+const pageCaptureSchema = z.object({
+  [MAIN_BRIDGE_TAG]: z.literal(true),
+  kind: z.enum(CAPTURE_KINDS),
+  url: stringOrNull,
+  pageUrl: z.string(),
+  responseHeaders: z.record(z.string()).optional(),
+  responseBodyHeadB64: z.string().optional(),
+  keySystem: z.string().optional(),
+  mimeType: z.string().optional(),
+  elementTag: z.enum(["video", "audio"]).optional(),
+  elementSrc: z.string().optional(),
+  audioUrl: z.string().optional(),
+});
+
+const userChoiceSchema = z.object({
+  outputMode: z.literal("Original"),
+  filename: z.string(),
+  variantId: stringOrNull,
+  audioRenditionId: stringOrNull,
+});
+
+const cookieSourceSchema = z.union([z.literal("auto"), z.literal("none"), z.enum(COOKIE_BROWSERS)]);
+
+const localSettingsPatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  quality: z.enum(LOCAL_QUALITIES).optional(),
+  cookies: cookieSourceSchema.optional(),
+  fallbackOnHotkey: z.boolean().optional(),
+});
+
+const localJobViewSchema = z.object({
+  id: z.string(),
+  pageUrl: z.string(),
+  tabId: numberOrNull,
+  phase: z.string(),
+  filename: stringOrNull,
+  failure: z.object({ code: z.enum(LOCAL_FAILURE_CODES), message: z.string() }).nullable(),
+});
+
+const progressFields = {
+  streamId,
+  bytesWritten: z.number(),
+  bytesTotal: numberOrNull,
+  phase: z.string(),
+};
+
+const bridgeToBackgroundSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("ready") }),
+  z.object({ type: z.literal("download-best-hotkey"), pageUrl: z.string() }),
+  z.object({ type: z.literal("capture"), payload: pageCaptureSchema }),
+]);
+
+const popupToBackgroundSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("list"), tabId: z.number() }),
+  z.object({ type: z.literal("local-status") }),
+  z.object({ type: z.literal("local-settings"), patch: localSettingsPatchSchema }),
+  z.object({ type: z.literal("local-download"), tabId: numberOrNull, pageUrl: z.string() }),
+  z.object({ type: z.literal("local-cancel"), id: z.string() }),
+  z.object({ type: z.literal("download"), streamId, choice: userChoiceSchema }),
+  z.object({ type: z.literal("cancel"), streamId }),
+]);
+
+const backgroundToEngineSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("start-job"), streamId, descriptor: record, choice: userChoiceSchema }),
+  z.object({ type: z.literal("cancel-job"), streamId }),
+]);
+
+const engineToBackgroundSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("progress"), ...progressFields }),
+  z.object({ type: z.literal("complete"), streamId, blobUrl: z.string(), filename: z.string(), checksum: z.string() }),
+  z.object({ type: z.literal("failed"), streamId, error: record }),
+]);
+
+const backgroundToPopupSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("descriptors"), tabId: z.number(), descriptors: z.array(z.unknown()) }),
+  z.object({ type: z.literal("local-status"), settings: record, permissionGranted: z.boolean(), jobs: z.array(z.unknown()) }),
+  z.object({ type: z.literal("local-job"), job: localJobViewSchema }),
+  z.object({ type: z.literal("job-progress"), ...progressFields }),
+  z.object({ type: z.literal("job-failed"), streamId, error: record }),
+  z.object({ type: z.literal("job-complete"), streamId, path: z.string() }),
+]);
+
 export function isBridgeToBackgroundMessage(value: unknown): value is BridgeToBackgroundMessage {
-  if (!isRecord(value)) return false;
-  switch (value.type) {
-    case "ready":
-      return true;
-    case "download-best-hotkey":
-      return typeof value.pageUrl === "string";
-    case "capture":
-      return isPageCaptureMessage(value.payload);
-    default:
-      return false;
-  }
+  return bridgeToBackgroundSchema.safeParse(value).success;
 }
 
 export function isPopupToBackgroundMessage(value: unknown): value is PopupToBackgroundMessage {
-  if (!isRecord(value)) return false;
-  switch (value.type) {
-    case "list":
-      return typeof value.tabId === "number";
-    case "download":
-      return typeof value.streamId === "string" && isUserChoice(value.choice);
-    case "cancel":
-      return typeof value.streamId === "string";
-    case "local-status":
-      return true;
-    case "local-settings":
-      return isRecord(value.patch) && isLocalSettingsPatch(value.patch);
-    case "local-download":
-      return (typeof value.tabId === "number" || value.tabId === null) && typeof value.pageUrl === "string";
-    case "local-cancel":
-      return typeof value.id === "string";
-    default:
-      return false;
-  }
+  return popupToBackgroundSchema.safeParse(value).success;
 }
 
 export function isBackgroundToEngineMessage(value: unknown): value is BackgroundToEngineMessage {
-  if (!isRecord(value)) return false;
-  switch (value.type) {
-    case "start-job":
-      return typeof value.streamId === "string" && isRecord(value.descriptor) && isUserChoice(value.choice);
-    case "cancel-job":
-      return typeof value.streamId === "string";
-    default:
-      return false;
-  }
+  return backgroundToEngineSchema.safeParse(value).success;
 }
 
 export function isEngineToBackgroundMessage(value: unknown): value is EngineToBackgroundMessage {
-  if (!isRecord(value)) return false;
-  switch (value.type) {
-    case "progress":
-      return typeof value.streamId === "string"
-        && typeof value.bytesWritten === "number"
-        && (typeof value.bytesTotal === "number" || value.bytesTotal === null)
-        && typeof value.phase === "string";
-    case "complete":
-      return typeof value.streamId === "string"
-        && typeof value.blobUrl === "string"
-        && typeof value.filename === "string"
-        && typeof value.checksum === "string";
-    case "failed":
-      return typeof value.streamId === "string" && isRecord(value.error);
-    default:
-      return false;
-  }
+  return engineToBackgroundSchema.safeParse(value).success;
 }
 
 export function isBackgroundToPopupMessage(value: unknown): value is BackgroundToPopupMessage {
-  if (!isRecord(value)) return false;
-  switch (value.type) {
-    case "descriptors":
-      return typeof value.tabId === "number" && Array.isArray(value.descriptors);
-    case "job-progress":
-      return typeof value.streamId === "string"
-        && typeof value.bytesWritten === "number"
-        && (typeof value.bytesTotal === "number" || value.bytesTotal === null)
-        && typeof value.phase === "string";
-    case "job-failed":
-      return typeof value.streamId === "string" && isRecord(value.error);
-    case "job-complete":
-      return typeof value.streamId === "string" && typeof value.path === "string";
-    case "local-status":
-      return isRecord(value.settings) && typeof value.permissionGranted === "boolean" && Array.isArray(value.jobs);
-    case "local-job":
-      return isLocalJobView(value.job);
-    default:
-      return false;
-  }
+  return backgroundToPopupSchema.safeParse(value).success;
 }
 
 export function isLocalJobView(value: unknown): value is LocalJobView {
-  if (!isRecord(value)) return false;
-  return typeof value.id === "string"
-    && typeof value.pageUrl === "string"
-    && (typeof value.tabId === "number" || value.tabId === null)
-    && typeof value.phase === "string"
-    && (typeof value.filename === "string" || value.filename === null)
-    && (value.failure === null || (isRecord(value.failure) && isLocalFailureCode(value.failure.code) && typeof value.failure.message === "string"));
-}
-
-function isLocalSettingsPatch(value: Readonly<Record<string, unknown>>): boolean {
-  if (value.enabled !== undefined && typeof value.enabled !== "boolean") return false;
-  if (value.quality !== undefined && !isLocalQuality(value.quality)) return false;
-  if (value.fallbackOnHotkey !== undefined && typeof value.fallbackOnHotkey !== "boolean") return false;
-  if (value.cookies !== undefined && !isCookieSource(value.cookies)) return false;
-  return true;
-}
-
-function isPageCaptureMessage(value: unknown): value is PageCaptureMessage {
-  if (!isRecord(value)) return false;
-  return value[MAIN_BRIDGE_TAG] === true
-    && isCaptureKind(value.kind)
-    && (typeof value.url === "string" || value.url === null)
-    && typeof value.pageUrl === "string"
-    && isOptionalStringRecord(value.responseHeaders)
-    && isOptionalString(value.responseBodyHeadB64)
-    && isOptionalString(value.keySystem)
-    && isOptionalString(value.mimeType)
-    && isOptionalMediaElementTag(value.elementTag)
-    && isOptionalString(value.elementSrc)
-    && isOptionalString(value.audioUrl);
-}
-
-function isUserChoice(value: unknown): value is UserChoice {
-  if (!isRecord(value)) return false;
-  return value.outputMode === "Original"
-    && typeof value.filename === "string"
-    && isStringOrNull(value.variantId)
-    && isStringOrNull(value.audioRenditionId);
-}
-
-function isCaptureKind(value: unknown): value is CaptureKind {
-  return typeof value === "string" && (CAPTURE_KINDS as readonly string[]).includes(value);
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
-}
-
-function isStringOrNull(value: unknown): value is string | null {
-  return typeof value === "string" || value === null;
-}
-
-function isOptionalStringRecord(value: unknown): value is Readonly<Record<string, string>> | undefined {
-  if (value === undefined) return true;
-  if (!isRecord(value)) return false;
-  return Object.values(value).every(entry => typeof entry === "string");
-}
-
-function isOptionalMediaElementTag(value: unknown): value is "video" | "audio" | undefined {
-  return value === undefined || value === "video" || value === "audio";
+  return localJobViewSchema.safeParse(value).success;
 }

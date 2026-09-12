@@ -7,6 +7,8 @@
  * never sends media URLs, keys, or page content. The host refuses DRM.
  */
 
+import { z } from "zod";
+
 export const NATIVE_HOST_NAME = "com.savemedia.host" as const;
 export const NATIVE_PROTOCOL_VERSION = 1 as const;
 
@@ -90,35 +92,51 @@ export interface HostFailed {
 
 export type HostToExtensionMessage = HostPong | HostProgress | HostComplete | HostFailed;
 
+// Validated with zod: this runs in the background service worker only.
+const toolInfoSchema = z.object({
+  found: z.boolean(),
+  version: z.string().nullable(),
+  path: z.string().nullable(),
+});
+
+const numberOrNull = z.number().nullable();
+
+const hostToExtensionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("pong"),
+    hostVersion: z.string(),
+    protocolVersion: z.number(),
+    ytdlp: toolInfoSchema,
+    ffmpeg: toolInfoSchema,
+    outputDir: z.string(),
+  }),
+  z.object({
+    type: z.literal("progress"),
+    id: z.string(),
+    phase: z.enum(["probing", "downloading", "merging"]),
+    downloadedBytes: numberOrNull,
+    totalBytes: numberOrNull,
+    percent: numberOrNull,
+    speedBytesPerSec: numberOrNull,
+    etaSeconds: numberOrNull,
+  }),
+  z.object({
+    type: z.literal("complete"),
+    id: z.string(),
+    filename: z.string(),
+    path: z.string(),
+    bytes: numberOrNull,
+  }),
+  z.object({
+    type: z.literal("failed"),
+    id: z.string(),
+    code: z.enum(LOCAL_FAILURE_CODES),
+    message: z.string(),
+  }),
+]);
+
 export function isHostToExtensionMessage(value: unknown): value is HostToExtensionMessage {
-  if (!isRecord(value)) return false;
-  switch (value.type) {
-    case "pong":
-      return typeof value.hostVersion === "string"
-        && typeof value.protocolVersion === "number"
-        && isToolInfo(value.ytdlp)
-        && isToolInfo(value.ffmpeg)
-        && typeof value.outputDir === "string";
-    case "progress":
-      return typeof value.id === "string"
-        && (value.phase === "probing" || value.phase === "downloading" || value.phase === "merging")
-        && isNumberOrNull(value.downloadedBytes)
-        && isNumberOrNull(value.totalBytes)
-        && isNumberOrNull(value.percent)
-        && isNumberOrNull(value.speedBytesPerSec)
-        && isNumberOrNull(value.etaSeconds);
-    case "complete":
-      return typeof value.id === "string"
-        && typeof value.filename === "string"
-        && typeof value.path === "string"
-        && isNumberOrNull(value.bytes);
-    case "failed":
-      return typeof value.id === "string"
-        && isLocalFailureCode(value.code)
-        && typeof value.message === "string";
-    default:
-      return false;
-  }
+  return hostToExtensionSchema.safeParse(value).success;
 }
 
 export function isLocalQuality(value: unknown): value is LocalQuality {
@@ -133,20 +151,8 @@ export function isLocalFailureCode(value: unknown): value is LocalFailureCode {
   return typeof value === "string" && (LOCAL_FAILURE_CODES as readonly string[]).includes(value);
 }
 
-function isToolInfo(value: unknown): value is ToolInfo {
-  return isRecord(value)
-    && typeof value.found === "boolean"
-    && (typeof value.version === "string" || value.version === null)
-    && (typeof value.path === "string" || value.path === null);
-}
 
-function isNumberOrNull(value: unknown): value is number | null {
-  return value === null || typeof value === "number";
-}
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 /** Human-readable text for a host failure, shown in the popup and the page toast. */
 export function localFailureText(code: LocalFailureCode, message: string): { readonly title: string; readonly body: string } {

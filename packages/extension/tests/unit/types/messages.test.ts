@@ -205,3 +205,33 @@ describe("message types", () => {
     })).toBe(true);
   });
 });
+
+describe("message guards reject malformed payloads", () => {
+  it("popup local-settings patches must use known values", () => {
+    expect(isPopupToBackgroundMessage({ type: "local-settings", patch: { quality: "720", cookies: "edge" } })).toBe(true);
+    expect(isPopupToBackgroundMessage({ type: "local-settings", patch: { quality: "4k" } })).toBe(false);
+    expect(isPopupToBackgroundMessage({ type: "local-settings", patch: { enabled: "yes" } })).toBe(false);
+    expect(isPopupToBackgroundMessage({ type: "local-settings" })).toBe(false);
+  });
+
+  it("progress messages need numeric byte counts and a nullable total", () => {
+    expect(isEngineToBackgroundMessage({ type: "progress", streamId: "s", bytesWritten: "1", bytesTotal: null, phase: "x" })).toBe(false);
+    expect(isBackgroundToPopupMessage({ type: "job-progress", streamId: "s", bytesWritten: 1, bytesTotal: undefined, phase: "x" })).toBe(false);
+  });
+
+  it("capture payloads reject unknown kinds and non-string headers", () => {
+    const payload = { [MAIN_BRIDGE_TAG]: true, kind: "media-source", url: null, pageUrl: "https://x/" };
+    expect(isBridgeToBackgroundMessage({ type: "capture", payload })).toBe(true);
+    expect(isBridgeToBackgroundMessage({ type: "capture", payload: { ...payload, kind: "webrtc" } })).toBe(false);
+    expect(isBridgeToBackgroundMessage({ type: "capture", payload: { ...payload, responseHeaders: { a: 1 } } })).toBe(false);
+    expect(isBridgeToBackgroundMessage({ type: "capture", payload: { ...payload, [MAIN_BRIDGE_TAG]: "true" } })).toBe(false);
+  });
+
+  it("unknown message types are rejected everywhere", () => {
+    for (const guard of [isBridgeToBackgroundMessage, isPopupToBackgroundMessage, isBackgroundToEngineMessage, isEngineToBackgroundMessage, isBackgroundToPopupMessage]) {
+      expect(guard({ type: "nope" })).toBe(false);
+      expect(guard(null)).toBe(false);
+      expect(guard("ready")).toBe(false);
+    }
+  });
+});

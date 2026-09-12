@@ -19,6 +19,7 @@ import { createRouter } from "./router";
 import { createCaptureHandler } from "./capture";
 import { downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { registerNetworkCapture } from "./network-capture";
+import { handleInstalled } from "./installed";
 import { ensureEngineHost } from "../platform/processor-host";
 import { createInProcessEngineHost } from "../engine/in-process-host";
 import { consoleLogger } from "../util/logger";
@@ -142,6 +143,21 @@ function showHotkeyFeedback(tabId: number, outcome: HotkeyFeedbackOutcome, detai
 function isEngineControlMessage(msg: unknown): msg is BackgroundToEngineMessage {
   return isBackgroundToEngineMessage(msg);
 }
+
+// Fires once per store update, before any other event of the new version.
+chrome.runtime.onInstalled.addListener(details => {
+  void handleInstalled(details, {
+    storage: {
+      getAll: () => chrome.storage.local.get(null),
+      set: items => chrome.storage.local.set(items),
+      remove: keys => chrome.storage.local.remove([...keys]),
+    },
+    permissions: {
+      contains: perm => chrome.permissions.contains({ permissions: [...perm.permissions] }),
+    },
+    log: message => logger.info(message),
+  }, chrome.runtime.getManifest().version);
+});
 
 chrome.tabs.onRemoved.addListener(tabId => router.clearTab(tabId));
 chrome.tabs.onUpdated.addListener((tabId, info) => {
