@@ -236,6 +236,10 @@ green:
   that needs a person because of the permission prompt. Checklist:
   [`docs/manual-check-local-downloader.md`](docs/manual-check-local-downloader.md).
   Still open.
+- The browser edge cases no test can reach (keyboard focus, service-worker
+  sleep, cancelled saves, duplicate and non-ASCII filenames, frames, private
+  windows, how the refusals read) have their own per-browser checklist:
+  [`docs/manual-check-browsers.md`](docs/manual-check-browsers.md).
 - The `nativeMessaging` permission is new for the stores, so expect a
   re-review. The justification text is in `docs/privacy-policy.md`.
 
