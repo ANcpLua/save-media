@@ -12,7 +12,8 @@
     "forbidden": [],
     "textFiles": [
       "packages/extension/scripts/screenshot/harness.tsx"
-    ]
+    ],
+    "packageScript": "packages/extension/scripts/package.mjs"
   },
   "manifests": [
     "packages/extension/manifest.json"
