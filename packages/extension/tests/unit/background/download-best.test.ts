@@ -7,7 +7,8 @@ import {
   type DownloadBestDeps,
 } from "../../../src/background/download-best";
 import { MAIN_BRIDGE_TAG, type ContentDiscoveryResponse } from "../../../src/types/messages";
-import { directDescriptor } from "../popup/helpers/descriptors";
+import { directDescriptor, drmDescriptor } from "../popup/helpers/descriptors";
+import { createRouter } from "../../../src/background/router";
 import type { LocalJobView } from "../../../src/types/messages";
 
 function localJob(): LocalJobView {
@@ -204,6 +205,35 @@ describe("download-best command helpers", () => {
     expect(localFallback).toHaveBeenCalled();
     expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "delegated", expect.any(String));
     expect(d.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("never delegates a Widevine-only page, with the real router deciding", async () => {
+    // The mocked-router test below feeds a "failed" outcome the real router
+    // never produced for a DRM-only page: it filtered protected descriptors
+    // out and answered no-media, which is delegable. Wire the real router.
+    const router = createRouter({
+      runtime: { sendMessage: vi.fn() },
+      downloads: { download: vi.fn(async () => 1) },
+      ensureEngineHost: vi.fn(async () => undefined),
+    });
+    router.addDescriptor(42, drmDescriptor("cdm_required"));
+    const localFallback = vi.fn(async () => localJob());
+    const d = deps({ router, localFallback });
+
+    await downloadBestForActiveTab(d);
+
+    expect(localFallback).not.toHaveBeenCalled();
+    expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "failed", expect.stringMatching(/protected/i));
+    expect(d.showHotkeyFeedback).not.toHaveBeenCalledWith(42, "no-media", expect.anything());
+  });
+
+  it("remembers the job Alt+S started so its end can reach the page", async () => {
+    const trackHotkeyJob = vi.fn();
+    const d = deps({ trackHotkeyJob });
+
+    await downloadBestForActiveTab(d);
+
+    expect(trackHotkeyJob).toHaveBeenCalledWith(expect.any(String), 42);
   });
 
   it("never delegates protected media to the local downloader", async () => {

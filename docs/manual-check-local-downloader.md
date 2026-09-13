@@ -38,7 +38,9 @@ ContentProtection element, refused everywhere).
 4. Close and reopen the popup. Expected: the Local downloader row says
    **Ready** with the yt-dlp and ffmpeg versions. Yes/No.
 5. Open `http://127.0.0.1:5174/page/direct.html` and press Alt+S. Expected: the
-   in-browser engine saves the file (toast "Saving", then "Saved"). Yes/No.
+   file is saved by the browser (toast "Saving", then the browser's own
+   download indicator; a direct file never goes through the engine, so there
+   is no "Saved" toast). Yes/No.
 6. Open `http://127.0.0.1:5174/page/dash.html` (a DASH page the in-browser engine
    refuses) and press Alt+S. Expected: toast "Local downloader" (delegated),
    then "Saved" with the filename; the file lands in `~/Downloads`. Yes/No.

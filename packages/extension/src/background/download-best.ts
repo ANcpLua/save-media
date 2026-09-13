@@ -47,7 +47,14 @@ export interface DownloadBestDeps {
    * non-DRM reason; see DELEGABLE_ERROR_CODES.
    */
   readonly localFallback?: (pageUrl: string, tabId: number) => Promise<LocalJobView | null>;
+  /**
+   * Remembers a job Alt+S started, so its end can still reach the page as a
+   * Saved or Not saved toast after "Saving" (see hotkey-jobs.ts).
+   */
+  readonly trackHotkeyJob?: (streamId: BestDownloadStreamId, tabId: number) => void;
 }
+
+type BestDownloadStreamId = Extract<BestDownloadOutcome, { kind: "started" }>["streamId"];
 
 export interface CommandsLike {
   readonly onCommand: {
@@ -102,6 +109,7 @@ export async function downloadBestForTab(
   const outcome = await deps.router.startBestDownload(tabId);
 
   if (outcome.kind === "started") {
+    deps.trackHotkeyJob?.(outcome.streamId, tabId);
     deps.showHotkeyFeedback(tabId, "started", "Saving best quality");
     return;
   }

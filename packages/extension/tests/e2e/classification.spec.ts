@@ -556,6 +556,72 @@ test.describe("extension classifies real fixture pages", () => {
     }
   });
 
+  /**
+   * Presses Alt+S on a fixture page and returns every toast label the page
+   * showed, in order, until one of `final` appears or the time runs out. The
+   * toast lives in an open shadow root on [data-savemedia="feedback"], so
+   * this reads exactly what a person sees.
+   */
+  async function altSToasts(scenario: string, final: readonly string[], timeoutMs = 15_000): Promise<string[]> {
+    const page = await context!.newPage();
+    try {
+      await page.goto(`/page/${scenario}.html`);
+      await page.waitForLoadState("networkidle");
+      // Give network capture a moment to classify what the page fetched.
+      await page.waitForTimeout(750);
+      await page.bringToFront();
+      await page.keyboard.press("Alt+KeyS");
+      const seen: string[] = [];
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const label = await page.evaluate(() => {
+          const host = document.querySelector('[data-savemedia="feedback"]');
+          const k = host?.shadowRoot?.querySelector(".k");
+          const d = host?.shadowRoot?.querySelector(".d");
+          return k ? `${k.textContent ?? ""}|${d?.textContent ?? ""}` : null;
+        });
+        if (label && seen[seen.length - 1] !== label) seen.push(label);
+        if (label && final.includes(label.split("|")[0]!)) return seen;
+        await page.waitForTimeout(150);
+      }
+      return seen;
+    } finally {
+      await page.close();
+    }
+  }
+
+  const labels = (toasts: readonly string[]) => toasts.map(t => t.split("|")[0]);
+
+  test("Alt+S on a Widevine page says Not saved, never Nothing to save", async () => {
+    const toasts = await altSToasts("widevine", ["Not saved", "Nothing to save", "Local downloader"]);
+    expect(labels(toasts), `toasts: ${JSON.stringify(toasts)}`).toContain("Not saved");
+    expect(labels(toasts)).not.toContain("Nothing to save");
+  });
+
+  test("Alt+S on a ClearKey page says Not saved, never Nothing to save", async () => {
+    const toasts = await altSToasts("clearkey", ["Not saved", "Nothing to save", "Local downloader"]);
+    expect(labels(toasts), `toasts: ${JSON.stringify(toasts)}`).toContain("Not saved");
+    expect(labels(toasts)).not.toContain("Nothing to save");
+  });
+
+  test("Alt+S on a FairPlay-keyed HLS page ends in Not saved, not in a silent Saving", async () => {
+    await clearDownloadHistory();
+    const toasts = await altSToasts("hls-fairplay", ["Not saved", "Saved", "Nothing to save"]);
+    expect(labels(toasts).at(-1), `toasts: ${JSON.stringify(toasts)}`).toBe("Not saved");
+  });
+
+  test("Alt+S on a SAMPLE-AES HLS page ends in Not saved, not in a silent Saving", async () => {
+    await clearDownloadHistory();
+    const toasts = await altSToasts("hls-sample-aes", ["Not saved", "Saved", "Nothing to save"]);
+    expect(labels(toasts).at(-1), `toasts: ${JSON.stringify(toasts)}`).toBe("Not saved");
+  });
+
+  test("Alt+S on a plain HLS page ends in Saved once the engine finishes", async () => {
+    await clearDownloadHistory();
+    const toasts = await altSToasts("hls", ["Saved", "Not saved"]);
+    expect(labels(toasts).at(-1), `toasts: ${JSON.stringify(toasts)}`).toBe("Saved");
+  });
+
   test("Alt+S on a page with no downloadable media flashes the ∅ badge instead of doing nothing", async () => {
     const page = await context!.newPage();
     try {

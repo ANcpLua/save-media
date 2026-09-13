@@ -203,6 +203,38 @@ describe("router — startDownload routing", () => {
 });
 
 describe("router — startBestDownload", () => {
+  it("a page with only Widevine media is a cdm_required refusal, not an empty page", async () => {
+    const d = deps();
+    const r = createRouter(d);
+    r.addDescriptor(1, drmDescriptor("cdm_required"));
+
+    const outcome = await r.startBestDownload(1);
+
+    expect(outcome).toMatchObject({ kind: "failed", error: { code: "cdm_required" } });
+    expect(d.ensureEngineHost).not.toHaveBeenCalled();
+    expect(d.downloads.download).not.toHaveBeenCalled();
+  });
+
+  it("a page with only ClearKey media is a clearkey_deferred refusal, not an empty page", async () => {
+    const r = createRouter(deps());
+    r.addDescriptor(1, clearKeyDescriptor());
+
+    expect(await r.startBestDownload(1)).toMatchObject({ kind: "failed", error: { code: "clearkey_deferred" } });
+  });
+
+  it("still saves the clear stream when a page carries clear and protected media", async () => {
+    const d = deps();
+    const r = createRouter(d);
+    r.addDescriptor(1, drmDescriptor("cdm_required"));
+    r.addDescriptor(1, directDescriptor());
+
+    expect(await r.startBestDownload(1)).toMatchObject({ kind: "started" });
+  });
+
+  it("an empty page is still no-media", async () => {
+    expect(await createRouter(deps()).startBestDownload(1)).toEqual({ kind: "no-media" });
+  });
+
   it("downloads the highest HLS variant on the active tab", async () => {
     const d = deps();
     const r = createRouter(d);
@@ -283,14 +315,17 @@ describe("router — startBestDownload", () => {
     expect(d.ensureEngineHost).not.toHaveBeenCalled();
   });
 
-  it("does nothing when the active tab has no eligible descriptors", async () => {
+  it("starts nothing when the only descriptor is protected, and says why", async () => {
+    // This used to assert no-media. That was the bug: the user saw "Nothing
+    // to save" on a Widevine page, and no-media is delegable to the local
+    // downloader. Starting nothing is still right; the outcome is a refusal.
     const d = deps();
     const r = createRouter(d);
     r.addDescriptor(1, drmDescriptor("cdm_required"));
 
     const outcome = await r.startBestDownload(1);
 
-    expect(outcome).toEqual({ kind: "no-media" });
+    expect(outcome).toMatchObject({ kind: "failed", error: { code: "cdm_required" } });
     expect(d.downloads.download).not.toHaveBeenCalled();
     expect(d.ensureEngineHost).not.toHaveBeenCalled();
   });

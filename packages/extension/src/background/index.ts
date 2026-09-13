@@ -18,6 +18,7 @@ import type {
 import { createRouter } from "./router";
 import { createCaptureHandler } from "./capture";
 import { downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
+import { createHotkeyJobs } from "./hotkey-jobs";
 import { registerNetworkCapture } from "./network-capture";
 import { handleInstalled } from "./installed";
 import { ensureEngineHost } from "../platform/processor-host";
@@ -106,6 +107,8 @@ function notifyTab(tabId: number, outcome: HotkeyFeedbackOutcome, detail: string
   chrome.tabs.sendMessage(tabId, msg, () => void chrome.runtime.lastError);
 }
 
+const hotkeyJobs = createHotkeyJobs();
+
 const downloadBestDeps: DownloadBestDeps = {
   tabs: {
     query: queryInfo => chrome.tabs.query(queryInfo),
@@ -122,6 +125,7 @@ const downloadBestDeps: DownloadBestDeps = {
   handleCapture,
   showHotkeyFeedback,
   localFallback: (pageUrl, tabId) => localDownloader.startFallback(pageUrl, tabId),
+  trackHotkeyJob: (streamId, tabId) => hotkeyJobs.track(streamId, tabId),
 };
 
 const FEEDBACK_BADGES: Record<HotkeyFeedbackOutcome, { text: string; color: string }> = {
@@ -252,5 +256,7 @@ async function handleEngineMessage(msg: EngineToBackgroundMessage): Promise<void
   const forward = await router.handleEngineMessage(msg);
   if (forward) {
     chrome.runtime.sendMessage(forward, () => void chrome.runtime.lastError);
+    const feedback = hotkeyJobs.feedbackFor(forward);
+    if (feedback) showHotkeyFeedback(feedback.tabId, feedback.outcome, feedback.detail);
   }
 }

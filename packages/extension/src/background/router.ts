@@ -289,10 +289,25 @@ export function createRouter(deps: RouterDeps): Router {
   }
 
   async function startBestDownload(tabId: number): Promise<BestDownloadOutcome> {
-    const descriptor = [...listDescriptors(tabId)]
+    const descriptors = [...listDescriptors(tabId)];
+    const descriptor = descriptors
       .filter(isDownloadableCandidate)
       .sort(compareBestDescriptors)[0];
-    if (!descriptor) return { kind: "no-media" };
+    if (!descriptor) {
+      // Protected media is media. Reporting it as "nothing on this page" was
+      // wrong for the user and unsafe for the boundary: no-media is what the
+      // local downloader may take over, so a Widevine page got delegated.
+      // Refuse with the DRM code instead; no DRM code is delegable.
+      const protectedMedia = descriptors.find(d => d.drm);
+      if (protectedMedia?.drm) {
+        return {
+          kind: "failed",
+          streamId: protectedMedia.id,
+          error: dispatchRefusalToError(protectedMedia.drm.reason, protectedMedia),
+        };
+      }
+      return { kind: "no-media" };
+    }
 
     const error = await startDownload(descriptor.id, bestDownloadChoice(descriptor));
     return error ? { kind: "failed", streamId: descriptor.id, error } : { kind: "started", streamId: descriptor.id };

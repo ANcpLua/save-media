@@ -48,20 +48,33 @@ the rest of the session is meaningless. Run it in all three browsers.
 
 | # | Page (prefix `http://127.0.0.1:5174/page/`) | Expected toast | Yes/No |
 |---|---|---|---|
-| A1 | `direct.html` | Saving, then Saved | |
-| A2 | `hls.html` | Saving, then Saved | |
+| A1 | `direct.html` | Saving, then the browser's own download indicator | |
+| A2 | `hls.html` | Saving, then Saved with the file name | |
 | A3 | `hls-fmp4.html` | Saving, then Saved | |
 | A4 | `av-merge.html` | Saving, then Saved | |
 | A5 | `hls-aes.html` | Saving, then Saved (new: AES-128 is decrypted) | |
 | A6 | `dash-clear.html` | Saving, then Saved (new: DASH video+audio merged) | |
 | A7 | `dash.html` | Not saved, DASH is not supported | |
-| A8 | `hls-live.html` | Not saved, live HLS | |
-| A9 | `hls-fairplay.html` | Not saved, protected stream | |
-| A10 | `hls-sample-aes.html` | Not saved, protected stream | |
-| A11 | `widevine.html` | Not saved, protected stream | |
-| A12 | `clearkey.html` | Not saved, ClearKey not implemented | |
+| A8 | `hls-live.html` | Ends with Not saved, live HLS | |
+| A9 | `hls-fairplay.html` | Saving, then Not saved, this stream is protected | |
+| A10 | `hls-sample-aes.html` | Saving, then Not saved, this stream is protected | |
+| A11 | `widevine.html` | Not saved, this stream is protected (never Nothing to save) | |
+| A12 | `clearkey.html` | Not saved, ClearKey not implemented (never Nothing to save) | |
 | A13 | `negative.html` | Nothing to save, and the toolbar icon flashes ∅ | |
-| A14 | `low.html` | Saving, then Saved (see note) | |
+| A14 | `low.html` | Saving, then the browser's own download indicator (see note) | |
+
+Why some rows say "Saving, then Not saved": a FairPlay or SAMPLE-AES key tag
+sits on the media playlist, which the engine only reads once the job runs, so
+the refusal arrives a moment after the job started. A direct file (A1, A14)
+is handed straight to the browser's downloads, so the browser shows its own
+indicator and there is no second savemedia toast.
+
+History, so a regression is recognisable: until 2026-09-13 A9 and A10 stayed
+on "Saving" forever, A2 to A6 never said "Saved", and A11 and A12 said
+"Nothing to save". The last one was also a boundary bug: "Nothing to save" is
+the outcome the local downloader may take over, so a Widevine page could be
+delegated. Found by this checklist, now pinned by e2e specs named
+"Alt+S on a … page".
 
 A14 is a check on my reading of the code rather than a known-good: there is no
 minimum-height gate in `dispatch`, so a sub-720p progressive file should save
