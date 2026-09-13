@@ -231,6 +231,13 @@ describe("router — startBestDownload", () => {
     expect(await r.startBestDownload(1)).toMatchObject({ kind: "started" });
   });
 
+  it("a page whose only media the engine cannot finish names the refusal instead of no-media", async () => {
+    const r = createRouter(deps());
+    r.addDescriptor(1, dashDescriptor());
+
+    expect(await r.startBestDownload(1)).toMatchObject({ kind: "failed", error: { code: "dash_unsupported" } });
+  });
+
   it("an empty page is still no-media", async () => {
     expect(await createRouter(deps()).startBestDownload(1)).toEqual({ kind: "no-media" });
   });

@@ -604,6 +604,13 @@ test.describe("extension classifies real fixture pages", () => {
     expect(labels(toasts)).not.toContain("Nothing to save");
   });
 
+  test("Alt+S on an audio-less DASH page says Not saved with the reason, never Nothing to save", async () => {
+    const toasts = await altSToasts("dash", ["Not saved", "Nothing to save", "Local downloader"]);
+    expect(labels(toasts), `toasts: ${JSON.stringify(toasts)}`).toContain("Not saved");
+    expect(toasts.join(" "), `toasts: ${JSON.stringify(toasts)}`).toMatch(/DASH/);
+    expect(labels(toasts)).not.toContain("Nothing to save");
+  });
+
   test("Alt+S on a FairPlay-keyed HLS page ends in Not saved, not in a silent Saving", async () => {
     await clearDownloadHistory();
     const toasts = await altSToasts("hls-fairplay", ["Not saved", "Saved", "Nothing to save"]);

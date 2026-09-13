@@ -306,6 +306,20 @@ export function createRouter(deps: RouterDeps): Router {
           error: dispatchRefusalToError(protectedMedia.drm.reason, protectedMedia),
         };
       }
+      // Media the engine cannot finish is media too: an audio-less DASH page
+      // said "Nothing to save". Name the refusal. It keeps its own
+      // delegability, so dash_unsupported still reaches the local downloader
+      // when that is on, which is the documented DASH fallback.
+      for (const candidate of descriptors) {
+        const plan = dispatch(candidate, bestDownloadChoice(candidate));
+        if (plan.kind === "refuse") {
+          return {
+            kind: "failed",
+            streamId: candidate.id,
+            error: dispatchRefusalToError(plan.reason, candidate),
+          };
+        }
+      }
       return { kind: "no-media" };
     }
 

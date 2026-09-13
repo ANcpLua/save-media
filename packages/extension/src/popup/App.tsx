@@ -22,6 +22,53 @@ function requestSnapshot(tabId: number, cb: (snap: PageMediaSnapshot | null) => 
   });
 }
 
+/**
+ * The detached window is a companion to whatever the user is looking at, not
+ * a snapshot of the tab it was opened from: switching tabs or windows used to
+ * leave it listing the old page. It follows the active tab of the focused
+ * browser window, skips its own window (which has no page to inspect), and
+ * re-reads the list when the followed tab finishes loading a new page.
+ * Returns the cleanup for the effect.
+ */
+export function followActiveTab(
+  start: (id: number | null, url: string | null) => void,
+  current: { readonly current: number | null },
+): () => void {
+  let ownWindowId: number | null = null;
+  chrome.windows.getCurrent(win => {
+    void chrome.runtime.lastError;
+    ownWindowId = win?.id ?? null;
+  });
+
+  const follow = (tab: chrome.tabs.Tab | undefined): void => {
+    if (!tab?.id || tab.windowId === ownWindowId || tab.id === current.current) return;
+    start(tab.id, tab.url ?? null);
+  };
+  const onActivated = (info: { tabId: number; windowId: number }): void => {
+    if (info.windowId === ownWindowId) return;
+    chrome.tabs.get(info.tabId, tab => {
+      void chrome.runtime.lastError;
+      follow(tab);
+    });
+  };
+  const onFocusChanged = (windowId: number): void => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE || windowId === ownWindowId) return;
+    chrome.tabs.query({ active: true, windowId }, tabs => follow(tabs[0]));
+  };
+  const onUpdated = (tabId: number, info: { status?: string }, tab: chrome.tabs.Tab): void => {
+    if (tabId === current.current && info.status === "complete") start(tabId, tab.url ?? null);
+  };
+
+  chrome.tabs.onActivated.addListener(onActivated);
+  chrome.windows.onFocusChanged.addListener(onFocusChanged);
+  chrome.tabs.onUpdated.addListener(onUpdated);
+  return () => {
+    chrome.tabs.onActivated.removeListener(onActivated);
+    chrome.windows.onFocusChanged.removeListener(onFocusChanged);
+    chrome.tabs.onUpdated.removeListener(onUpdated);
+  };
+}
+
 // Read the shipped version from the manifest so the footer never drifts from
 // the package version. Optional-chained because the test chrome mock and the
 // screenshot harness do not stub getManifest.
@@ -45,17 +92,26 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
   const asWindow = windowTabId() !== null;
 
   useEffect(() => {
-    if (skipFetch) return;
+    if (skipFetch) return undefined;
     const start = (id: number | null, url: string | null) => {
+      if (id !== tabIdRef.current) {
+        // A different page: drop the previous tab's items at once instead of
+        // showing them until the new list arrives.
+        setDescriptors([]);
+        setSnapshot(null);
+      }
       tabIdRef.current = id;
       setTabId(id);
       setPageUrl(url);
       if (id === null) return;
       const msg: PopupToBackgroundMessage = { type: "list", tabId: id };
       chrome.runtime.sendMessage(msg, (response: unknown) => {
+        if (tabIdRef.current !== id) return;
         if (isBackgroundToPopupMessage(response) && response.type === "descriptors") setDescriptors(response.descriptors);
       });
-      requestSnapshot(id, setSnapshot);
+      requestSnapshot(id, snap => {
+        if (tabIdRef.current === id) setSnapshot(snap);
+      });
     };
     const fixed = windowTabId();
     if (fixed !== null) {
@@ -63,9 +119,10 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
         void chrome.runtime.lastError;
         start(tab?.id ?? fixed, tab?.url ?? null);
       });
-      return;
+      return followActiveTab(start, tabIdRef);
     }
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => start(tabs[0]?.id ?? null, tabs[0]?.url ?? null));
+    return undefined;
   }, [skipFetch]);
 
   // Players attach their <video> late; refresh the snapshot when the list changes.

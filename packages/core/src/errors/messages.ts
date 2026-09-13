@@ -23,7 +23,7 @@ export function userMessage(err: JobError): UserMessage {
     case "license_bound_stream":
       return {
         title: "This stream is protected",
-        body: "savemedia cannot decrypt or bypass DRM-protected media. The site uses an encrypted media license workflow that browsers handle inside a hardware-isolated decoder; the decrypted frames are never made available to extensions.",
+        body: "savemedia does not save DRM-protected media. The site hands playback to the browser's protected media module, which decrypts inside an isolated decoder and never makes the frames available to extensions.",
         action: null,
       };
 

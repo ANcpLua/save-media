@@ -7,10 +7,9 @@ import { App } from "../../src/popup/App";
 import {
   directDescriptor,
   hlsDescriptor,
-  dashDescriptor,
   drmDescriptor,
 } from "../../tests/unit/popup/helpers/descriptors";
-import type { StreamDescriptor, StreamId } from "@savemedia/core";
+import type { StreamDescriptor } from "@savemedia/core";
 
 interface Scene {
   readonly id: string;
@@ -32,7 +31,7 @@ const SCENES: readonly Scene[] = [
   {
     id: "02-stream-support",
     caption: "Knows what it can finish",
-    sub: "Direct MP4, WebM, MKV and plain HLS VOD, assembled locally, no remote server.",
+    sub: "Direct files, HLS and clear DASH, assembled locally with no remote server.",
     descriptors: [
       hlsDescriptor({ title: "documentary-1080p.m3u8" }),
     ],
@@ -40,10 +39,12 @@ const SCENES: readonly Scene[] = [
   {
     id: "03-refusal-safety",
     caption: "Protected media is refused",
-    sub: "DRM, DASH, encrypted, and live streams are detected and refused.",
+    // Clear DASH and AES-128 HLS with a key in the clear are saved now, so
+    // this scene must not show a refused DASH item or say "encrypted" as if
+    // every encrypted stream were refused.
+    sub: "DRM and live streams are detected and refused, never saved as a broken file.",
     descriptors: [
-      drmDescriptor("cdm_required"),
-      dashDescriptor({ title: "adaptive.mpd", id: "stream-dash-shot" as StreamId }),
+      { ...drmDescriptor("cdm_required"), title: "premiere.mpd" },
     ],
   },
 ];
