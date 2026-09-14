@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "savemedia",
   "version": "1.0.0",
-  "description": "Video downloader for verified direct files and plain HLS streams.",
+  "description": "Video downloader for verified direct files and unprotected HLS and DASH.",
   "minimum_chrome_version": "114",
   "permissions": [
     "downloads",
