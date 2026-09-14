@@ -10,6 +10,11 @@ on:
         type: choice
         default: all
         options: [all, edge, chrome, firefox]
+      chrome:
+        description: "Chrome: release (upload and submit) or update (upload only, submit by hand after the privacy form)"
+        type: choice
+        default: release
+        options: [release, update]
 
 permissions:
   contents: write
@@ -65,7 +70,7 @@ jobs:
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
           CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
-        run: bunx store-publish chrome release
+        run: bunx store-publish chrome ${{ inputs.chrome || 'release' }}
 
       - name: Publish to Firefox Add-ons
         if: ${{ !cancelled() && contains(fromJSON('["all","firefox"]'), inputs.stores || 'all') }}
