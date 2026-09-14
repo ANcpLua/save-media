@@ -20,8 +20,11 @@ savemedia may process the following data inside the browser:
   session.
 
 This data is used only to provide the extension's single purpose: saving
-verified direct video files and plain HLS VOD streams when the browser can fetch
-every required byte and produce one playable final file.
+verified direct video files and unprotected HLS and DASH streams when the
+browser can fetch every required byte and produce one playable final file.
+AES-128 HLS is decrypted locally with the browser's own WebCrypto, and only
+when the server hands the key to the page in the clear; the key is used in
+memory for that download and is never stored or transmitted.
 
 ## Optional Local Downloader
 
@@ -57,9 +60,9 @@ fMP4/CMAF fragments locally.
 savemedia does not collect usernames, passwords, payment details, cookies, or
 license keys. It does not bypass DRM, paywalls, login restrictions, geographic
 restrictions, expired signed URLs, or protected streams. If the browser or the
-server denies access, or if DRM/encryption/live/DASH/fMP4-CMAF paths are
-detected outside the supported clear-HLS boundary, savemedia refuses the
-download instead of attempting a workaround.
+server denies access, or if DRM, a key held by a protected media module, a
+live or still-growing presentation, or DASH addressed by byte ranges is
+detected, savemedia refuses the download instead of attempting a workaround.
 
 ## Browser Store Limited Use Statement
 
