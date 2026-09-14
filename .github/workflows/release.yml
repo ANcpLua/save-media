@@ -15,6 +15,11 @@ on:
         type: choice
         default: release
         options: [release, update]
+      edge:
+        description: "Edge: release (upload and publish) or update (upload only, publish by hand after listing and privacy)"
+        type: choice
+        default: release
+        options: [release, update]
 
 permissions:
   contents: write
@@ -56,15 +61,18 @@ jobs:
       - name: Build and pack all targets
         run: bun run --filter @savemedia/extension zip
 
+      # A tag builds the GitHub release only. Store uploads are an explicit
+      # dispatch, per store, so a version is never uploaded twice and Chrome
+      # and Edge can be uploaded without submitting.
       - name: Publish to Edge Add-ons
-        if: ${{ contains(fromJSON('["all","edge"]'), inputs.stores || 'all') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && contains(fromJSON('["all","edge"]'), inputs.stores) }}
         env:
           EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
           EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-        run: bunx store-publish edge release --notes "${{ steps.v.outputs.notes }}"
+        run: bunx store-publish edge ${{ inputs.edge || 'release' }} --notes "${{ steps.v.outputs.notes }}"
 
       - name: Publish to Chrome Web Store
-        if: ${{ !cancelled() && contains(fromJSON('["all","chrome"]'), inputs.stores || 'all') }}
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && contains(fromJSON('["all","chrome"]'), inputs.stores) }}
         env:
           CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
@@ -73,7 +81,7 @@ jobs:
         run: bunx store-publish chrome ${{ inputs.chrome || 'release' }}
 
       - name: Publish to Firefox Add-ons
-        if: ${{ !cancelled() && contains(fromJSON('["all","firefox"]'), inputs.stores || 'all') }}
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && contains(fromJSON('["all","firefox"]'), inputs.stores) }}
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
