@@ -1,6 +1,6 @@
 # savemedia Privacy Policy
 
-Effective date: 2026-08-28
+Effective date: 2026-09-14
 
 savemedia is a browser extension that runs locally in the user's browser. It
 detects browser-visible video candidates, lets the user choose a supported
