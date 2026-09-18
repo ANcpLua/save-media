@@ -144,6 +144,45 @@ upload failed, uploaded draft, submitted/in review, or live. A green workflow
 confirms its API operations, not eventual review approval. Expired credentials,
 store outages, review locks, and dashboard requirements can still interrupt a run.
 
+### Publishing maintenance
+
+Routine maintenance and the necessary follow-through are part of the user's
+standing authorization. Carry out the next clear step, verify its result,
+and report what changed. Do not stop to ask whether to check status, fix a
+known workflow failure, fill a field from verified repository facts, sync a
+renewed credential, or finish an already requested submission.
+
+- At task start, compare recorded expiry dates with today's date and check
+  known unresolved publishing issues. Before any store submission, refresh
+  live status and credential checks using the runbook. Edge's credential
+  probe does not reveal certification state; inspect its dashboard.
+- Treat a key expiring within 30 days as maintenance due. Renew it through
+  the supported flow when access allows, update the local copy and affected
+  secrets in both extension repositories, update both configs and generated
+  tables, and verify both repositories' authentication. Diagnose rejected
+  credentials before rotating them; preserve the shared AMO pair as described
+  above. Keep secret values out of logs and commits.
+- Complete required dashboard fields from the current code, privacy policy,
+  and saved listing answers. Resolve factual mismatches in the code and docs;
+  ask only for an essential fact that those sources cannot establish.
+- For a failed upload or submission, follow the partial-release rules above
+  and continue the other stores. For an open review, retain the submission
+  and report its current state and next check; review approval is external.
+  Investigate a rejection and implement the justified fix before resubmitting
+  within the authorized release. Publish completion still requires evidence
+  for each store separately.
+- Remind the user when a deadline is approaching or a blocker needs their
+  action. Include the store, due date or review state, work already completed,
+  and the exact remaining action. Repeat only for a meaningful change or an
+  approaching deadline. If login, MFA, access, or an unknown required fact
+  prevents progress, explain that specific blocker and continue independent work.
+
+Session instructions do not run between tasks. When reminders or review
+checks are scheduled, use an actual automation, identify the next check,
+and notify on actionable changes rather than unchanged pending reviews.
+Keep unresolved follow-up explicit; never promise unattended monitoring
+unless a scheduled check exists.
+
 ### Listing changes
 
 The listing text lives in
