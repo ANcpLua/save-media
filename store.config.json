@@ -69,7 +69,7 @@
         "EDGE_API_KEY",
         "EDGE_CLIENT_ID"
       ],
-      "expires": "2026-11-21",
+      "expires": "2026-11-29",
       "notes": "Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then run ~/.config/vitals/set-store-secrets.sh"
     },
     "firefox": {

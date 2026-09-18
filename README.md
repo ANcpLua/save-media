@@ -29,7 +29,7 @@ file.
 | Store | Listing | Dashboard | API docs | Credentials (GitHub Actions secrets) | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Chrome Web Store | [negbodmpgjhkacmdkbfdpocjanaklifn](https://chromewebstore.google.com/detail/savemedia/negbodmpgjhkacmdkbfdpocjanaklifn) | [dashboard](https://chrome.google.com/webstore/devconsole) | [docs](https://developer.chrome.com/docs/webstore/using-api) | `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN`, `CWS_PUBLISHER_ID` | OAuth client and refresh token live in ~/.config/vitals (see keys.json) |
-| Microsoft Edge Add-ons | [214e0682-5cde-4319-9608-ed25de6643b7](https://microsoftedge.microsoft.com/addons/detail/savemedia/mmkdllnjmommekajhadhokanofjlglhk) | [dashboard](https://partner.microsoft.com/en-us/dashboard/microsoftedge/214e0682-5cde-4319-9608-ed25de6643b7/packages/dashboard) | [docs](https://learn.microsoft.com/microsoft-edge/extensions/update/api/using-addons-api) | `EDGE_API_KEY`, `EDGE_CLIENT_ID` | API key expires 2026-11-21. Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then run ~/.config/vitals/set-store-secrets.sh |
+| Microsoft Edge Add-ons | [214e0682-5cde-4319-9608-ed25de6643b7](https://microsoftedge.microsoft.com/addons/detail/savemedia/mmkdllnjmommekajhadhokanofjlglhk) | [dashboard](https://partner.microsoft.com/en-us/dashboard/microsoftedge/214e0682-5cde-4319-9608-ed25de6643b7/packages/dashboard) | [docs](https://learn.microsoft.com/microsoft-edge/extensions/update/api/using-addons-api) | `EDGE_API_KEY`, `EDGE_CLIENT_ID` | API key expires 2026-11-29. Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then run ~/.config/vitals/set-store-secrets.sh |
 | Firefox Add-ons (AMO) | [savemedia@ancplua.dev](https://addons.mozilla.org/firefox/addon/save-media/) | [dashboard](https://addons.mozilla.org/developers/addon/save-media/edit) | [docs](https://mozilla.github.io/addons-server/topics/api/addons.html) | `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` | One key pair per Mozilla account, shared with the other extension repo. Readable copy in the macOS keychain (see keys.json). Never regenerate |
 <!-- store-config:end -->
 
@@ -55,7 +55,7 @@ Expiry dates:
 
 | What | Expires | Then |
 | --- | --- | --- |
-| Edge API key | 2026-11-21 | Renew at the Edge publish API page, update `stores.edge.expires` in `store.config.json`, run `set-store-secrets.sh`, run `store-publish edge status`. `edge status` warns 30 days ahead and fails after the date. |
+| Edge API key | 2026-11-29 | Renew at the Edge publish API page, update `stores.edge.expires` in `store.config.json`, run `set-store-secrets.sh`, run `store-publish edge status`. `edge status` warns 30 days ahead and fails after the date. |
 | Chrome Web Store API v1.1 | 2026-10-15 | Nothing to do, the tool already uses API v2. |
 | Chrome refresh token, AMO key pair | none | Rotate only if they stop working, and never regenerate the AMO pair without updating both repositories in the same minute. |
 
