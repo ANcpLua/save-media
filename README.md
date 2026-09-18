@@ -29,11 +29,11 @@ file.
 | Store | Listing | Dashboard | API docs | Credentials (GitHub Actions secrets) | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Chrome Web Store | [negbodmpgjhkacmdkbfdpocjanaklifn](https://chromewebstore.google.com/detail/savemedia/negbodmpgjhkacmdkbfdpocjanaklifn) | [dashboard](https://chrome.google.com/webstore/devconsole) | [docs](https://developer.chrome.com/docs/webstore/using-api) | `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN`, `CWS_PUBLISHER_ID` | OAuth client and refresh token live in ~/.config/vitals (see keys.json) |
-| Microsoft Edge Add-ons | [214e0682-5cde-4319-9608-ed25de6643b7](https://microsoftedge.microsoft.com/addons/detail/savemedia/mmkdllnjmommekajhadhokanofjlglhk) | [dashboard](https://partner.microsoft.com/en-us/dashboard/microsoftedge/214e0682-5cde-4319-9608-ed25de6643b7/packages/dashboard) | [docs](https://learn.microsoft.com/microsoft-edge/extensions/update/api/using-addons-api) | `EDGE_API_KEY`, `EDGE_CLIENT_ID` | API key expires 2026-11-29. Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then run ~/.config/vitals/set-store-secrets.sh |
+| Microsoft Edge Add-ons | [214e0682-5cde-4319-9608-ed25de6643b7](https://microsoftedge.microsoft.com/addons/detail/savemedia/mmkdllnjmommekajhadhokanofjlglhk) | [dashboard](https://partner.microsoft.com/en-us/dashboard/microsoftedge/214e0682-5cde-4319-9608-ed25de6643b7/packages/dashboard) | [docs](https://learn.microsoft.com/microsoft-edge/extensions/update/api/using-addons-api) | `EDGE_API_KEY`, `EDGE_CLIENT_ID` | API key expires 2026-11-29. Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then update the local copy and both repositories' EDGE_API_KEY and EDGE_CLIENT_ID secrets |
 | Firefox Add-ons (AMO) | [savemedia@ancplua.dev](https://addons.mozilla.org/firefox/addon/save-media/) | [dashboard](https://addons.mozilla.org/developers/addon/save-media/edit) | [docs](https://mozilla.github.io/addons-server/topics/api/addons.html) | `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` | One key pair per Mozilla account, shared with the other extension repo. Readable copy in the macOS keychain (see keys.json). Never regenerate |
 <!-- store-config:end -->
 
-The four credential sets are valid and verified. Never regenerate a key to fix
+Check credentials before each release. Never regenerate a key to fix
 a 401: the stored value is almost always what is broken, and AMO has exactly
 one key pair per account, so a new one immediately invalidates the old one for
 this repository and for the other extension repository that shares it. Test a
@@ -51,11 +51,15 @@ Where the credentials live:
 | AMO JWT issuer and secret | macOS keychain item `AMO API (addons.mozilla.org)`, issuer in the account field. Presence check: `security find-generic-password -s "AMO API (addons.mozilla.org)"` without `-w`. |
 | Register of all of the above | `~/.config/vitals/keys.json` |
 
+Before using `set-store-secrets.sh`, populate all eight values from their
+documented sources; the environment file alone does not supply the AMO pair.
+For an Edge-only renewal, update only the two Edge secrets in each repository.
+
 Expiry dates:
 
 | What | Expires | Then |
 | --- | --- | --- |
-| Edge API key | 2026-11-29 | Renew at the Edge publish API page, update `stores.edge.expires` in `store.config.json`, run `set-store-secrets.sh`, run `store-publish edge status`. `edge status` warns 30 days ahead and fails after the date. |
+| Edge API key | See the generated store table above | Renew at the Edge publish API page, update the local copy and the two Edge secrets in both repositories, update `stores.edge.expires` in both configs, regenerate their README tables, then run `store-publish edge status`. `edge status` warns 30 days ahead and fails after the date. |
 | Chrome Web Store API v1.1 | 2026-10-15 | Nothing to do, the tool already uses API v2. |
 | Chrome refresh token, AMO key pair | none | Rotate only if they stop working, and never regenerate the AMO pair without updating both repositories in the same minute. |
 
@@ -65,39 +69,84 @@ Release publishing is scripted for all three stores through
 [store-publish](https://github.com/ANcpLua/store-publish), a small CLI shared
 with the other extension repository. Every store-specific value comes from
 `store.config.json`; a new extension copies that file and changes the ids.
+One dispatch with `stores=all` attempts all three stores as sequential steps
+in one job. This is not a parallel job matrix. Store acceptance and review
+remain independent, so a successful submission is not proof that it is live.
 
 ```sh
 # 1. bump the version in packages/extension/manifest.json and packages/extension/package.json
 # 2. check everything locally
+bun install                       # refresh bun.lock after the version bump
 bun run verify
 bunx store-publish lint            # listing text: no forbidden words, no comma chains
 bunx store-publish readme --check  # README store table matches store.config.json
-bunx store-publish version         # manifest.json and package.json carry the same version
-# 3. stage the release changes, commit, tag, and push
-git commit -m "Release 1.0.1"
-git tag v1.0.1
-git push origin main v1.0.1
+release_version=$(bunx store-publish version)
+# 3. stage the reviewed release changes, commit, push main, and wait for ci.yml
+git add -p
+git commit -m "Release $release_version"
+git push origin main
+# 4. after CI succeeds for this commit, create a new tag and push it
+git tag "v$release_version"
+git push origin "v$release_version"
 ```
 
 The tag push runs [`release.yml`](.github/workflows/release.yml): it builds
 the Chrome, Edge (same bytes as Chrome) and Firefox zips plus the source zip AMO
-requires, and creates the GitHub release with the zips attached. Store submission
-is a separate dispatch. Each store reviews on its own schedule; the previous
-version stays live until the new one is approved.
+requires, and creates the GitHub release with the zips attached. The tag does
+not submit to stores. Wait for that run to succeed before dispatching the
+store submission.
 
 Mozilla reviewers can rebuild the source archive with
 [`docs/firefox-source-build.md`](docs/firefox-source-build.md). All build
 dependencies, including the publishing CLI, are publicly accessible.
 
-To upload and submit to all stores, dispatch the same workflow by hand. Select
-an individual store when only that store needs a new upload:
+Before uploading, run the status checks below and inspect Edge's dashboard
+for certification state; its API probe checks credentials only. Resolve any
+pending listing or privacy fields and wait for existing reviews that block
+uploads. Confirm `main` still contains the tested release code and version.
+Then dispatch the same workflow once:
 
 ```sh
 gh workflow run release.yml -R ANcpLua/save-media --ref main -f stores=all -f chrome=release -f edge=release
+gh run list -R ANcpLua/save-media --workflow=release.yml --limit 5
+# Replace RUN_ID with the ID of the dispatch just started.
+gh run watch RUN_ID -R ANcpLua/save-media --exit-status
 ```
 
-Only the version bump and the listing text ever need a human. The listing
-text lives in
+Select `stores=chrome`, `edge`, or `firefox` when only that store needs an
+upload. `chrome=update` and `edge=update` upload without submitting, allowing
+dashboard edits first. `release` uploads and submits for review.
+
+### Retrying a partial release
+
+Let the run finish: later store steps still run when an earlier store fails.
+Inspect each store's log and dashboard before retrying; do not rerun all stores
+or reuse an existing version blindly.
+
+- If the upload was rejected before a package was accepted, resolve the cause
+  and dispatch only that store.
+- If Chrome or Edge already accepted the upload but submission failed, finish
+  the listing/privacy fields and submit the existing draft in its dashboard,
+  or run `bunx store-publish chrome publish` / `bunx store-publish edge publish`
+  from this repository with that store's credentials. These commands skip upload.
+- If Firefox already has the version, complete any missing source upload or
+  review information on that version instead of creating it again.
+- If a submission is in review, wait for its decision. Cancel it only when
+  intentionally replacing that submission, not as an automatic retry.
+
+On the owner's machine, `~/.config/vitals/edge-publish status` checks the local
+Edge credentials and `~/.config/vitals/edge-publish publish` submits the existing
+draft. Run the helper from the intended repository root; it reads that repo's
+product ID from `store.config.json`.
+
+Completion means recording the version and result for each store separately:
+upload failed, uploaded draft, submitted/in review, or live. A green workflow
+confirms its API operations, not eventual review approval. Expired credentials,
+store outages, review locks, and dashboard requirements can still interrupt a run.
+
+### Listing changes
+
+The listing text lives in
 [`packages/extension/store-assets/listing.md`](packages/extension/store-assets/listing.md).
 The AMO description is written from there by the workflow below. Chrome and
 Edge have no API for listing text; paste the "Chrome and Edge description"
@@ -108,7 +157,7 @@ icon are under `packages/extension/store-assets/`, regenerated with
 Store icons and screenshots are listing fields on all three stores, not
 package contents: Chrome (Store listing, Graphic assets) and Edge (Details
 page, Extension logo) take them in the dashboard, AMO through the two
-workflow options above. A new package never changes them.
+workflow options below. A new package never changes them.
 
 Store review traps, each one has already cost a rejection or a takedown:
 
@@ -124,8 +173,9 @@ Store review traps, each one has already cost a rejection or a takedown:
 
 ## Reading store status without publishing
 
-[`store-status.yml`](.github/workflows/store-status.yml) is read-only and
-publishes nothing:
+The `status`, `chrome`, `firefox`, `edge`, and diff/list options in
+[`store-status.yml`](.github/workflows/store-status.yml) are read-only.
+The `amo-*-apply` options below change the live listing:
 
 ```sh
 gh workflow run store-status.yml -R ANcpLua/save-media --ref main -f store=status            # one table: live version, review state, credential check for all three

@@ -70,7 +70,7 @@
         "EDGE_CLIENT_ID"
       ],
       "expires": "2026-11-29",
-      "notes": "Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then run ~/.config/vitals/set-store-secrets.sh"
+      "notes": "Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then update the local copy and both repositories' EDGE_API_KEY and EDGE_CLIENT_ID secrets"
     },
     "firefox": {
       "id": "savemedia@ancplua.dev",
