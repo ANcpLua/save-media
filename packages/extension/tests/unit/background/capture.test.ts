@@ -26,10 +26,17 @@ function response(
   extraHeaders: Readonly<Record<string, string>> = {},
   stream?: ReadableStream<Uint8Array>,
 ): CaptureFetchResponse {
-  const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+  let bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+  const range = /^bytes (\d+)-(\d+)\//.exec(extraHeaders["content-range"] ?? "");
+  if (range) {
+    const ranged = new Uint8Array(Number(range[2]) - Number(range[1]) + 1);
+    ranged.set(bytes.subarray(0, ranged.length));
+    bytes = ranged;
+  }
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return {
+    status: range ? 206 : 200,
     headers: {
       forEach: cb => {
         cb(contentType, "content-type");
@@ -132,7 +139,7 @@ describe("capture handler — demuxed pairs", () => {
     expect(d.protocol).toBe("progressive-http");
     expect(d.source.kind).toBe("direct-url");
     expect(d.capabilities.directDownload).toBe(true);
-    expect(fetchFn).toHaveBeenCalledWith(expect.any(String), { credentials: "include" });
+    expect(fetchFn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ credentials: "include", headers: { range: "bytes=0-4095" } }));
   });
 
   it("drops a pair whose video half cannot be confirmed (expired/unreachable)", async () => {
@@ -183,6 +190,47 @@ describe("demuxedPairDescriptor", () => {
 });
 
 describe("capture handler — probe safety", () => {
+  it("reads extensionless manifests in full even when observed on a media element", async () => {
+    const manifest = `#EXTM3U\n#${"padding".repeat(700)}\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720\nvideo.m3u8\n`;
+    const { fetchFn, onDescriptor, handle } = harness(async () => response("application/vnd.apple.mpegurl", manifest));
+    const message = captureMsg("https://cdn.example/manifest?id=1");
+    await handle(1, { ...message, payload: { ...message.payload, kind: "media-element" } });
+    expect(fetchFn.mock.calls[0]![1].headers).toBeUndefined();
+    expect(onDescriptor.mock.calls[0]![1].protocol).toBe("hls");
+    expect(onDescriptor.mock.calls[0]![1].variants).toHaveLength(1);
+  });
+
+  it("detects a range-only direct video after a transient probe failure", async () => {
+    const { fetchFn, onDescriptor, handle } = harness(async (_url, init) => {
+      if (init.headers?.range !== "bytes=0-4095") throw new TypeError("full request rejected");
+      if (fetchFn.mock.calls.length === 1) {
+        return { ...response("text/html", "unavailable"), status: 503 };
+      }
+      return {
+        ...response("video/mp4", FTYP_HEAD, {
+          "content-range": `bytes 0-${FTYP_HEAD.length - 1}/${FTYP_HEAD.length}`,
+          etag: '"version-1"',
+        }),
+        status: 206,
+      };
+    });
+
+    await handle(1, captureMsg("https://cdn.example/clip.mp4"));
+
+    expect(onDescriptor).toHaveBeenCalledTimes(1);
+    expect(onDescriptor.mock.calls[0]![1].capabilities.directDownload).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("never classifies an access-denied response as video", async () => {
+    const { fetchFn, onDescriptor, handle } = harness(async () => ({
+      ...response("video/mp4", FTYP_HEAD), status: 403,
+    }));
+    await handle(1, captureMsg("https://cdn.example/clip.mp4"));
+    expect(onDescriptor).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it("reads at most 4 KiB from a stream even when the server ignores the range header", async () => {
     let pulls = 0;
     let cancelled = false;

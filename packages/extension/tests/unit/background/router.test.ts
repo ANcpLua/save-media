@@ -132,6 +132,36 @@ describe("router — descriptor de-duplication", () => {
   });
 });
 
+describe("router — range recovery", () => {
+  it("sends a range-capable direct video through the engine", async () => {
+    const d = deps();
+    const r = createRouter(d);
+    const descriptor = directDescriptor({ source: {
+      kind: "direct-url", url: "https://cdn.example/clip.mp4",
+      headers: { "content-range": "bytes 0-4095/100000", etag: '"version-1"' },
+    } });
+    r.addDescriptor(1, descriptor);
+    expect(await r.startDownload(descriptor.id, choice())).toBeNull();
+    expect(d.ensureEngineHost).toHaveBeenCalledTimes(1);
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "start-job", descriptor }));
+    expect(d.downloads.download).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { "content-range": "bytes 0-4095/100000" },
+    { "content-range": "bytes 0-4095/100000", etag: 'W/"v1"' },
+    { "content-range": `bytes 0-4095/${2 * 1024 ** 3}`, etag: '"v1"' },
+  ])("keeps files without usable range metadata or above the memory limit on browser downloads", async headers => {
+    const d = deps();
+    const r = createRouter(d);
+    const descriptor = directDescriptor({ source: { kind: "direct-url", url: "https://cdn.example/clip.mp4", headers } });
+    r.addDescriptor(1, descriptor);
+    expect(await r.startDownload(descriptor.id, choice())).toBeNull();
+    expect(d.downloads.download).toHaveBeenCalled();
+    expect(d.ensureEngineHost).not.toHaveBeenCalled();
+  });
+});
+
 describe("router — startDownload routing", () => {
   it("routes a direct stream through chrome.downloads.download", async () => {
     const d = deps();

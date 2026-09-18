@@ -64,7 +64,7 @@ export type BackgroundToContentMessage =
 /** One <video> element on the page, as seen by the bridge when the popup opens. */
 export interface PageVideo {
   readonly src: string;
-  /** Captured frame or poster as a data URL; null when the frame is cross-origin tainted and no poster exists. */
+  /** Captured frame data URL, poster URL, or single-video page image; null when none is available. */
   readonly thumbnail: string | null;
   readonly width: number;
   readonly height: number;

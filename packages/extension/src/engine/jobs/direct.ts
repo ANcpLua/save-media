@@ -1,33 +1,68 @@
-import type { DirectPlan } from "@savemedia/core";
+import { BROWSER_OUTPUT_LIMIT_BYTES, type DirectPlan } from "@savemedia/core";
 import type { JobResult, ProgressFn } from "../job";
+import { fetchMediaRange, probeMedia, rangeMetadata, RangeRecoveryError } from "../net/range-recovery";
+import { classifyNetworkFailure } from "../net/error-classification";
+import { validateDirectBlob } from "../verify-direct";
 
-/**
- * Direct downloads bypass the engine entirely — the background worker calls
- * chrome.downloads.download with the source URL. This branch shouldn't
- * normally execute in the engine, but if the dispatcher ever routes a direct
- * plan here we still produce a valid result by streaming the bytes to a
- * Blob URL so the caller can finalize.
- */
-export async function runDirectJob(
-  plan: DirectPlan,
-  onProgress: ProgressFn,
-  signal: AbortSignal,
-): Promise<JobResult> {
-  onProgress(0, null, "downloading");
-  const response = await fetch(plan.url, { signal });
-  if (!response.ok) {
-    throw {
-      code: "manifest_404",
-      severity: "terminal",
-      url: plan.url,
-      httpStatus: response.status,
-    };
+const CHUNK_BYTES = 4 * 1024 * 1024;
+const WORKERS = 4;
+
+/** Recovery for direct files whose discovery probe confirmed range support. */
+export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal): Promise<JobResult> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  try {
+    onProgress(0, null, "probing");
+    const probe = await probeMedia(fetch, plan.url, controller.signal);
+    const metadata = rangeMetadata(probe.headers);
+    if (!metadata) throw new RangeRecoveryError("Server no longer supplies validated byte ranges");
+    if (metadata.total >= BROWSER_OUTPUT_LIMIT_BYTES) {
+      throw { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: metadata.total, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES };
+    }
+
+    const count = Math.ceil(metadata.total / CHUNK_BYTES);
+    const parts: Blob[] = new Array(count);
+    let next = 0;
+    let received = 0;
+    onProgress(0, metadata.total, "downloading");
+    async function worker(): Promise<void> {
+      while (next < count) {
+        controller.signal.throwIfAborted();
+        const index = next++;
+        const start = index * CHUNK_BYTES;
+        const end = Math.min(start + CHUNK_BYTES, metadata!.total) - 1;
+        const bytes = await fetchMediaRange(plan.url, start, end, metadata!, controller.signal);
+        controller.signal.throwIfAborted();
+        parts[index] = new Blob([bytes as BlobPart]);
+        received += bytes.byteLength;
+        onProgress(received, metadata!.total, "downloading");
+      }
+    }
+    const workers = Array.from({ length: Math.min(WORKERS, count) }, () => worker());
+    try {
+      await Promise.all(workers);
+    } catch (error) {
+      controller.abort();
+      await Promise.allSettled(workers);
+      throw error;
+    }
+    const blob = new Blob(parts, { type: probe.headers["content-type"] ?? "application/octet-stream" });
+    if (received !== metadata.total || blob.size !== metadata.total) throw new RangeRecoveryError("Completed file has the wrong byte count");
+    onProgress(received, metadata.total, "verifying");
+    await validateDirectBlob(blob, controller.signal);
+    controller.signal.throwIfAborted();
+    onProgress(received, metadata.total, "finalizing");
+    return { blobUrl: URL.createObjectURL(blob), filename: plan.filename, checksum: "" };
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof RangeRecoveryError && error.status !== undefined) {
+      throw classifyNetworkFailure({ url: plan.url, status: error.status, attemptsRemaining: 0, retryAfterSeconds: null, detail: error.message }, "direct", plan.url)
+        ?? { code: "engine_job_failed", severity: "terminal", at: "segment", detail: error.message };
+    }
+    throw error;
+  } finally {
+    signal.removeEventListener("abort", abort);
   }
-  const blob = await response.blob();
-  onProgress(blob.size, blob.size, "finalizing");
-  return {
-    blobUrl: URL.createObjectURL(blob),
-    filename: plan.filename,
-    checksum: "",
-  };
 }

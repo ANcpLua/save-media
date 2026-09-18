@@ -2,21 +2,19 @@ import { classify } from "@savemedia/core";
 import type { AudioRenditionId, StreamDescriptor, Variant, VariantId } from "@savemedia/core";
 import type { BridgeToBackgroundMessage } from "../types/messages";
 import type { Logger } from "../util/logger";
+import { checkResponseStatus, probeMedia, readBytes, recoverRequest, responseHeaders, type ProbeResponse, type ProbeInit } from "../engine/net/range-recovery";
 
 export type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
 
 /** The slice of a fetch Response the capture probe actually reads. */
-export interface CaptureFetchResponse {
-  readonly headers: { forEach(cb: (value: string, key: string) => void): void };
-  readonly body?: ReadableStream<Uint8Array> | null;
+export interface CaptureFetchResponse extends ProbeResponse {
   text(): Promise<string>;
-  clone(): { arrayBuffer(): Promise<ArrayBuffer> };
 }
 
 export interface CaptureDeps {
   readonly fetchFn: (
     url: string,
-    init: { readonly credentials: "include"; readonly headers?: Readonly<Record<string, string>> },
+    init: ProbeInit,
   ) => Promise<CaptureFetchResponse>;
   /** Receives every descriptor that passed the surfacing gate. */
   readonly onDescriptor: (tabId: number, descriptor: StreamDescriptor) => void;
@@ -36,22 +34,34 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
 
     if (cap.url) {
       try {
-        // A demuxed pair's video half is a full-length media file (hundreds
-        // of MB on youtube); range-limit that probe so classification does
-        // not pull the whole body into the service worker to sniff 4 KiB.
-        const init = cap.audioUrl === undefined
-          ? { credentials: "include" as const }
-          : { credentials: "include" as const, headers: { range: "bytes=0-4095" } };
-        const r = await deps.fetchFn(cap.url, init);
-        r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-        const ct = headers["content-type"] ?? "";
-        if (/(mpegurl|dash\+xml|xml|text)/i.test(ct) || /\.(m3u8|mpd)(\?|$)/i.test(cap.url)) {
-          manifestText = await r.text();
+        const url = cap.url;
+        const manifestUrl = /\.(m3u8|mpd)([?#]|$)/i.test(url);
+        const direct = !manifestUrl && (cap.audioUrl !== undefined || /\.(mp4|webm|mkv)([?#]|$)/i.test(url));
+        if (direct) {
+          const probe = await probeMedia(deps.fetchFn, url);
+          delete headers["content-range"];
+          Object.assign(headers, probe.headers);
+          bodyBytes = probe.bytes;
         } else {
-          bodyBytes = await probeBytes(r);
+          // Manifests must be read in full, including extensionless entries.
+          const probe = await recoverRequest(async signal => {
+            const r = await deps.fetchFn(url, { credentials: "include", signal });
+            try {
+              checkResponseStatus(r);
+              const h = responseHeaders(r);
+              const text = manifestUrl || /(mpegurl|dash\+xml|xml|text)/i.test(h["content-type"] ?? "");
+              return { headers: h, text: text ? await r.text() : null, bytes: text ? null : await readBytes(r, 4096, false) };
+            } finally {
+              try { await r.body?.cancel(); } catch { /* already consumed */ }
+            }
+          }, new AbortController().signal);
+          Object.assign(headers, probe.headers);
+          manifestText = probe.text;
+          bodyBytes = probe.bytes;
         }
       } catch (err) {
-        deps.logger?.debug("capture fetch failed", { url: cap.url, err: String(err) });
+        deps.logger?.debug("capture fetch failed", { err: err instanceof Error ? err.name : "probe failed" });
+        if (cap.kind !== "eme") return;
       }
     }
 
@@ -93,42 +103,6 @@ export function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {
 }
 
 /**
- * First 4 KiB of the probe body, read incrementally with the stream cancelled
- * afterwards: a server that ignores the range header answers 200 with the
- * full body, and buffering it whole would pull a multi-GB media file into the
- * service worker just to sniff magic bytes. Falls back to the buffering path
- * when the response exposes no body stream (test doubles).
- */
-async function probeBytes(r: CaptureFetchResponse): Promise<Uint8Array> {
-  if (!r.body) {
-    const buf = await r.clone().arrayBuffer();
-    return new Uint8Array(buf.slice(0, 4096));
-  }
-  const reader = r.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (total < 4096) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      total += value.byteLength;
-    }
-  } finally {
-    try { await reader.cancel(); } catch { /* stream already closed */ }
-  }
-  const out = new Uint8Array(Math.min(total, 4096));
-  let offset = 0;
-  for (const chunk of chunks) {
-    const take = Math.min(chunk.byteLength, out.byteLength - offset);
-    out.set(chunk.subarray(0, take), offset);
-    offset += take;
-    if (offset >= out.byteLength) break;
-  }
-  return out;
-}
-
-/**
  * Range-probe a companion track for its declared byte total so the browser
  * output-size guard counts both halves of a demuxed pair. Any failure yields
  * null — the size stays unknown rather than wrong.
@@ -139,9 +113,10 @@ async function probeDeclaredBytes(deps: CaptureDeps, url: string): Promise<numbe
       credentials: "include",
       headers: { range: "bytes=0-0" },
     });
+    try { await r.body?.cancel(); } catch { /* stream already closed */ }
+    checkResponseStatus(r);
     const headers: Record<string, string> = {};
     r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-    try { await r.body?.cancel(); } catch { /* stream already closed */ }
     return declaredTotalBytes(headers);
   } catch {
     return null;

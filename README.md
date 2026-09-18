@@ -14,6 +14,9 @@ The support contract is [`docs/design.md`](docs/design.md). The legal and
 engineering limits are [`docs/boundary-rules.md`](docs/boundary-rules.md); read
 that file before touching capture, parsing, site readers or the local
 downloader. The privacy policy is [`docs/privacy-policy.md`](docs/privacy-policy.md).
+Direct-file probe retries and checked chunk recovery are described in
+[`docs/range-recovery.md`](docs/range-recovery.md), including browser size and
+validation limits.
 
 ## Stores
 
@@ -70,23 +73,27 @@ bun run verify
 bunx store-publish lint            # listing text: no forbidden words, no comma chains
 bunx store-publish readme --check  # README store table matches store.config.json
 bunx store-publish version         # manifest.json and package.json carry the same version
-# 3. commit, tag, push the tag
-git commit -am "Release 0.0.8"
-git tag v0.0.8
-git push origin main v0.0.8
+# 3. stage the release changes, commit, tag, and push
+git commit -m "Release 1.0.1"
+git tag v1.0.1
+git push origin main v1.0.1
 ```
 
 The tag push runs [`release.yml`](.github/workflows/release.yml): it builds
 the Chrome, Edge (same bytes as Chrome) and Firefox zips plus the source zip AMO
-requires, publishes to Edge, Chrome and Firefox in that order, and creates the
-GitHub release with the zips attached. Each store then reviews on its own
-schedule; the previous version stays live until the new one is approved.
+requires, and creates the GitHub release with the zips attached. Store submission
+is a separate dispatch. Each store reviews on its own schedule; the previous
+version stays live until the new one is approved.
 
-To publish to a subset of stores, or to retry one store after a fix, dispatch
-the same workflow by hand:
+Mozilla reviewers can rebuild the source archive with
+[`docs/firefox-source-build.md`](docs/firefox-source-build.md), which excludes
+the private publishing CLI from the build-only dependency installation.
+
+To upload and submit to all stores, dispatch the same workflow by hand. Select
+an individual store when only that store needs a new upload:
 
 ```sh
-gh workflow run release.yml -R ANcpLua/save-media --ref main -f stores=firefox   # all | chrome | edge | firefox
+gh workflow run release.yml -R ANcpLua/save-media --ref main -f stores=all -f chrome=release -f edge=release
 ```
 
 Only the version bump and the listing text ever need a human. The listing

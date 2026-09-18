@@ -1,2 +1,7 @@
 savemedia
 Copyright 2026 Alexander Nachtmann ANcpLua
+
+Range recovery and direct-file container checks adapt algorithms from
+Video Rescue, Copyright (c) 2026 ANcpLua, under the MIT License.
+The license is included at packages/extension/public/licenses/video-rescue-MIT.txt
+and in extension builds at licenses/video-rescue-MIT.txt.

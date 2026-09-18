@@ -70,7 +70,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
 // Snapshot of the page's <video> elements for the popup: which one is
 // playing, how big it is, and a small frame so the user can tell entries
 // apart. Frames of cross-origin media taint the canvas; then the poster is
-// used, or nothing.
+// used, followed by page metadata when there is just one video.
 const THUMB_WIDTH = 160;
 
 function pageMediaSnapshot(): {
@@ -78,9 +78,13 @@ function pageMediaSnapshot(): {
   videos: { src: string; thumbnail: string | null; width: number; height: number; duration: number | null; visible: number; playing: boolean }[];
 } {
   const title = document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() || document.title;
-  const videos = [...document.querySelectorAll("video")].map(v => ({
+  const elements = [...document.querySelectorAll("video")];
+  const pageImage = elements.length === 1
+    ? document.querySelector('meta[property="og:image"], meta[name="twitter:image"]')?.getAttribute("content")?.trim()
+    : null;
+  const videos = elements.map(v => ({
     src: v.currentSrc || v.src || v.querySelector("source")?.src || "",
-    thumbnail: captureFrame(v) ?? (v.poster ? absolute(v.poster) : null),
+    thumbnail: captureFrame(v) ?? (v.poster ? absolute(v.poster) : pageImage ? absolute(pageImage) : null),
     width: v.videoWidth || Math.round(v.getBoundingClientRect().width),
     height: v.videoHeight || Math.round(v.getBoundingClientRect().height),
     duration: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null,

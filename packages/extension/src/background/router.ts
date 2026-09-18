@@ -18,6 +18,7 @@ import type { Logger } from "../util/logger";
 import { suggestFilename } from "../util/filename";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
 import { hasDownloadableDemuxedPair } from "../util/demuxed-pair";
+import { canRecoverWithRanges } from "../engine/net/range-recovery";
 
 export { dispatchRefusalToError } from "../util/dispatch-refusal";
 
@@ -359,7 +360,9 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
 
-    if (plan.kind === "direct") {
+    const rangeRecovery = descriptor.source.kind === "direct-url"
+      && canRecoverWithRanges(descriptor.source.url, descriptor.source.headers);
+    if (plan.kind === "direct" && !rangeRecovery) {
       try {
         await deps.downloads.download({
           url: plan.url,
@@ -378,7 +381,12 @@ export function createRouter(deps: RouterDeps): Router {
     }
 
     jobs.set(id, { descriptor, choice, plan: plan.kind === "refuse" ? null : plan });
-    await deps.ensureEngineHost();
+    try {
+      await deps.ensureEngineHost();
+    } catch (err) {
+      jobs.delete(id);
+      return { code: "engine_job_failed", severity: "terminal", at: "init", detail: err instanceof Error ? err.message : String(err) };
+    }
     const engineMsg: BackgroundToEngineMessage = { type: "start-job", streamId: id, descriptor, choice };
     deps.runtime.sendMessage(engineMsg);
     return null;

@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { downloadJob } from "../../../src/engine/download";
 import { runAvMergeJob } from "../../../src/engine/jobs/av-merge";
+import { runDirectJob } from "../../../src/engine/jobs/direct";
 import { directDescriptor, hlsDescriptor, dashDescriptor, drmDescriptor, clearKeyDescriptor } from "../popup/helpers/descriptors";
 import type { AudioRenditionId, UserChoice, Variant, VariantId } from "@savemedia/core";
 
 vi.mock("../../../src/engine/jobs/av-merge", () => ({
   runAvMergeJob: vi.fn(),
 }));
+vi.mock("../../../src/engine/jobs/direct", () => ({ runDirectJob: vi.fn() }));
 
 const baseChoice: UserChoice = {
   outputMode: "Original",
@@ -24,6 +26,7 @@ beforeEach(() => {
   URL.createObjectURL = vi.fn(() => "blob:integration");
   // setup.ts resets all mocks after each test, so re-arm the module mock here.
   vi.mocked(runAvMergeJob).mockResolvedValue({ blobUrl: "blob:av-merge", filename: "merged.mp4", checksum: "" });
+  vi.mocked(runDirectJob).mockResolvedValue({ blobUrl: "blob:integration", filename: "clip.mp4", checksum: "" });
 });
 
 afterEach(() => {
@@ -33,10 +36,10 @@ afterEach(() => {
 
 describe("engine downloadJob — integrates dispatch with job runners", () => {
   it("direct progressive + Original → runDirectJob branch (Blob URL)", async () => {
-    globalThis.fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4]) as BodyInit, { status: 200 })) as unknown as typeof fetch;
     const result = await downloadJob(directDescriptor(), baseChoice, vi.fn(), new AbortController().signal);
     expect(result.filename).toBe("clip.mp4");
     expect(result.blobUrl).toBe("blob:integration");
+    expect(runDirectJob).toHaveBeenCalledWith({ kind: "direct", url: "https://example.com/clip.mp4", filename: "clip.mp4" }, expect.any(Function), expect.any(AbortSignal));
   });
 
   it("DRM-blocked descriptor → throws encrypted_media_detected/cdm_required", async () => {
