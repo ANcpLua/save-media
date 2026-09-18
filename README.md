@@ -86,8 +86,8 @@ is a separate dispatch. Each store reviews on its own schedule; the previous
 version stays live until the new one is approved.
 
 Mozilla reviewers can rebuild the source archive with
-[`docs/firefox-source-build.md`](docs/firefox-source-build.md), which excludes
-the private publishing CLI from the build-only dependency installation.
+[`docs/firefox-source-build.md`](docs/firefox-source-build.md). All build
+dependencies, including the publishing CLI, are publicly accessible.
 
 To upload and submit to all stores, dispatch the same workflow by hand. Select
 an individual store when only that store needs a new upload:
