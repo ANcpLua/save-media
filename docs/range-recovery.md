@@ -5,11 +5,21 @@ The browser implementation adapts `internal/rescue/downloader.go` and
 `09e855aa8172e7b83488e134a562f40bd197879d`. Its MIT license is bundled in
 `packages/extension/public/licenses/video-rescue-MIT.txt`.
 
-Discovery requests the first 4 KiB of a direct video. It retries network errors,
+Discovery requests the first 4 KiB of an observed media URL, including URLs
+without a file extension. It retries network errors,
 timeouts, truncated responses, HTTP 408, 429 and 5xx responses up to three
 attempts. It rejects unsuccessful HTTP responses before classification and
 cancels the response body after a bounded read if the server ignores Range.
-Manifest requests still read the complete manifest.
+Manifest requests still read the complete manifest. Extensionless manifests
+are recognized by MIME type or their prefix, then fetched without Range.
+
+Failed discovery now appears in the popup with a classified server, access,
+or network error. The popup shows the media host without exposing signed query
+parameters. "Check page again" reads the current page's media elements and
+supported links, including extensionless element sources. Successful probes
+clear their previous errors; an unsuccessful rescan preserves the error.
+Concurrent duplicate probes share one request, and navigation aborts probes
+from the previous page.
 
 For HTTPS files below the existing 2 GiB browser output limit, a valid range
 response plus a strong ETag or Last-Modified validator selects the recovery
@@ -21,6 +31,10 @@ count, and gets up to twelve attempts with a capped linear backoff. Changed
 validators, inconsistent ranges, encoded ranges, and ignored range requests
 stop the job. Cancellation and terminal failures abort and join all workers.
 Progress counts accepted bytes once, and chunks are assembled in file order.
+The popup displays retry attempt counts. Engine progress and outcomes are
+retained in background memory when the popup closes and are restored when it
+reopens. This is not download persistence across a background-worker or
+browser restart; the extension does not keep media history on disk.
 
 Only a complete byte count and successful container check produce a Blob URL.
 MP4 checks walk top-level box boundaries and require the file-type, movie, and

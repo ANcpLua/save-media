@@ -13,6 +13,8 @@ import type {
   BackgroundToPopupMessage,
   BackgroundToEngineMessage,
   EngineToBackgroundMessage,
+  DiscoveryFailure,
+  JobStatus,
 } from "../types/messages";
 import type { Logger } from "../util/logger";
 import { suggestFilename } from "../util/filename";
@@ -29,6 +31,7 @@ type HlsDescriptor = StreamDescriptor & {
 export interface TabState {
   readonly descriptors: Map<string, StreamDescriptor>;
   readonly hlsCoveredDirectUrls: Set<string>;
+  readonly failures: Map<string, DiscoveryFailure>;
 }
 
 export interface RouterDeps {
@@ -52,6 +55,9 @@ export interface Router {
   readonly jobs: Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>;
   readonly addDescriptor: (tabId: number, descriptor: StreamDescriptor) => boolean;
   readonly listDescriptors: (tabId: number) => readonly StreamDescriptor[];
+  readonly setDiscoveryFailure: (tabId: number, failure: DiscoveryFailure) => void;
+  readonly clearDiscoveryFailure: (tabId: number, url: string) => boolean;
+  readonly snapshot: (tabId: number) => Extract<BackgroundToPopupMessage, { type: "descriptors" }>;
   readonly findDescriptor: (id: StreamDescriptor["id"]) => StreamDescriptor | null;
   readonly clearTab: (tabId: number) => void;
   readonly startDownload: (id: StreamDescriptor["id"], choice: UserChoice) => Promise<JobError | null>;
@@ -65,11 +71,12 @@ export interface Router {
 export function createRouter(deps: RouterDeps): Router {
   const tabs = new Map<number, TabState>();
   const jobs = new Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>();
+  const statuses = new Map<string, JobStatus>();
 
   function getTab(tabId: number): TabState {
     let s = tabs.get(tabId);
     if (!s) {
-      s = { descriptors: new Map(), hlsCoveredDirectUrls: new Set() };
+      s = { descriptors: new Map(), hlsCoveredDirectUrls: new Set(), failures: new Map() };
       tabs.set(tabId, s);
     }
     return s;
@@ -230,7 +237,31 @@ export function createRouter(deps: RouterDeps): Router {
   }
 
   function clearTab(tabId: number): void {
+    const ids = listDescriptors(tabId).map(d => d.id);
     tabs.delete(tabId);
+    for (const id of ids) if (!jobs.has(id) && !findDescriptor(id)) statuses.delete(id);
+  }
+
+  function setDiscoveryFailure(tabId: number, failure: DiscoveryFailure): void {
+    const state = getTab(tabId);
+    state.failures.set(failure.url, failure);
+    // Bound failed network candidates, including pages with many broken fragments.
+    if (state.failures.size > 20) state.failures.delete(state.failures.keys().next().value!);
+  }
+
+  function clearDiscoveryFailure(tabId: number, url: string): boolean {
+    return tabs.get(tabId)?.failures.delete(url) ?? false;
+  }
+
+  function snapshot(tabId: number): Extract<BackgroundToPopupMessage, { type: "descriptors" }> {
+    const descriptors = listDescriptors(tabId);
+    return { type: "descriptors", tabId, descriptors,
+      failures: [...(tabs.get(tabId)?.failures.values() ?? [])],
+      statuses: Object.fromEntries(descriptors.flatMap(d => {
+        const status = statuses.get(d.id);
+        return status ? [[d.id, status]] : [];
+      })),
+    };
   }
 
   function bestVariant(d: StreamDescriptor): Variant | null {
@@ -321,6 +352,8 @@ export function createRouter(deps: RouterDeps): Router {
           };
         }
       }
+      const failure = tabs.get(tabId)?.failures.values().next().value;
+      if (failure) return { kind: "failed", streamId: `discovery:${tabId}` as StreamDescriptor["id"], error: failure.error };
       return { kind: "no-media" };
     }
 
@@ -381,11 +414,14 @@ export function createRouter(deps: RouterDeps): Router {
     }
 
     jobs.set(id, { descriptor, choice, plan: plan.kind === "refuse" ? null : plan });
+    statuses.set(id, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: "Starting" });
     try {
       await deps.ensureEngineHost();
     } catch (err) {
       jobs.delete(id);
-      return { code: "engine_job_failed", severity: "terminal", at: "init", detail: err instanceof Error ? err.message : String(err) };
+      const error: JobError = { code: "engine_job_failed", severity: "terminal", at: "init", detail: err instanceof Error ? err.message : String(err) };
+      statuses.set(id, { phase: "failed", error });
+      return error;
     }
     const engineMsg: BackgroundToEngineMessage = { type: "start-job", streamId: id, descriptor, choice };
     deps.runtime.sendMessage(engineMsg);
@@ -394,6 +430,7 @@ export function createRouter(deps: RouterDeps): Router {
 
   async function handleEngineMessage(msg: EngineToBackgroundMessage): Promise<BackgroundToPopupMessage | null> {
     if (msg.type === "progress") {
+      statuses.set(msg.streamId, { phase: "active", bytesWritten: msg.bytesWritten, bytesTotal: msg.bytesTotal, stage: msg.phase });
       return {
         type: "job-progress",
         streamId: msg.streamId,
@@ -410,22 +447,24 @@ export function createRouter(deps: RouterDeps): Router {
           filename: msg.filename,
           conflictAction: "uniquify",
         });
+        statuses.set(msg.streamId, { phase: "complete" });
         return { type: "job-complete", streamId: msg.streamId, path: msg.filename };
       } catch (err) {
+        const error: JobError = {
+          code: "browser_download_failed", severity: "terminal",
+          reason: err instanceof Error ? err.message : String(err), filename: msg.filename,
+        };
+        statuses.set(msg.streamId, { phase: "failed", error });
         return {
           type: "job-failed",
           streamId: msg.streamId,
-          error: {
-            code: "browser_download_failed",
-            severity: "terminal",
-            reason: err instanceof Error ? err.message : String(err),
-            filename: msg.filename,
-          },
+          error,
         };
       }
     }
     if (msg.type === "failed") {
       jobs.delete(msg.streamId);
+      statuses.set(msg.streamId, { phase: "failed", error: msg.error });
       return { type: "job-failed", streamId: msg.streamId, error: msg.error };
     }
     return null;
@@ -435,11 +474,12 @@ export function createRouter(deps: RouterDeps): Router {
     msg: PopupToBackgroundMessage,
   ): Promise<BackgroundToPopupMessage | { ok: true } | null> {
     if (msg.type === "list") {
-      return { type: "descriptors", tabId: msg.tabId, descriptors: listDescriptors(msg.tabId) };
+      return snapshot(msg.tabId);
     }
     if (msg.type === "download") {
       const err = await startDownload(msg.streamId, msg.choice);
       if (err) {
+        statuses.set(msg.streamId, { phase: "failed", error: err });
         const failMsg: BackgroundToPopupMessage = { type: "job-failed", streamId: msg.streamId, error: err };
         deps.runtime.sendMessage(failMsg);
       }
@@ -459,6 +499,9 @@ export function createRouter(deps: RouterDeps): Router {
     jobs,
     addDescriptor,
     listDescriptors,
+    setDiscoveryFailure,
+    clearDiscoveryFailure,
+    snapshot,
     findDescriptor,
     clearTab,
     startDownload,

@@ -23,6 +23,19 @@ function choice(overrides: Partial<UserChoice> = {}): UserChoice {
 }
 
 describe("router — descriptor de-duplication", () => {
+  it("returns the latest failed job when the popup is reopened", async () => {
+    const r = createRouter(deps());
+    const d = directDescriptor();
+    r.addDescriptor(1, d);
+    const error = { code: "server_busy" as const, severity: "terminal" as const,
+      phase: "direct" as const, url: "https://cdn.example/clip.mp4", httpStatus: 503 };
+    await r.handleEngineMessage({ type: "failed", streamId: d.id, error });
+
+    expect(await r.handlePopupMessage({ type: "list", tabId: 1 })).toMatchObject({
+      statuses: { [d.id]: { phase: "failed", error } },
+    });
+  });
+
   it("adds a descriptor once and reports false on duplicates", () => {
     const r = createRouter(deps());
     const d = directDescriptor();
@@ -541,6 +554,8 @@ describe("router — popup message dispatch", () => {
       type: "descriptors",
       tabId: 1,
       descriptors: [directDescriptor()],
+      failures: [],
+      statuses: {},
     });
   });
 

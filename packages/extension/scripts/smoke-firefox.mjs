@@ -60,6 +60,10 @@ try {
   driver = await new Builder()
     .forBrowser("firefox")
     .setFirefoxOptions(options)
+    // Firefox 153+ requires this for WebDriver navigation to moz-extension:.
+    // It applies only to this disposable test profile and loopback driver.
+    // https://firefox-source-docs.mozilla.org/testing/geckodriver/Flags.html#allow-system-access
+    .setFirefoxService(new firefox.ServiceBuilder().addArguments("--allow-system-access"))
     .build();
 
   const installedId = await driver.installAddon(dist, true);

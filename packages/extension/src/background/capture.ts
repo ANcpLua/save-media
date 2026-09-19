@@ -1,8 +1,8 @@
 import { classify } from "@savemedia/core";
 import type { AudioRenditionId, StreamDescriptor, Variant, VariantId } from "@savemedia/core";
-import type { BridgeToBackgroundMessage } from "../types/messages";
+import type { BridgeToBackgroundMessage, DiscoveryFailure } from "../types/messages";
 import type { Logger } from "../util/logger";
-import { checkResponseStatus, probeMedia, readBytes, recoverRequest, responseHeaders, type ProbeResponse, type ProbeInit } from "../engine/net/range-recovery";
+import { checkResponseStatus, probeMedia, recoverRequest, responseHeaders, rangeFailure, type ProbeResponse, type ProbeInit } from "../engine/net/range-recovery";
 
 export type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
 
@@ -18,13 +18,34 @@ export interface CaptureDeps {
   ) => Promise<CaptureFetchResponse>;
   /** Receives every descriptor that passed the surfacing gate. */
   readonly onDescriptor: (tabId: number, descriptor: StreamDescriptor) => void;
+  readonly onFailure?: (tabId: number, failure: DiscoveryFailure) => void;
+  readonly onProbeSuccess?: (tabId: number, url: string) => void;
   readonly logger?: Logger;
 }
 
-export type CaptureHandler = (tabId: number, msg: CaptureMessage) => Promise<void>;
+export type CaptureHandler = ((tabId: number, msg: CaptureMessage) => Promise<void>) & {
+  clearTab(tabId: number): void;
+};
 
 export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
-  return async function handleCapture(tabId, msg) {
+  const tabs = new Map<number, { controller: AbortController; pending: Map<string, Promise<void>> }>();
+  function clearTab(tabId: number): void {
+    const state = tabs.get(tabId);
+    state?.controller.abort();
+    tabs.delete(tabId);
+  }
+  function handleCapture(tabId: number, msg: CaptureMessage): Promise<void> {
+    let state = tabs.get(tabId);
+    if (!state) { state = { controller: new AbortController(), pending: new Map() }; tabs.set(tabId, state); }
+    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem]);
+    const existing = state.pending.get(key);
+    if (existing) return existing;
+    const current = state;
+    const pending = capture(tabId, msg, current.controller.signal).finally(() => current.pending.delete(key));
+    current.pending.set(key, pending);
+    return pending;
+  }
+  async function capture(tabId: number, msg: CaptureMessage, signal: AbortSignal): Promise<void> {
     const cap = msg.payload;
     if (!cap.url && cap.kind !== "eme") return;
 
@@ -35,34 +56,47 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     if (cap.url) {
       try {
         const url = cap.url;
-        const manifestUrl = /\.(m3u8|mpd)([?#]|$)/i.test(url);
-        const direct = !manifestUrl && (cap.audioUrl !== undefined || /\.(mp4|webm|mkv)([?#]|$)/i.test(url));
-        if (direct) {
-          const probe = await probeMedia(deps.fetchFn, url);
+        let manifest = /\.(m3u8|mpd)([?#]|$)/i.test(url);
+        if (!manifest) {
+          // Video Rescue probes the observed URL independently of its filename.
+          // Extensionless media needs the same bounded range request as .mp4.
+          const probe = await probeMedia(deps.fetchFn, url, signal);
           delete headers["content-range"];
           Object.assign(headers, probe.headers);
           bodyBytes = probe.bytes;
-        } else {
-          // Manifests must be read in full, including extensionless entries.
+          const prefix = new TextDecoder().decode(probe.bytes).trimStart();
+          manifest = /(mpegurl|dash\+xml)/i.test(probe.headers["content-type"] ?? "")
+            || /^(#EXTM3U|<\?xml|<MPD(?:\s|>))/.test(prefix);
+        }
+        if (manifest) {
+          // A prefix cannot parse a full playlist. Re-fetch extensionless
+          // manifests without Range after identifying their MIME or signature.
           const probe = await recoverRequest(async signal => {
             const r = await deps.fetchFn(url, { credentials: "include", signal });
             try {
               checkResponseStatus(r);
               const h = responseHeaders(r);
-              const text = manifestUrl || /(mpegurl|dash\+xml|xml|text)/i.test(h["content-type"] ?? "");
-              return { headers: h, text: text ? await r.text() : null, bytes: text ? null : await readBytes(r, 4096, false) };
+              return { headers: h, text: await r.text() };
             } finally {
               try { await r.body?.cancel(); } catch { /* already consumed */ }
             }
-          }, new AbortController().signal);
+          }, signal);
+          delete headers["content-range"];
           Object.assign(headers, probe.headers);
           manifestText = probe.text;
-          bodyBytes = probe.bytes;
+          bodyBytes = null;
         }
       } catch (err) {
+        if (signal.aborted) return;
         deps.logger?.debug("capture fetch failed", { err: err instanceof Error ? err.name : "probe failed" });
-        if (cap.kind !== "eme") return;
+        if (cap.kind !== "eme") {
+          deps.onFailure?.(tabId, { url: cap.url, error: rangeFailure(err, cap.url,
+            /\.(m3u8|mpd)([?#]|$)/i.test(cap.url) ? "manifest" : "direct") });
+          return;
+        }
       }
+      if (signal.aborted) return;
+      if (cap.kind !== "eme") deps.onProbeSuccess?.(tabId, cap.url);
     }
 
     if (cap.kind === "eme" && cap.keySystem) {
@@ -87,13 +121,14 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
         classified,
         cap.audioUrl,
         declaredTotalBytes(headers),
-        await probeDeclaredBytes(deps, cap.audioUrl),
+        await probeDeclaredBytes(deps, cap.audioUrl, signal),
       )
       : classified;
 
-    if (!shouldSurfaceDescriptor(descriptor)) return;
+    if (signal.aborted || !shouldSurfaceDescriptor(descriptor)) return;
     deps.onDescriptor(tabId, descriptor);
-  };
+  }
+  return Object.assign(handleCapture, { clearTab });
 }
 
 export function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {
@@ -107,10 +142,11 @@ export function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {
  * output-size guard counts both halves of a demuxed pair. Any failure yields
  * null — the size stays unknown rather than wrong.
  */
-async function probeDeclaredBytes(deps: CaptureDeps, url: string): Promise<number | null> {
+async function probeDeclaredBytes(deps: CaptureDeps, url: string, signal: AbortSignal): Promise<number | null> {
   try {
     const r = await deps.fetchFn(url, {
       credentials: "include",
+      signal,
       headers: { range: "bytes=0-0" },
     });
     try { await r.body?.cancel(); } catch { /* stream already closed */ }

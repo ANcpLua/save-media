@@ -77,6 +77,32 @@ function harness(fetchImpl: CaptureDeps["fetchFn"]) {
 }
 
 describe("capture handler — demuxed pairs", () => {
+  it("coalesces concurrent probes of the same media in one tab", async () => {
+    const { handle, fetchFn, onDescriptor } = harness(async () => response("video/mp4", FTYP_HEAD));
+    const msg = captureMsg("https://cdn.example/clip.mp4");
+    await Promise.all([handle(7, msg), handle(7, msg)]);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(onDescriptor).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts an old page's probe without reporting a failure on the new page", async () => {
+    let signal: AbortSignal | undefined;
+    const onDescriptor = vi.fn();
+    const onFailure = vi.fn();
+    const handle = createCaptureHandler({ onDescriptor, onFailure, fetchFn: async (_url, init) => {
+      signal = init.signal;
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+      });
+    } });
+    const pending = handle(7, captureMsg("https://cdn.example/clip.mp4"));
+    handle.clearTab(7);
+    expect(signal?.aborted).toBe(true);
+    await pending;
+    expect(onDescriptor).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
   it("reshapes an audio-carrying capture into a dash pair descriptor", async () => {
     const { fetchFn, onDescriptor, handle } = harness(async () => response("video/mp4", FTYP_HEAD));
 
@@ -190,12 +216,42 @@ describe("demuxedPairDescriptor", () => {
 });
 
 describe("capture handler — probe safety", () => {
+  it("detects an extensionless media URL on a server that only serves ranges", async () => {
+    const { onDescriptor, handle } = harness(async (_url, init) => {
+      if (!init.headers?.range) return { ...response("text/html", "unavailable"), status: 503 };
+      return response("video/mp4", FTYP_HEAD, {
+        "content-range": `bytes 0-${FTYP_HEAD.length - 1}/${FTYP_HEAD.length}`, etag: '"v1"',
+      });
+    });
+    await handle(1, captureMsg("https://cdn.example/stream?id=opaque"));
+    expect(onDescriptor).toHaveBeenCalledWith(1, expect.objectContaining({
+      capabilities: expect.objectContaining({ directDownload: true }),
+    }));
+  });
+
+  it("reports an exhausted server probe instead of silently treating it as absent media", async () => {
+    const onFailure = vi.fn();
+    const onDescriptor = vi.fn();
+    const fetchFn = vi.fn(async () => ({ ...response("text/html", "unavailable"), status: 503 }));
+    const handle = createCaptureHandler({ fetchFn, onDescriptor, onFailure });
+
+    await handle(7, captureMsg("https://cdn.example/clip.mp4"));
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(onDescriptor).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledWith(7, {
+      url: "https://cdn.example/clip.mp4",
+      error: expect.objectContaining({ code: "server_busy", httpStatus: 503 }),
+    });
+  });
+
   it("reads extensionless manifests in full even when observed on a media element", async () => {
     const manifest = `#EXTM3U\n#${"padding".repeat(700)}\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720\nvideo.m3u8\n`;
     const { fetchFn, onDescriptor, handle } = harness(async () => response("application/vnd.apple.mpegurl", manifest));
     const message = captureMsg("https://cdn.example/manifest?id=1");
     await handle(1, { ...message, payload: { ...message.payload, kind: "media-element" } });
-    expect(fetchFn.mock.calls[0]![1].headers).toBeUndefined();
+    expect(fetchFn.mock.calls[0]![1].headers).toEqual({ range: "bytes=0-4095" });
+    expect(fetchFn.mock.calls[1]![1].headers).toBeUndefined();
     expect(onDescriptor.mock.calls[0]![1].protocol).toBe("hls");
     expect(onDescriptor.mock.calls[0]![1].variants).toHaveLength(1);
   });

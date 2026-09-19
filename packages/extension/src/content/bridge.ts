@@ -214,8 +214,22 @@ function discoverMediaUrls(): string[] {
     .replace(/\\\//g, "/")
     .replace(/&amp;/g, "&");
   const seen = new Set<string>();
+  // A player's current source need not have a file extension. Include only
+  // observed media elements here; broad page-text discovery stays filtered.
+  document.querySelectorAll<HTMLMediaElement>("video, audio").forEach(media => {
+    const sources = [media.currentSrc, media.src,
+      ...Array.from(media.querySelectorAll<HTMLSourceElement>("source"), source => source.src)];
+    for (const raw of sources) {
+      if (!raw || seen.size >= 80 || looksLikeFragmentUrl(raw)) continue;
+      try {
+        const url = new URL(raw, location.href);
+        if (url.protocol === "http:" || url.protocol === "https:") seen.add(url.href);
+      } catch { /* Ignore malformed element sources. */ }
+    }
+  });
   const mediaUrl = /(?:(?:https?:)?\/\/|\/|\.\.?\/)[^\s"'<>]+?\.(?:m3u8|mpd|mp4|webm|mkv)(?:[^\s"'<>]*)?/gi;
   for (const match of normalized.matchAll(mediaUrl)) {
+    if (seen.size >= 80) break;
     const raw = match[0];
     if (!raw || looksLikeFragmentUrl(raw)) continue;
     try {

@@ -17,7 +17,7 @@ import type {
 } from "../types/messages";
 import { createRouter } from "./router";
 import { createCaptureHandler } from "./capture";
-import { downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
+import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
 import { registerNetworkCapture } from "./network-capture";
 import { handleInstalled } from "./installed";
@@ -71,6 +71,13 @@ const handleCapture = createCaptureHandler({
       updateBadge(tabId);
       broadcastDescriptors(tabId);
     }
+  },
+  onFailure: (tabId, failure) => {
+    router.setDiscoveryFailure(tabId, failure);
+    broadcastDescriptors(tabId);
+  },
+  onProbeSuccess: (tabId, url) => {
+    if (router.clearDiscoveryFailure(tabId, url)) broadcastDescriptors(tabId);
   },
   logger,
 });
@@ -163,9 +170,13 @@ chrome.runtime.onInstalled.addListener(details => {
   }, chrome.runtime.getManifest().version);
 });
 
-chrome.tabs.onRemoved.addListener(tabId => router.clearTab(tabId));
+function clearTab(tabId: number): void {
+  handleCapture.clearTab(tabId);
+  router.clearTab(tabId);
+}
+chrome.tabs.onRemoved.addListener(clearTab);
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === "loading" && info.url) router.clearTab(tabId);
+  if (info.status === "loading") clearTab(tabId);
 });
 
 registerNetworkCapture(handleCapture);
@@ -185,11 +196,7 @@ function updateBadge(tabId: number): void {
 }
 
 function broadcastDescriptors(tabId: number): void {
-  const msg: BackgroundToPopupMessage = {
-    type: "descriptors",
-    tabId,
-    descriptors: router.listDescriptors(tabId),
-  };
+  const msg = router.snapshot(tabId);
   chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError);
 }
 
@@ -215,6 +222,14 @@ chrome.runtime.onMessage.addListener((
   }
 
   if (isPopupToBackgroundMessage(msg)) {
+    if (msg.type === "rescan") {
+      // A failed or unreachable rescan must not erase the previous error.
+      // Successful probes clear their own failures through onProbeSuccess.
+      void discoverPageMediaForTab(downloadBestDeps, msg.tabId, "")
+        .then(() => sendResponse(router.snapshot(msg.tabId)))
+        .catch(() => sendResponse(router.snapshot(msg.tabId)));
+      return true;
+    }
     if (msg.type.startsWith("local-")) {
       void handleLocalPopupMessage(msg).then(sendResponse);
       return true;

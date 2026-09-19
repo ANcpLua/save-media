@@ -1,7 +1,6 @@
 import { BROWSER_OUTPUT_LIMIT_BYTES, type DirectPlan } from "@savemedia/core";
 import type { JobResult, ProgressFn } from "../job";
-import { fetchMediaRange, probeMedia, rangeMetadata, RangeRecoveryError } from "../net/range-recovery";
-import { classifyNetworkFailure } from "../net/error-classification";
+import { fetchMediaRange, probeMedia, rangeMetadata, rangeFailure, RangeRecoveryError } from "../net/range-recovery";
 import { validateDirectBlob } from "../verify-direct";
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -15,7 +14,9 @@ export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, sig
   if (signal.aborted) abort();
   try {
     onProgress(0, null, "probing");
-    const probe = await probeMedia(fetch, plan.url, controller.signal);
+    const probe = await probeMedia(fetch, plan.url, controller.signal, retry => {
+      onProgress(0, null, `Retrying connection (${retry.attempt}/${retry.maxAttempts})`);
+    });
     const metadata = rangeMetadata(probe.headers);
     if (!metadata) throw new RangeRecoveryError("Server no longer supplies validated byte ranges");
     if (metadata.total >= BROWSER_OUTPUT_LIMIT_BYTES) {
@@ -33,7 +34,9 @@ export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, sig
         const index = next++;
         const start = index * CHUNK_BYTES;
         const end = Math.min(start + CHUNK_BYTES, metadata!.total) - 1;
-        const bytes = await fetchMediaRange(plan.url, start, end, metadata!, controller.signal);
+        const bytes = await fetchMediaRange(plan.url, start, end, metadata!, controller.signal, retry => {
+          onProgress(received, metadata!.total, `Retrying part ${index + 1}/${count} (${retry.attempt}/${retry.maxAttempts})`);
+        });
         controller.signal.throwIfAborted();
         parts[index] = new Blob([bytes as BlobPart]);
         received += bytes.byteLength;
@@ -57,9 +60,9 @@ export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, sig
     return { blobUrl: URL.createObjectURL(blob), filename: plan.filename, checksum: "" };
   } catch (error) {
     signal.throwIfAborted();
-    if (error instanceof RangeRecoveryError && error.status !== undefined) {
-      throw classifyNetworkFailure({ url: plan.url, status: error.status, attemptsRemaining: 0, retryAfterSeconds: null, detail: error.message }, "direct", plan.url)
-        ?? { code: "engine_job_failed", severity: "terminal", at: "segment", detail: error.message };
+    if (error instanceof RangeRecoveryError || error instanceof TypeError
+      || (error instanceof Error && error.name === "TimeoutError")) {
+      throw rangeFailure(error, plan.url, "direct");
     }
     throw error;
   } finally {

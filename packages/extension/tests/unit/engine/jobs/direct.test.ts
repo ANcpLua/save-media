@@ -37,6 +37,7 @@ describe("direct download recovery", () => {
       const saved = await (await fetchOriginal(result.blobUrl)).arrayBuffer();
       expect(new Uint8Array(saved)).toEqual(fixture);
       expect(attempts).toBe(2);
+      expect(onProgress.mock.calls.some(call => /retry/i.test(call[2]))).toBe(true);
       expect(requests[0]).toBe("bytes=0-4095");
       expect(onProgress).toHaveBeenLastCalledWith(fixture.length, fixture.length, "finalizing");
     } finally {

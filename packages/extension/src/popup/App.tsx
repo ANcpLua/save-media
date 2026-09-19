@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { StreamDescriptor } from "@savemedia/core";
+import { userMessage, type StreamDescriptor } from "@savemedia/core";
 import { isBackgroundToPopupMessage } from "../types/messages";
-import type { BackgroundToContentMessage, PageMediaSnapshot, PopupToBackgroundMessage } from "../types/messages";
+import type { BackgroundToContentMessage, DiscoveryFailure, PageMediaSnapshot, PopupToBackgroundMessage } from "../types/messages";
 import { DetectedItem, type JobStatus } from "./components/DetectedItem";
 import { LocalDownloader } from "./components/LocalDownloader";
 import { rankDescriptors } from "./preview-match";
@@ -79,15 +79,18 @@ function manifestVersion(): string {
 export interface AppProps {
   readonly initialDescriptors?: readonly StreamDescriptor[];
   readonly initialStatuses?: Readonly<Record<string, JobStatus>>;
+  readonly initialFailures?: readonly DiscoveryFailure[];
   readonly skipFetch?: boolean;
 }
 
-export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch = false }: AppProps = {}) {
+export function App({ initialDescriptors = [], initialStatuses = {}, initialFailures = [], skipFetch = false }: AppProps = {}) {
   const [descriptors, setDescriptors] = useState<readonly StreamDescriptor[]>(initialDescriptors);
   const [tabId, setTabId] = useState<number | null>(null);
   const [pageUrl, setPageUrl] = useState<string | null>(null);
   const tabIdRef = useRef<number | null>(null);
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({ ...initialStatuses });
+  const [failures, setFailures] = useState<readonly DiscoveryFailure[]>(initialFailures);
+  const [scanning, setScanning] = useState(false);
   const [snapshot, setSnapshot] = useState<PageMediaSnapshot | null>(null);
   const asWindow = windowTabId() !== null;
 
@@ -98,6 +101,9 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
         // A different page: drop the previous tab's items at once instead of
         // showing them until the new list arrives.
         setDescriptors([]);
+        setFailures([]);
+        setStatuses({});
+        setScanning(false);
         setSnapshot(null);
       }
       tabIdRef.current = id;
@@ -107,7 +113,11 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
       const msg: PopupToBackgroundMessage = { type: "list", tabId: id };
       chrome.runtime.sendMessage(msg, (response: unknown) => {
         if (tabIdRef.current !== id) return;
-        if (isBackgroundToPopupMessage(response) && response.type === "descriptors") setDescriptors(response.descriptors);
+        if (isBackgroundToPopupMessage(response) && response.type === "descriptors") {
+          setDescriptors(response.descriptors);
+          setFailures(response.failures ?? []);
+          if (response.statuses) setStatuses({ ...response.statuses });
+        }
       });
       requestSnapshot(id, snap => {
         if (tabIdRef.current === id) setSnapshot(snap);
@@ -128,7 +138,9 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
   // Players attach their <video> late; refresh the snapshot when the list changes.
   useEffect(() => {
     if (skipFetch || tabId === null || descriptors.length === 0) return;
-    requestSnapshot(tabId, setSnapshot);
+    requestSnapshot(tabId, snap => {
+      if (tabIdRef.current === tabId) setSnapshot(snap);
+    });
   }, [skipFetch, tabId, descriptors.length]);
 
   function openAsWindow(): void {
@@ -136,6 +148,26 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
     const url = chrome.runtime.getURL(`src/popup/index.html?tabId=${tabId}`);
     void chrome.windows.create({ url, type: "popup", width: 440, height: 720 });
     window.close();
+  }
+
+  function rescan(): void {
+    if (tabId === null || scanning) return;
+    const requestedTabId = tabId;
+    setScanning(true);
+    const msg: PopupToBackgroundMessage = { type: "rescan", tabId };
+    chrome.runtime.sendMessage(msg, (response: unknown) => {
+      void chrome.runtime.lastError;
+      if (tabIdRef.current !== requestedTabId) return;
+      setScanning(false);
+      if (isBackgroundToPopupMessage(response) && response.type === "descriptors") {
+        setDescriptors(response.descriptors);
+        setFailures(response.failures ?? []);
+        if (response.statuses) setStatuses({ ...response.statuses });
+      }
+      requestSnapshot(requestedTabId, snap => {
+        if (tabIdRef.current === requestedTabId) setSnapshot(snap);
+      });
+    });
   }
 
   const ranked = rankDescriptors(descriptors, snapshot);
@@ -159,6 +191,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "failed", error: msg.error } }));
       } else if (msg.type === "descriptors" && msg.tabId === tabIdRef.current) {
         setDescriptors(msg.descriptors);
+        setFailures(msg.failures ?? []);
+        if (msg.statuses) setStatuses({ ...msg.statuses });
       }
     }
     chrome.runtime.onMessage.addListener(listener);
@@ -195,8 +229,27 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
       </header>
 
       <section className="flex-1 overflow-y-auto">
-        <h2 className="px-3 pt-3 pb-1 text-[11px] font-medium text-muted">Detected</h2>
-        {descriptors.length === 0 ? (
+        <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+          <h2 className="text-[11px] font-medium text-muted">Detected</h2>
+          {tabId !== null && (
+            <button type="button" onClick={rescan} disabled={scanning}
+              className="text-[11px] text-accent disabled:text-muted">
+              {scanning ? "Checking..." : "Check page again"}
+            </button>
+          )}
+        </div>
+        {failures.length > 0 && (
+          <ul className="px-2 py-1 space-y-1.5" aria-label="Media check failures">
+            {failures.map(failure => (
+              <li key={failure.url} className="rounded-lg border border-red-900/40 bg-surface p-3 text-xs" role="status">
+                <p className="font-medium text-red-400">{userMessage(failure.error).title}</p>
+                <p className="text-muted mt-1">{userMessage(failure.error).body}</p>
+                <p className="text-muted mt-1">{mediaHost(failure.url)}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        {descriptors.length === 0 && failures.length === 0 ? (
           <div className="px-3 py-8 text-center text-muted text-xs">
             {tabId === null && !skipFetch ? "No active tab." : "No media detected on this page."}
           </div>
@@ -225,4 +278,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, skipFetch =
       </footer>
     </main>
   );
+}
+
+function mediaHost(url: string): string {
+  try { return new URL(url).host; } catch { return "Media source"; }
 }

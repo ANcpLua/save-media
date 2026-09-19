@@ -1,18 +1,12 @@
 import { useState } from "react";
-import type { StreamDescriptor, JobError } from "@savemedia/core";
+import type { StreamDescriptor } from "@savemedia/core";
 import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
-import type { PopupToBackgroundMessage } from "../../types/messages";
+import type { PopupToBackgroundMessage, JobStatus } from "../../types/messages";
 import { suggestFilename } from "../../util/filename";
 import { hasDownloadableDemuxedPair } from "../../util/demuxed-pair";
 import { formatDuration, type Preview } from "../preview-match";
 
-export interface JobStatus {
-  readonly phase: "queued" | "active" | "complete" | "failed";
-  readonly bytesWritten?: number;
-  readonly bytesTotal?: number | null;
-  readonly stage?: string;
-  readonly error?: JobError;
-}
+export type { JobStatus } from "../../types/messages";
 
 interface Props {
   readonly descriptor: StreamDescriptor;

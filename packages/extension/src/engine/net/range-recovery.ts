@@ -1,7 +1,15 @@
 // Adapted from video-rescue/internal/rescue/downloader.go (MIT, ANcpLua).
 // See licenses/video-rescue-MIT.txt. Browser adaptation: bounded probes,
 // per-range retries and representation checks; no filesystem/native host.
-import { BROWSER_OUTPUT_LIMIT_BYTES } from "@savemedia/core";
+import { BROWSER_OUTPUT_LIMIT_BYTES, type JobError } from "@savemedia/core";
+import { classifyNetworkFailure, type NetworkPhase } from "./error-classification";
+
+export interface RangeRetry {
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+}
+export type RetryProgress = (retry: RangeRetry) => void;
 
 export interface ProbeResponse {
   readonly status: number;
@@ -35,6 +43,21 @@ export class RangeRecoveryError extends Error {
     super(message);
     this.name = "RangeRecoveryError";
   }
+}
+
+/** Translate transport failures without exposing signed URLs or raw fetch errors. */
+export function rangeFailure(error: unknown, url: string, phase: NetworkPhase): JobError {
+  const status = error instanceof RangeRecoveryError ? error.status : undefined;
+  const detail = error instanceof Error && error.name === "TimeoutError"
+    ? "The request timed out after retries." : "The media request could not be completed.";
+  const classified = classifyNetworkFailure({ url, status: status ?? "network-error", attemptsRemaining: 0,
+    retryAfterSeconds: null, detail }, phase, url);
+  if (status !== undefined && classified) return classified;
+  if (error instanceof RangeRecoveryError) {
+    return { code: "engine_job_failed", severity: "terminal", at: phase === "manifest" ? "manifest" : "segment",
+      detail: status === undefined ? error.message : `Media request returned HTTP ${status}. Reload the page and check again.` };
+  }
+  return classified ?? { code: "network_unreachable", severity: "terminal", phase, url, detail };
 }
 
 export function parseContentRange(value: string | undefined): ContentRange | null {
@@ -79,6 +102,7 @@ export async function recoverRequest<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
   attempts = 3,
+  onRetry?: RetryProgress,
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     signal.throwIfAborted();
@@ -100,7 +124,9 @@ export async function recoverRequest<T>(
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
     }
-    await delay(Math.min(attempt * 150, 1_000), signal);
+    const delayMs = Math.min(attempt * 150, 1_000);
+    onRetry?.({ attempt: attempt + 1, maxAttempts: attempts, delayMs });
+    await delay(delayMs, signal);
   }
 }
 
@@ -164,6 +190,7 @@ export async function probeMedia(
   fetchFn: ProbeFetch,
   url: string,
   signal: AbortSignal = new AbortController().signal,
+  onRetry?: RetryProgress,
 ): Promise<{ headers: Record<string, string>; bytes: Uint8Array }> {
   return recoverRequest(async attemptSignal => {
     const response = await fetchFn(url, { credentials: "include", headers: { range: "bytes=0-4095" }, signal: attemptSignal });
@@ -184,11 +211,12 @@ export async function probeMedia(
     } finally {
       try { await response.body?.cancel(); } catch { /* already consumed */ }
     }
-  }, signal);
+  }, signal, 3, onRetry);
 }
 
 export async function fetchMediaRange(
   url: string, start: number, end: number, metadata: RangeMetadata, signal: AbortSignal,
+  onRetry?: RetryProgress,
 ): Promise<Uint8Array> {
   return recoverRequest(async attemptSignal => {
     const response = await fetch(url, {
@@ -206,5 +234,5 @@ export async function fetchMediaRange(
     } finally {
       try { await response.body?.cancel(); } catch { /* already consumed */ }
     }
-  }, signal, 12);
+  }, signal, 12, onRetry);
 }

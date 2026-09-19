@@ -101,8 +101,22 @@ export interface ContentDiscoveryResponse {
   readonly urls: readonly string[];
 }
 
+export interface DiscoveryFailure {
+  readonly url: string;
+  readonly error: JobError;
+}
+
+export interface JobStatus {
+  readonly phase: "queued" | "active" | "complete" | "failed";
+  readonly bytesWritten?: number;
+  readonly bytesTotal?: number | null;
+  readonly stage?: string;
+  readonly error?: JobError;
+}
+
 export type BackgroundToPopupMessage =
-  | { readonly type: "descriptors"; readonly tabId: number; readonly descriptors: readonly StreamDescriptor[] }
+  | { readonly type: "descriptors"; readonly tabId: number; readonly descriptors: readonly StreamDescriptor[];
+      readonly failures?: readonly DiscoveryFailure[]; readonly statuses?: Readonly<Record<string, JobStatus>> }
   | { readonly type: "local-status"; readonly settings: LocalSettingsValue; readonly host: HostPong | null; readonly permissionGranted: boolean; readonly jobs: readonly LocalJobView[] }
   | { readonly type: "local-job"; readonly job: LocalJobView }
   | { readonly type: "job-progress"; readonly streamId: StreamDescriptor["id"]; readonly bytesWritten: number; readonly bytesTotal: number | null; readonly phase: string }
@@ -111,6 +125,7 @@ export type BackgroundToPopupMessage =
 
 export type PopupToBackgroundMessage =
   | { readonly type: "list"; readonly tabId: number }
+  | { readonly type: "rescan"; readonly tabId: number }
   | { readonly type: "local-status" }
   | { readonly type: "local-settings"; readonly patch: Partial<LocalSettingsValue> }
   | { readonly type: "local-download"; readonly tabId: number | null; readonly pageUrl: string }
@@ -191,6 +206,7 @@ const bridgeToBackgroundSchema = z.discriminatedUnion("type", [
 
 const popupToBackgroundSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("list"), tabId: z.number() }),
+  z.object({ type: z.literal("rescan"), tabId: z.number() }),
   z.object({ type: z.literal("local-status") }),
   z.object({ type: z.literal("local-settings"), patch: localSettingsPatchSchema }),
   z.object({ type: z.literal("local-download"), tabId: numberOrNull, pageUrl: z.string() }),
@@ -211,7 +227,10 @@ const engineToBackgroundSchema = z.discriminatedUnion("type", [
 ]);
 
 const backgroundToPopupSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("descriptors"), tabId: z.number(), descriptors: z.array(z.unknown()) }),
+  z.object({ type: z.literal("descriptors"), tabId: z.number(), descriptors: z.array(z.unknown()),
+    failures: z.array(z.object({ url: z.string(), error: record })).optional(),
+    statuses: z.record(z.string(), z.object({ phase: z.enum(["queued", "active", "complete", "failed"]),
+      bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional(), stage: z.string().optional(), error: record.optional() })).optional() }),
   z.object({ type: z.literal("local-status"), settings: record, permissionGranted: z.boolean(), jobs: z.array(z.unknown()) }),
   z.object({ type: z.literal("local-job"), job: localJobViewSchema }),
   z.object({ type: z.literal("job-progress"), ...progressFields }),
