@@ -351,3 +351,13 @@ Bugs and store-review questions go to
 ## License
 
 [Apache-2.0](LICENSE)
+
+## Credential health monitoring
+
+`.github/workflows/credential-health.yml` checks Chrome, Edge, and Firefox
+credentials every six hours and through **Run workflow**. These are read-only
+checks: nothing is uploaded or published. Vitals reads the secret metadata and
+per-store authentication results without downloading secret values. A replaced
+secret needs a newer successful check; results older than 24 hours are stale.
+The Edge check reads a previous real publishing operation, so a 404 or server
+error is never reported as successful authentication.
