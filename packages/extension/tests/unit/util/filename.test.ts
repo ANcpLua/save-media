@@ -89,17 +89,30 @@ describe("suggestFilename", () => {
 });
 
 describe("timestampedPath", () => {
-  it("names the file after the save time inside a part-of-day folder", () => {
-    expect(timestampedPath("Some Title.MP4", new Date(2026, 9, 2, 7, 11, 38))).toBe("2026-10-02 2 Morning/2026-10-02_071138.mp4");
+  const at = (h: number, m = 0, sec = 0) => new Date(2026, 0, 5, h, m, sec);
+
+  it("puts each six-hour block in its own folder, boundaries included", () => {
+    const folder = (d: Date) => timestampedPath("a.mp4", d).split("/")[0];
+    expect(folder(at(0))).toBe("2026-01-05 1 Night");
+    expect(folder(at(5, 59, 59))).toBe("2026-01-05 1 Night");
+    expect(folder(at(6))).toBe("2026-01-05 2 Morning");
+    expect(folder(at(11, 59, 59))).toBe("2026-01-05 2 Morning");
+    expect(folder(at(12))).toBe("2026-01-05 3 Afternoon");
+    expect(folder(at(17, 59, 59))).toBe("2026-01-05 3 Afternoon");
+    expect(folder(at(18))).toBe("2026-01-05 4 Evening");
+    expect(folder(at(23, 59, 59))).toBe("2026-01-05 4 Evening");
   });
 
-  it("splits the day into six-hour blocks", () => {
-    expect(timestampedPath("a.ts", new Date(2026, 0, 5, 0, 0, 0))).toBe("2026-01-05 1 Night/2026-01-05_000000.ts");
-    expect(timestampedPath("a.mp4", new Date(2026, 0, 5, 12, 0, 0))).toBe("2026-01-05 3 Afternoon/2026-01-05_120000.mp4");
-    expect(timestampedPath("a.mp4", new Date(2026, 0, 5, 23, 59, 59))).toBe("2026-01-05 4 Evening/2026-01-05_235959.mp4");
+  it("names the file date_HHMMSS, zero padded and without dashes in the time", () => {
+    expect(timestampedPath("a.mp4", at(3, 4, 5))).toBe("2026-01-05 1 Night/2026-01-05_030405.mp4");
   });
 
-  it("keeps no extension when the input has none", () => {
-    expect(timestampedPath("clip", new Date(2026, 0, 5, 6, 0, 0))).toBe("2026-01-05 2 Morning/2026-01-05_060000");
+  it("keeps only the last extension, lowercased", () => {
+    expect(timestampedPath("my.clip.MOV", at(9))).toBe("2026-01-05 2 Morning/2026-01-05_090000.mov");
+  });
+
+  it("adds no extension when the name has none", () => {
+    expect(timestampedPath("clip", at(9))).toBe("2026-01-05 2 Morning/2026-01-05_090000");
+    expect(timestampedPath(".hidden", at(9))).toBe("2026-01-05 2 Morning/2026-01-05_090000");
   });
 });

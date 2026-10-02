@@ -47,6 +47,18 @@ describe("DetectedItem — direct stream card", () => {
   });
 });
 
+describe("DetectedItem — default quality", () => {
+  it("downloads the highest variant when none is chosen, whatever the playlist order", () => {
+    const base = hlsDescriptor();
+    const v1080 = base.variants[0]!;
+    const v720 = { ...v1080, id: "v-720" as VariantId, width: 1280, height: 720, bitrate: 2_500_000 };
+    render(<ul>{<DetectedItem descriptor={{ ...base, variants: [v720, v1080] }} />}</ul>);
+    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    const arg = vi.mocked(globalThis.chrome.runtime.sendMessage).mock.calls.at(-1)?.[0] as unknown as { choice: { variantId: string } };
+    expect(arg.choice.variantId).toBe("v-1080");
+  });
+});
+
 describe("DetectedItem — HLS card output action label", () => {
   it("shows 'hls' as the output action for HLS streams", () => {
     const { container } = render(<ul>{<DetectedItem descriptor={hlsDescriptor()} />}</ul>);

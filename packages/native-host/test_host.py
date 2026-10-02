@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -384,6 +385,61 @@ class JobTest(unittest.TestCase):
         self.assertIn("already running", self.sent[-1]["message"])
         self.host.handle_download({"type": "download"})
         self.assertEqual(self.sent[-1], {"type": "failed", "id": "", "code": "invalid_request", "message": "download requires a string id"})
+
+
+class SavedNamingTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.host = load_host_module(self)
+        self.sent = []
+        self.host.send = lambda message: self.sent.append(message)
+        self.home = tempfile.mkdtemp(prefix="savemedia-host-home-")
+        self.old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        os.makedirs(os.path.join(self.home, "Downloads"))
+
+    def tearDown(self) -> None:
+        if self.old_home is not None:
+            os.environ["HOME"] = self.old_home
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def test_output_template_uses_the_extension_layout(self) -> None:
+        def template(h: int, m: int = 0, s: int = 0) -> str:
+            return self.host.timestamped_output_template(time.struct_time((2026, 1, 5, h, m, s, 0, 5, -1)))
+        self.assertEqual(template(3, 4, 5), "2026-01-05 1 Night/2026-01-05_030405.%(ext)s")
+        self.assertTrue(template(5, 59, 59).startswith("2026-01-05 1 Night/"))
+        self.assertTrue(template(6).startswith("2026-01-05 2 Morning/"))
+        self.assertTrue(template(12).startswith("2026-01-05 3 Afternoon/"))
+        self.assertTrue(template(18).startswith("2026-01-05 4 Evening/"))
+
+    def test_archive_lives_under_home_in_an_existing_directory(self) -> None:
+        path = self.host.download_archive_path()
+        self.assertTrue(path.startswith(self.home))
+        self.assertEqual(os.path.basename(path), "download-archive.txt")
+        self.assertTrue(os.path.isdir(os.path.dirname(path)))
+
+    def test_a_video_in_the_archive_fails_as_already_saved(self) -> None:
+        bindir = os.path.join(self.home, "bin")
+        os.makedirs(bindir)
+        argv_log = os.path.join(self.home, "argv.json")
+        ytdlp = os.path.join(bindir, "yt-dlp")
+        with open(ytdlp, "w") as fh:
+            fh.write("#!/usr/bin/env python3\nimport json, sys\n")
+            fh.write("json.dump(sys.argv[1:], open(%r, 'w'))\n" % argv_log)
+            fh.write("print('[download] Some Title has already been recorded in the archive')\n")
+        ffmpeg = os.path.join(bindir, "ffmpeg")
+        with open(ffmpeg, "w") as fh:
+            fh.write("#!/bin/sh\n")
+        os.chmod(ytdlp, 0o755)
+        os.chmod(ffmpeg, 0o755)
+        self.host.find_tool = lambda name: {"yt-dlp": ytdlp, "ffmpeg": ffmpeg}.get(name)
+
+        self.host.Job("j1", {"pageUrl": "https://example.com/watch/1"}).run()
+
+        self.assertEqual(self.sent[-1], {"type": "failed", "id": "j1", "code": "already_saved", "message": "this video is already saved"})
+        with open(argv_log) as fh:
+            argv = json.load(fh)
+        self.assertEqual(argv[argv.index("--download-archive") + 1], self.host.download_archive_path())
+        self.assertRegex(argv[argv.index("-o") + 1], r"^\d{4}-\d{2}-\d{2} \d [A-Za-z]+/\d{4}-\d{2}-\d{2}_\d{6}\.%\(ext\)s$")
 
 
 class LogRotationTest(unittest.TestCase):

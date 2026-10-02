@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRouter, dispatchRefusalToError } from "../../../src/background/router";
+import { AlreadySavedError } from "../../../src/background/saved-media";
 import { demuxedPairDescriptor } from "../../../src/background/capture";
 import { directDescriptor, hlsDescriptor, dashDescriptor, drmDescriptor, clearKeyDescriptor } from "../popup/helpers/descriptors";
 import type { UserChoice, StreamDescriptor, StreamId, VariantId, AudioRenditionId } from "@savemedia/core";
@@ -506,6 +507,36 @@ describe("router — engine message handling", () => {
     if (out?.type === "job-failed") {
       expect(out.error.code).toBe("browser_download_failed");
     }
+  });
+
+  it("on complete: an already saved video becomes job-failed with already_saved, not a browser failure", async () => {
+    const d = deps();
+    d.downloads.download.mockRejectedValueOnce(new AlreadySavedError("2026-01-05 2 Morning/2026-01-05_090000.mp4"));
+    const r = createRouter(d);
+    r.jobs.set(directDescriptor().id, {
+      descriptor: directDescriptor(),
+      choice: choice(),
+      plan: { kind: "direct", url: "", filename: "" },
+    });
+    const out = await r.handleEngineMessage({
+      type: "complete",
+      streamId: directDescriptor().id,
+      blobUrl: "blob:x",
+      filename: "out.mp4",
+      checksum: "abc",
+    });
+    expect(out).toMatchObject({
+      type: "job-failed",
+      error: { code: "already_saved", existing: "2026-01-05 2 Morning/2026-01-05_090000.mp4" },
+    });
+  });
+
+  it("direct: an already saved video is reported as already_saved", async () => {
+    const d = deps();
+    d.downloads.download.mockRejectedValueOnce(new AlreadySavedError("saved.mp4"));
+    const r = createRouter(d);
+    r.addDescriptor(1, directDescriptor());
+    expect(await r.startDownload(directDescriptor().id, choice())).toEqual({ code: "already_saved", severity: "terminal", existing: "saved.mp4" });
   });
 
   it("on complete: a file:// blobUrl is still handed to chrome.downloads and can fail honestly", async () => {

@@ -1,80 +1,137 @@
-import { describe, it, expect } from "vitest";
-import { AlreadySavedError, createSavedMediaGuard, decideSave, isSameVideo, type SavedMedia } from "../../../src/background/saved-media";
+import { describe, it, expect, vi } from "vitest";
+import { AlreadySavedError, createSavedMediaGuard, decideSave, isSameVideo, type SavedMedia, type SavedMediaDeps } from "../../../src/background/saved-media";
 import type { MediaInfo } from "../../../src/engine/probe-media";
 
-const info = (durationSec: number, width: number, height: number, frameHash: string | null = null): MediaInfo =>
-  ({ durationSec, width, height, frameHash });
-const saved = (downloadId: number, m: MediaInfo): SavedMedia => ({ ...m, downloadId, filename: `${downloadId}.mp4`, replaces: [] });
+const ZEROS = "0".repeat(64);
+const flipped = (bits: number) => "1".repeat(bits) + "0".repeat(64 - bits);
+
+const portrait = (durationSec: number, height: number, frameHash: string | null = null): MediaInfo =>
+  ({ durationSec, width: Math.round(height * 9 / 16), height, frameHash });
+const record = (downloadId: number, m: MediaInfo): SavedMedia => ({ ...m, downloadId, filename: `${downloadId}.mp4`, replaces: [] });
 
 describe("isSameVideo", () => {
-  it("matches one source at different resolutions by duration", () => {
-    expect(isSameVideo(info(154.4459, 1080, 1920), info(154.4459, 134, 240))).toBe(true);
+  it("allows 0.1 s of duration difference and no more", () => {
+    expect(isSameVideo(portrait(100.5, 1080), portrait(100.6, 720))).toBe(true);
+    expect(isSameVideo(portrait(100.5, 1080), portrait(100.61, 720))).toBe(false);
   });
 
-  it("tells videos apart by duration, orientation and frame hash", () => {
-    expect(isSameVideo(info(122.67, 1080, 1920), info(124.23, 1080, 1920))).toBe(false);
-    expect(isSameVideo(info(15, 1920, 1080), info(15, 1080, 1920))).toBe(false);
-    expect(isSameVideo(info(15, 1080, 1920), info(15, 720, 1280))).toBe(false);
-    expect(isSameVideo(info(15, 1080, 1920, "0".repeat(64)), info(15, 1080, 1920, "1".repeat(64)))).toBe(false);
-    expect(isSameVideo(info(15, 1080, 1920, "0".repeat(64)), info(15, 720, 1280, "0".repeat(60) + "1111"))).toBe(true);
+  it("never matches portrait against landscape", () => {
+    expect(isSameVideo(portrait(100.5, 1080), { durationSec: 100.5, width: 1920, height: 1080, frameHash: null })).toBe(false);
+  });
+
+  it("lets the frame hash decide when both sides have one: up to 10 of 64 bits apart", () => {
+    expect(isSameVideo(portrait(100.5, 1080, ZEROS), portrait(100.5, 720, flipped(10)))).toBe(true);
+    expect(isSameVideo(portrait(100.5, 1080, ZEROS), portrait(100.5, 720, flipped(11)))).toBe(false);
+  });
+
+  it("needs the frame hash for whole-second durations", () => {
+    expect(isSameVideo(portrait(15, 1080), portrait(15, 720))).toBe(false);
+    expect(isSameVideo(portrait(15.04, 1080), portrait(15.04, 720))).toBe(false);
+    expect(isSameVideo(portrait(15, 1080, ZEROS), portrait(15, 720, ZEROS))).toBe(true);
+    expect(isSameVideo(portrait(15.06, 1080), portrait(15.06, 720))).toBe(true);
   });
 });
 
 describe("decideSave", () => {
-  it("skips a copy that is not better than the saved one", () => {
-    const existing = saved(1, info(220.8, 1920, 1080));
-    expect(decideSave([existing], info(220.8, 1920, 1080))).toEqual({ kind: "skip", existing });
-    expect(decideSave([existing], info(220.8, 426, 240))).toEqual({ kind: "skip", existing });
+  it("saves a video nothing matches", () => {
+    expect(decideSave([record(1, portrait(60.5, 1080))], portrait(90.5, 1080))).toEqual({ kind: "save", replaces: [] });
   });
 
-  it("saves a better copy and marks only hash-confirmed worse copies for removal", () => {
-    const hash = "01".repeat(32);
-    const worse = saved(1, info(314.43, 1080, 1920, hash));
-    const unconfirmed = saved(2, info(314.43, 720, 1280));
-    const other = saved(3, info(50.68, 1080, 1920, hash));
-    expect(decideSave([worse, unconfirmed, other], info(314.43, 2160, 3840, hash))).toEqual({ kind: "save", replaces: [worse] });
+  it("skips a copy with equal or fewer pixels and names the best saved copy", () => {
+    const low = record(1, portrait(60.5, 720));
+    const high = record(2, portrait(60.5, 1080));
+    expect(decideSave([low, high], portrait(60.5, 1080))).toEqual({ kind: "skip", existing: high });
+    expect(decideSave([low, high], portrait(60.5, 480))).toEqual({ kind: "skip", existing: high });
+  });
+
+  it("saves a copy with more pixels and replaces only copies the frame hash confirms", () => {
+    const confirmed = record(1, portrait(60.5, 720, ZEROS));
+    const lengthOnly = record(2, portrait(60.5, 480));
+    expect(decideSave([confirmed, lengthOnly], portrait(60.5, 1080, ZEROS))).toEqual({ kind: "save", replaces: [confirmed] });
+    expect(decideSave([confirmed, lengthOnly], portrait(60.5, 1080))).toEqual({ kind: "save", replaces: [] });
   });
 });
 
 describe("createSavedMediaGuard", () => {
-  function setup(first: MediaInfo | null) {
-    let probe = first;
+  function setup(probe: (url: string) => MediaInfo | null) {
     let list: readonly SavedMedia[] = [];
-    let nextId = 10;
-    const removed: number[] = [];
-    const guard = createSavedMediaGuard({
-      probe: async () => probe,
-      download: async () => nextId++,
+    let nextId = 1;
+    const gone = new Set<number>();
+    const deps = {
+      probe: vi.fn(async (url: string) => probe(url)),
+      download: vi.fn(async () => nextId++),
       read: async () => list,
-      write: async l => { list = l; },
-      exists: async id => !removed.includes(id),
-      remove: async id => { removed.push(id); },
-    });
-    return { guard, removed, list: () => list, setProbe: (m: MediaInfo) => { probe = m; } };
+      write: async (l: readonly SavedMedia[]) => { list = l; },
+      exists: async (id: number) => !gone.has(id),
+      remove: vi.fn(async (id: number) => { gone.add(id); }),
+    } satisfies SavedMediaDeps;
+    return { guard: createSavedMediaGuard(deps), deps, gone, list: () => list };
   }
 
-  it("refuses the second download of the same video", async () => {
-    const { guard } = setup(info(118.07, 720, 1280));
-    await guard.download({ url: "a", filename: "a.mp4" });
-    await expect(guard.download({ url: "b", filename: "b.mp4" })).rejects.toBeInstanceOf(AlreadySavedError);
+  it("refuses the same video a second time without downloading it, naming the saved file", async () => {
+    const { guard, deps } = setup(() => portrait(60.5, 1080));
+    await guard.download({ url: "a", filename: "first.mp4" });
+    const second = guard.download({ url: "b", filename: "second.mp4" });
+    await expect(second).rejects.toBeInstanceOf(AlreadySavedError);
+    await expect(second).rejects.toMatchObject({ existing: "first.mp4" });
+    expect(deps.download).toHaveBeenCalledTimes(1);
   });
 
-  it("deletes the worse copy only after the better one completes", async () => {
-    const hash = "01".repeat(32);
-    const { guard, removed, list, setProbe } = setup(info(154.44, 134, 240, hash));
-    const low = await guard.download({ url: "a", filename: "a.mp4" });
-    setProbe(info(154.44, 1080, 1920, hash));
-    const high = await guard.download({ url: "b", filename: "b.mp4" });
-    expect(removed).toEqual([]);
-    await guard.completed(high);
-    expect(removed).toEqual([low]);
-    expect(list().map(s => s.downloadId)).toEqual([high]);
+  it("refuses the second of two downloads started together", async () => {
+    const { guard, deps } = setup(() => portrait(60.5, 1080));
+    const results = await Promise.allSettled([
+      guard.download({ url: "a", filename: "a.mp4" }),
+      guard.download({ url: "b", filename: "b.mp4" }),
+    ]);
+    expect(results.map(r => r.status)).toEqual(["fulfilled", "rejected"]);
+    expect(deps.download).toHaveBeenCalledTimes(1);
   });
 
-  it("downloads without a record when the probe fails", async () => {
-    const { guard, list } = setup(null);
+  it("downloads unchecked and records nothing when the probe cannot read the video", async () => {
+    const { guard, deps, list } = setup(() => null);
     await guard.download({ url: "a", filename: "a.mp4" });
     await guard.download({ url: "a", filename: "a.mp4" });
+    expect(deps.download).toHaveBeenCalledTimes(2);
     expect(list()).toEqual([]);
+  });
+
+  it("forgets a saved copy whose file is gone, so the video can be saved again", async () => {
+    const { guard, gone, list } = setup(() => portrait(60.5, 1080));
+    const first = await guard.download({ url: "a", filename: "a.mp4" });
+    gone.add(first);
+    const second = await guard.download({ url: "b", filename: "b.mp4" });
+    expect(list().map(s => s.downloadId)).toEqual([second]);
+  });
+
+  it("deletes the confirmed worse copy only when the better download completes", async () => {
+    let height = 720;
+    const { guard, deps, list } = setup(() => portrait(60.5, height, ZEROS));
+    const low = await guard.download({ url: "a", filename: "low.mp4" });
+    height = 1080;
+    const high = await guard.download({ url: "b", filename: "high.mp4" });
+    expect(deps.remove).not.toHaveBeenCalled();
+
+    await guard.completed(high);
+    expect(deps.remove).toHaveBeenCalledWith(low);
+    expect(list()).toEqual([expect.objectContaining({ downloadId: high, replaces: [] })]);
+  });
+
+  it("keeps the worse copy when the better download never completes", async () => {
+    let height = 720;
+    const { guard, deps, gone } = setup(() => portrait(60.5, height, ZEROS));
+    await guard.download({ url: "a", filename: "low.mp4" });
+    height = 1080;
+    const high = await guard.download({ url: "b", filename: "high.mp4" });
+    gone.add(high); // interrupted
+
+    height = 720;
+    await expect(guard.download({ url: "c", filename: "again.mp4" })).rejects.toMatchObject({ existing: "low.mp4" });
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it("ignores completions of downloads it does not track", async () => {
+    const { guard, deps } = setup(() => portrait(60.5, 1080));
+    await guard.completed(42);
+    expect(deps.remove).not.toHaveBeenCalled();
   });
 });

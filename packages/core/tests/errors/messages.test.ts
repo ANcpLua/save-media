@@ -26,6 +26,12 @@ describe("userMessage", () => {
     expect(msg.action?.kind).toBe("retry-job");
   });
 
+  it("already_saved names the saved copy and is not a failure of the browser", () => {
+    const msg = userMessage({ code: "already_saved", severity: "terminal", existing: "2026-01-05 2 Morning/2026-01-05_090000.mp4" });
+    expect(msg.title).toBe("Already saved");
+    expect(msg.body).toContain("2026-01-05 2 Morning/2026-01-05_090000.mp4");
+  });
+
   it("user_cancelled mentions discarded bytes", () => {
     const err: JobError = { code: "user_cancelled", severity: "terminal", bytesDiscarded: 12_345_678 };
     expect(userMessage(err).body).toMatch(/12\.3 MB/);
