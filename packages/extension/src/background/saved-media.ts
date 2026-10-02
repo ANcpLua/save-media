@@ -6,11 +6,15 @@ import type { MediaInfo } from "../engine/probe-media";
  * Same video: durations within 0.1 s, same orientation, and, when both sides
  * have a frame hash, at most 10 of 64 bits apart. Re-encodes of one source at
  * other resolutions keep the duration to the millisecond, which is what
- * separates them from different videos.
+ * separates them from different videos. A whole-second duration (stories
+ * capped at 15 or 60 s) is too common to mean anything, so it needs the
+ * frame hash.
  *
- * Quality is the pixel count. A copy with more pixels is downloaded and the
- * worse copies are deleted once it has finished; a copy with equal or fewer
- * pixels is refused before anything is downloaded.
+ * Quality is the pixel count. A copy with equal or fewer pixels is refused
+ * before anything is downloaded. A copy with more pixels is downloaded, and
+ * once it has finished the worse copies are deleted, but only those the
+ * frame hash confirms: the browser deletes past the Trash, so length alone
+ * never costs a file.
  */
 export interface SavedMedia extends MediaInfo {
   readonly downloadId: number;
@@ -36,14 +40,18 @@ export function isSameVideo(a: MediaInfo, b: MediaInfo): boolean {
   if (Math.abs(a.durationSec - b.durationSec) > DURATION_TOLERANCE_SEC) return false;
   if ((a.width >= a.height) !== (b.width >= b.height)) return false;
   if (a.frameHash && b.frameHash) return hammingDistance(a.frameHash, b.frameHash) <= MAX_HASH_DISTANCE;
-  return true;
+  return !isRoundDuration(a.durationSec);
+}
+
+function isRoundDuration(sec: number): boolean {
+  return Math.abs(sec - Math.round(sec)) < 0.05;
 }
 
 export function decideSave(saved: readonly SavedMedia[], info: MediaInfo): SaveDecision {
   const same = saved.filter(s => isSameVideo(s, info));
   const best = same.reduce<SavedMedia | null>((top, s) => (!top || pixels(s) > pixels(top) ? s : top), null);
   if (best && pixels(best) >= pixels(info)) return { kind: "skip", existing: best };
-  return { kind: "save", replaces: same };
+  return { kind: "save", replaces: same.filter(s => s.frameHash !== null && info.frameHash !== null) };
 }
 
 function pixels(m: MediaInfo): number {

@@ -14,6 +14,7 @@ describe("isSameVideo", () => {
   it("tells videos apart by duration, orientation and frame hash", () => {
     expect(isSameVideo(info(122.67, 1080, 1920), info(124.23, 1080, 1920))).toBe(false);
     expect(isSameVideo(info(15, 1920, 1080), info(15, 1080, 1920))).toBe(false);
+    expect(isSameVideo(info(15, 1080, 1920), info(15, 720, 1280))).toBe(false);
     expect(isSameVideo(info(15, 1080, 1920, "0".repeat(64)), info(15, 1080, 1920, "1".repeat(64)))).toBe(false);
     expect(isSameVideo(info(15, 1080, 1920, "0".repeat(64)), info(15, 720, 1280, "0".repeat(60) + "1111"))).toBe(true);
   });
@@ -26,10 +27,12 @@ describe("decideSave", () => {
     expect(decideSave([existing], info(220.8, 426, 240))).toEqual({ kind: "skip", existing });
   });
 
-  it("saves a better copy and marks the worse ones for removal", () => {
-    const worse = saved(1, info(314.43, 1080, 1920));
-    const other = saved(2, info(50.68, 1080, 1920));
-    expect(decideSave([worse, other], info(314.43, 2160, 3840))).toEqual({ kind: "save", replaces: [worse] });
+  it("saves a better copy and marks only hash-confirmed worse copies for removal", () => {
+    const hash = "01".repeat(32);
+    const worse = saved(1, info(314.43, 1080, 1920, hash));
+    const unconfirmed = saved(2, info(314.43, 720, 1280));
+    const other = saved(3, info(50.68, 1080, 1920, hash));
+    expect(decideSave([worse, unconfirmed, other], info(314.43, 2160, 3840, hash))).toEqual({ kind: "save", replaces: [worse] });
   });
 });
 
@@ -57,9 +60,10 @@ describe("createSavedMediaGuard", () => {
   });
 
   it("deletes the worse copy only after the better one completes", async () => {
-    const { guard, removed, list, setProbe } = setup(info(154.44, 134, 240));
+    const hash = "01".repeat(32);
+    const { guard, removed, list, setProbe } = setup(info(154.44, 134, 240, hash));
     const low = await guard.download({ url: "a", filename: "a.mp4" });
-    setProbe(info(154.44, 1080, 1920));
+    setProbe(info(154.44, 1080, 1920, hash));
     const high = await guard.download({ url: "b", filename: "b.mp4" });
     expect(removed).toEqual([]);
     await guard.completed(high);
