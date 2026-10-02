@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeFilename, suggestFilename } from "../../../src/util/filename";
+import { sanitizeFilename, suggestFilename, timestampedPath } from "../../../src/util/filename";
 
 describe("sanitizeFilename", () => {
   it("preserves alphanumerics, dots, underscores, hyphens, spaces", () => {
@@ -85,5 +85,21 @@ describe("suggestFilename", () => {
 
   it("keeps non-ASCII titles instead of replacing them with underscores", () => {
     expect(suggestFilename({ title: "Vorlesung Übersicht", pageUrl: "https://x.com/" })).toBe("Vorlesung Übersicht.mp4");
+  });
+});
+
+describe("timestampedPath", () => {
+  it("names the file after the save time inside a part-of-day folder", () => {
+    expect(timestampedPath("Some Title.MP4", new Date(2026, 9, 2, 7, 11, 38))).toBe("2026-10-02 2 Morning/2026-10-02_071138.mp4");
+  });
+
+  it("splits the day into six-hour blocks", () => {
+    expect(timestampedPath("a.ts", new Date(2026, 0, 5, 0, 0, 0))).toBe("2026-01-05 1 Night/2026-01-05_000000.ts");
+    expect(timestampedPath("a.mp4", new Date(2026, 0, 5, 12, 0, 0))).toBe("2026-01-05 3 Afternoon/2026-01-05_120000.mp4");
+    expect(timestampedPath("a.mp4", new Date(2026, 0, 5, 23, 59, 59))).toBe("2026-01-05 4 Evening/2026-01-05_235959.mp4");
+  });
+
+  it("keeps no extension when the input has none", () => {
+    expect(timestampedPath("clip", new Date(2026, 0, 5, 6, 0, 0))).toBe("2026-01-05 2 Morning/2026-01-05_060000");
   });
 });

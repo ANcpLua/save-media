@@ -229,6 +229,18 @@ def tool_info(name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+DAY_PARTS = ("1 Night", "2 Morning", "3 Afternoon", "4 Evening")
+
+
+def timestamped_output_template(now: Optional[time.struct_time] = None) -> str:
+    """Same layout as the extension's timestampedPath: a part-of-day folder
+    and a file named after the start time. No dashes in the time, because
+    Finder search reads "07-11-38" as a date and finds nothing."""
+    t = now or time.localtime()
+    day = time.strftime("%Y-%m-%d", t)
+    return "%s %s/%s_%s.%%(ext)s" % (day, DAY_PARTS[t.tm_hour // 6], day, time.strftime("%H%M%S", t))
+
+
 def default_output_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "Downloads")
 
@@ -413,7 +425,7 @@ class Job:
             "--progress",
             "--ffmpeg-location", os.path.dirname(ffmpeg),
             "-f", format_for_quality(quality),
-            "-o", "%(title).80s [%(id)s].%(ext)s",
+            "-o", timestamped_output_template(),
             "-P", output_dir,
             "--print", "after_move:filepath",
             "--progress-template",

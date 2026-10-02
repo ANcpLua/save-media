@@ -16,6 +16,7 @@ import type {
   PopupToBackgroundMessage,
 } from "../types/messages";
 import { createRouter } from "./router";
+import { timestampedPath } from "../util/filename";
 import { createCaptureHandler } from "./capture";
 import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
@@ -57,7 +58,7 @@ router = createRouter({
     },
   },
   downloads: {
-    download: async (opts) => chrome.downloads.download(opts as chrome.downloads.DownloadOptions),
+    download: async (opts) => chrome.downloads.download({ ...opts, filename: timestampedPath(opts.filename) } as chrome.downloads.DownloadOptions),
   },
   ensureEngineHost,
   logger,
