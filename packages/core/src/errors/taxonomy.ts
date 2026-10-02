@@ -53,6 +53,7 @@ export type JobError =
   | { code: "engine_job_failed";          severity: "terminal";    at: "manifest" | "init" | "segment" | "finalize"; detail: string }
   | { code: "engine_oom";                 severity: "terminal";    workerMemoryMb: number; budgetMb: 64 }
   | { code: "browser_download_failed";    severity: "terminal";    reason: string; filename: string }
+  | { code: "already_saved";              severity: "terminal";    existing: string }
 
   // Cancellation
   | { code: "user_cancelled";             severity: "terminal";    bytesDiscarded: number };

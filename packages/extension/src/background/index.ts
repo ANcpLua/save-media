@@ -17,6 +17,8 @@ import type {
 } from "../types/messages";
 import { createRouter } from "./router";
 import { timestampedPath } from "../util/filename";
+import { createSavedMediaGuard, type SavedMedia } from "./saved-media";
+import { isMediaInfo, probeMedia, PROBE_MEDIA, type MediaInfo } from "../engine/probe-media";
 import { createCaptureHandler } from "./capture";
 import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
@@ -43,6 +45,39 @@ const firefoxEngineHost = __BROWSER__ === "firefox"
   })
   : null;
 
+const SAVED_MEDIA_KEY = "savedMedia";
+
+async function probeSavedMedia(url: string): Promise<MediaInfo | null> {
+  // Firefox runs the engine in this background page, which has a DOM.
+  if (__BROWSER__ === "firefox") return probeMedia(url);
+  await ensureEngineHost();
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: PROBE_MEDIA, url }, (resp: unknown) => {
+      void chrome.runtime.lastError;
+      resolve(isMediaInfo(resp) ? resp : null);
+    });
+  });
+}
+
+const savedMedia = createSavedMediaGuard({
+  probe: probeSavedMedia,
+  download: opts => chrome.downloads.download(opts as chrome.downloads.DownloadOptions),
+  read: async () => ((await chrome.storage.local.get(SAVED_MEDIA_KEY))[SAVED_MEDIA_KEY] as SavedMedia[] | undefined) ?? [],
+  write: list => chrome.storage.local.set({ [SAVED_MEDIA_KEY]: list }),
+  exists: async id => {
+    const [item] = await chrome.downloads.search({ id });
+    return item !== undefined && item.state !== "interrupted" && (item.state === "in_progress" || item.exists);
+  },
+  remove: async id => {
+    await chrome.downloads.removeFile(id).catch(() => undefined);
+    await chrome.downloads.erase({ id });
+  },
+});
+
+chrome.downloads.onChanged.addListener(delta => {
+  if (delta.state?.current === "complete") void savedMedia.completed(delta.id);
+});
+
 router = createRouter({
   runtime: {
     sendMessage: (msg, cb) => {
@@ -58,7 +93,7 @@ router = createRouter({
     },
   },
   downloads: {
-    download: async (opts) => chrome.downloads.download({ ...opts, filename: timestampedPath(opts.filename) } as chrome.downloads.DownloadOptions),
+    download: async (opts) => savedMedia.download({ ...opts, filename: timestampedPath(opts.filename) }),
   },
   ensureEngineHost,
   logger,

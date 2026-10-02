@@ -30,6 +30,7 @@ export const LOCAL_FAILURE_CODES = [
   "cancelled",
   "invalid_request",
   "unknown",
+  "already_saved",
   // Extension-side only: the host could not be reached at all.
   "host_unavailable",
 ] as const;
@@ -162,6 +163,8 @@ export function localFailureText(code: LocalFailureCode, message: string): { rea
         title: "Local downloader not reachable",
         body: "Install the host from the repository (packages/native-host) and reload the extension.",
       };
+    case "already_saved":
+      return { title: "Already saved", body: "This video is already in your downloads." };
     case "ytdlp_missing":
       return { title: "yt-dlp not found", body: "Install yt-dlp on this computer, then try again." };
     case "ffmpeg_missing":

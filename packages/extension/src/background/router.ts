@@ -18,6 +18,7 @@ import type {
 } from "../types/messages";
 import type { Logger } from "../util/logger";
 import { suggestFilename } from "../util/filename";
+import { AlreadySavedError } from "./saved-media";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
 import { hasDownloadableDemuxedPair } from "../util/demuxed-pair";
 import { canRecoverWithRanges } from "../engine/net/range-recovery";
@@ -27,6 +28,11 @@ export { dispatchRefusalToError } from "../util/dispatch-refusal";
 type HlsDescriptor = StreamDescriptor & {
   readonly source: { readonly kind: "hls-manifest"; readonly manifestUrl: string; readonly type: "master" | "media" };
 };
+
+function saveFailure(err: unknown, filename: string): JobError {
+  if (err instanceof AlreadySavedError) return { code: "already_saved", severity: "terminal", existing: err.existing };
+  return { code: "browser_download_failed", severity: "terminal", reason: err instanceof Error ? err.message : String(err), filename };
+}
 
 export interface TabState {
   readonly descriptors: Map<string, StreamDescriptor>;
@@ -404,12 +410,7 @@ export function createRouter(deps: RouterDeps): Router {
         });
         return null;
       } catch (err) {
-        return {
-          code: "browser_download_failed",
-          severity: "terminal",
-          reason: String((err as Error)?.message ?? err),
-          filename: plan.filename,
-        };
+        return saveFailure(err, plan.filename);
       }
     }
 
@@ -450,10 +451,7 @@ export function createRouter(deps: RouterDeps): Router {
         statuses.set(msg.streamId, { phase: "complete" });
         return { type: "job-complete", streamId: msg.streamId, path: msg.filename };
       } catch (err) {
-        const error: JobError = {
-          code: "browser_download_failed", severity: "terminal",
-          reason: err instanceof Error ? err.message : String(err), filename: msg.filename,
-        };
+        const error = saveFailure(err, msg.filename);
         statuses.set(msg.streamId, { phase: "failed", error });
         return {
           type: "job-failed",

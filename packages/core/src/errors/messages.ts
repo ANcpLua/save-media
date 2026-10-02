@@ -228,6 +228,13 @@ export function userMessage(err: JobError): UserMessage {
         action: null,
       };
 
+    case "already_saved":
+      return {
+        title: "Already saved",
+        body: `This video is already in your downloads in equal or better quality: ${err.existing}.`,
+        action: null,
+      };
+
     case "user_cancelled":
       return {
         title: "Cancelled",

@@ -54,6 +54,7 @@ FAILURE_CODES = (
     "cancelled",
     "invalid_request",
     "unknown",
+    "already_saved",
 )
 
 # ---------------------------------------------------------------------------
@@ -241,6 +242,18 @@ def timestamped_output_template(now: Optional[time.struct_time] = None) -> str:
     return "%s %s/%s_%s.%%(ext)s" % (day, DAY_PARTS[t.tm_hour // 6], day, time.strftime("%H%M%S", t))
 
 
+def download_archive_path() -> str:
+    """yt-dlp records every finished video (site + video id) here and skips
+    it from then on, so the local downloader never saves a video twice."""
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Application Support", "savemedia")
+    else:
+        base = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state"), "savemedia")
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, "download-archive.txt")
+
+
 def default_output_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "Downloads")
 
@@ -426,6 +439,7 @@ class Job:
             "--ffmpeg-location", os.path.dirname(ffmpeg),
             "-f", format_for_quality(quality),
             "-o", timestamped_output_template(),
+            "--download-archive", download_archive_path(),
             "-P", output_dir,
             "--print", "after_move:filepath",
             "--progress-template",
@@ -478,6 +492,7 @@ class Job:
         phase = "downloading"
         last_path = None  # type: Optional[str]
         destinations = []  # type: List[str]
+        already_saved = False
         try:
             for raw in proc.stdout:
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
@@ -489,6 +504,9 @@ class Job:
                 if line.startswith("[Merger]") or line.startswith("[ExtractAudio]") or line.startswith("[FixupM"):
                     phase = "merging"
                     self._progress(phase=phase, force=True)
+                    continue
+                if "has already been recorded in the archive" in line:
+                    already_saved = True
                     continue
                 if line.startswith("[download] Destination: "):
                     destinations.append(line[len("[download] Destination: "):])
@@ -509,6 +527,9 @@ class Job:
             return
         if self.timed_out:
             send_failed(self.id, "timeout", "download exceeded %d minutes" % (DOWNLOAD_TIMEOUT_SECONDS // 60))
+            return
+        if already_saved and proc.returncode == 0:
+            send_failed(self.id, "already_saved", "this video is already saved")
             return
         if proc.returncode != 0 or not last_path:
             code = classify_stderr(stderr_text, page_url)

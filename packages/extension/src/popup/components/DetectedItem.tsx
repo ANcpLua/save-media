@@ -26,7 +26,7 @@ export function DetectedItem({ descriptor, status, onCancel, preview = null, isM
   const qualityChoices = [...descriptor.variants]
     .filter(v => v.videoCodec !== null || v.height !== null)
     .sort((a, b) => (b.height ?? 0) - (a.height ?? 0) || (b.bitrate ?? 0) - (a.bitrate ?? 0));
-  const variant = descriptor.variants.find(v => v.id === chosenVariantId) ?? visibleVariants[0] ?? descriptor.variants[0];
+  const variant = descriptor.variants.find(v => v.id === chosenVariantId) ?? qualityChoices[0] ?? descriptor.variants[0];
   const displayTitle = descriptor.title ?? pageTitle ?? hostOf(descriptor.pageUrl);
   const previewSize = preview && preview.width > 0 && preview.height > 0 ? `${preview.width}×${preview.height}` : null;
   const vcodec = variant?.videoCodec ?? descriptor.codecs.video;

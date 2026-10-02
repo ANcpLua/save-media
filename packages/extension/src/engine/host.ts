@@ -9,6 +9,7 @@
 
 import { isBackgroundToEngineMessage } from "../types/messages";
 import { createInProcessEngineHost } from "./in-process-host";
+import { isProbeMediaRequest, probeMedia } from "./probe-media";
 
 const host = createInProcessEngineHost({
   sendToBackground: msg => {
@@ -23,6 +24,12 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   host.handleMessage(msg);
   sendResponse({ ok: true });
   return false;
+});
+
+chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
+  if (!isProbeMediaRequest(msg)) return false;
+  void probeMedia(msg.url).then(sendResponse);
+  return true;
 });
 
 export {};
