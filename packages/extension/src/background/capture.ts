@@ -20,6 +20,8 @@ export interface CaptureDeps {
   readonly onDescriptor: (tabId: number, descriptor: StreamDescriptor) => void;
   readonly onFailure?: (tabId: number, failure: DiscoveryFailure) => void;
   readonly onProbeSuccess?: (tabId: number, url: string) => void;
+  /** Settles before the first request, so hotlink-protected hosts see the page's Referer. */
+  readonly mirrorReferer?: (url: string, pageUrl: string) => Promise<void>;
   readonly logger?: Logger;
 }
 
@@ -54,6 +56,7 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     let manifestText: string | null = null;
 
     if (cap.url) {
+      if (deps.mirrorReferer) await deps.mirrorReferer(cap.url, cap.pageUrl);
       try {
         const url = cap.url;
         let manifest = /\.(m3u8|mpd)([?#]|$)/i.test(url);

@@ -1,6 +1,6 @@
 # savemedia Privacy Policy
 
-Effective date: 2026-09-14
+Effective date: 2026-10-05
 
 savemedia is a browser extension that runs locally in the user's browser. It
 detects browser-visible video candidates, lets the user choose a supported
@@ -41,6 +41,13 @@ and are never logged.
 
 The `storage` permission holds only these local settings (on/off, quality,
 cookie source, hotkey fallback). Nothing is synced or transmitted.
+
+The `declarativeNetRequestWithHostAccess` permission lets the extension's own
+requests for a detected video carry the page's origin as Referer, as the
+browser does by default when the page loads that video. Many video servers
+refuse requests without it. The rule applies only to requests the extension
+itself makes, never to the user's own browsing, and ends with the browser
+session.
 
 ## Data Sharing
 

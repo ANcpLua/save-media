@@ -9,6 +9,7 @@
     "tabs",
     "offscreen",
     "webRequest",
+    "declarativeNetRequestWithHostAccess",
     "storage"
   ],
   "host_permissions": [

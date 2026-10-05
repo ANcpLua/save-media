@@ -69,7 +69,7 @@ v. Wullems (Filmspeler); LG Hamburg 2023 (youtube-dl hosting); Directive
 | Component | Rules | Status |
 | --- | --- | --- |
 | `packages/core` HLS parser and dispatch | G1, G7 | Refuses every EXT-X-KEY method except AES-128. |
-| `background/network-capture.ts` | G2 | Passive webRequest observation of manifests. |
+| `background/network-capture.ts` | G2 | Passive webRequest observation of manifests. The extension's own requests to a captured media host carry the page origin as Referer, as the browser's do. |
 | `content/sites/*` | G6, A1 | Reads the page's own API responses. Names stay out of public text. |
 | `native/local-downloader.ts` | G5, P1 | Delegates page URLs to a user-installed host. `DELEGABLE_ERROR_CODES` is an allowlist that excludes every protected-media code. |
 | `packages/native-host` | G4, G5, R1 | Runs the user's yt-dlp with the user's cookies, reports DRM as `drm_protected`, never installs tools. |

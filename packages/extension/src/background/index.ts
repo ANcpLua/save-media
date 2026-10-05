@@ -22,7 +22,7 @@ import { isMediaInfo, probeMedia, PROBE_MEDIA, type MediaInfo } from "../engine/
 import { createCaptureHandler } from "./capture";
 import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
-import { registerNetworkCapture } from "./network-capture";
+import { createRefererMirror, registerNetworkCapture } from "./network-capture";
 import { handleInstalled } from "./installed";
 import { ensureEngineHost } from "../platform/processor-host";
 import { createInProcessEngineHost } from "../engine/in-process-host";
@@ -101,6 +101,7 @@ router = createRouter({
 
 const handleCapture = createCaptureHandler({
   fetchFn: (url, init) => fetch(url, init),
+  mirrorReferer: createRefererMirror(chrome.declarativeNetRequest, new URL(chrome.runtime.getURL("")).host),
   onDescriptor: (tabId, descriptor) => {
     const added = router.addDescriptor(tabId, descriptor);
     if (added) {

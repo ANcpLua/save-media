@@ -278,6 +278,21 @@ describe("capture handler — probe safety", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  it("installs the page's Referer rule before the first probe request", async () => {
+    const order: string[] = [];
+    const mirrorReferer = vi.fn(async () => { await Promise.resolve(); order.push("referer"); });
+    const handle = createCaptureHandler({
+      fetchFn: async () => { order.push("probe"); return response("video/mp4", FTYP_HEAD); },
+      onDescriptor: vi.fn(),
+      mirrorReferer,
+    });
+    await handle(1, { type: "capture", payload: {
+      [MAIN_BRIDGE_TAG]: true, kind: "media-source", url: "https://media.example/clip.mp4", pageUrl: "https://www.example/watch/1",
+    } });
+    expect(mirrorReferer).toHaveBeenCalledWith("https://media.example/clip.mp4", "https://www.example/watch/1");
+    expect(order).toEqual(["referer", "probe"]);
+  });
+
   it("never classifies an access-denied response as video", async () => {
     const { fetchFn, onDescriptor, handle } = harness(async () => ({
       ...response("video/mp4", FTYP_HEAD), status: 403,

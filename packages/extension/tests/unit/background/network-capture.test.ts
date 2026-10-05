@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { isExtractorManagedHost, looksLikeMediaEntryUrl } from "../../../src/background/network-capture";
+import { describe, expect, it, vi } from "vitest";
+import { createRefererMirror, isExtractorManagedHost, looksLikeMediaEntryUrl } from "../../../src/background/network-capture";
 
 describe("background network capture URL filter", () => {
   it("captures manifest and standalone media entry URLs", () => {
@@ -43,5 +43,49 @@ describe("extractor-managed host gate", () => {
     expect(isExtractorManagedHost("https://x.com.evil.com/")).toBe(false);
     expect(isExtractorManagedHost("https://youtube.com.evil.com/watch?v=1")).toBe(false);
     expect(isExtractorManagedHost("garbage")).toBe(false);
+  });
+});
+
+describe("referer mirror", () => {
+  function mirror() {
+    const updateSessionRules = vi.fn(async (_options: chrome.declarativeNetRequest.UpdateRuleOptions) => {});
+    return { updateSessionRules, mirrorReferer: createRefererMirror({ updateSessionRules }, "extension-id") };
+  }
+
+  it("gives only the extension's own requests to the media host the page origin as Referer", async () => {
+    const { updateSessionRules, mirrorReferer } = mirror();
+    await mirrorReferer("https://media.example/v/clip.mp4?token=a", "https://www.example/watch/1");
+    const options = updateSessionRules.mock.calls[0]![0];
+    const rule = options.addRules![0]!;
+    expect(options.removeRuleIds).toEqual([rule.id]);
+    expect(rule.action.requestHeaders).toEqual([{ header: "referer", operation: "set", value: "https://www.example/" }]);
+    expect(rule.condition).toEqual({ requestDomains: ["media.example"], initiatorDomains: ["extension-id"], tabIds: [-1] });
+  });
+
+  it("rewrites a host's rule only when the page origin changes", async () => {
+    const { updateSessionRules, mirrorReferer } = mirror();
+    await mirrorReferer("https://media.example/a.mp4?token=1", "https://www.example/watch/1");
+    await mirrorReferer("https://media.example/b.mp4?token=2", "https://www.example/watch/2");
+    expect(updateSessionRules).toHaveBeenCalledTimes(1);
+    await mirrorReferer("https://media.example/c.mp4", "https://other.example/embed/3");
+    const [first, second] = updateSessionRules.mock.calls.map(([options]) => options.addRules![0]!);
+    expect(second!.id).toBe(first!.id);
+    expect(second!.action.requestHeaders![0]!.value).toBe("https://other.example/");
+  });
+
+  it("tries again after the browser rejected a rule", async () => {
+    const updateSessionRules = vi.fn<(options: chrome.declarativeNetRequest.UpdateRuleOptions) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("rule limit")).mockResolvedValue(undefined);
+    const mirrorReferer = createRefererMirror({ updateSessionRules }, "extension-id");
+    await mirrorReferer("https://media.example/clip.mp4", "https://www.example/watch/1");
+    await mirrorReferer("https://media.example/clip.mp4", "https://www.example/watch/1");
+    expect(updateSessionRules).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves requests alone for pages and media that are not on the web", async () => {
+    const { updateSessionRules, mirrorReferer } = mirror();
+    await mirrorReferer("https://media.example/clip.mp4", "chrome-extension://abc/src/popup/index.html");
+    await mirrorReferer("blob:https://www.example/1234", "https://www.example/watch/1");
+    expect(updateSessionRules).not.toHaveBeenCalled();
   });
 });

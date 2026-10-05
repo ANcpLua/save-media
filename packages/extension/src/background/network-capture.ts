@@ -69,6 +69,65 @@ export function looksLikeFragmentUrl(url: string): boolean {
   return /^(init|seg|segment|chunk|frag|fragment|part)(?:[._-][a-z0-9._-]*)?\.mp4$/i.test(base);
 }
 
+export interface SessionRulesApi {
+  updateSessionRules(options: chrome.declarativeNetRequest.UpdateRuleOptions): Promise<void>;
+}
+
+/**
+ * Hotlink-protected media hosts answer 403 without a Referer, and the
+ * extension's own probe and download requests send none. One session rule
+ * per media host gives requests from no tab (service worker, offscreen
+ * document) initiated by this extension the page origin as Referer: what the
+ * browser itself sends cross-origin under the default referrer policy (G2).
+ * Keyed by host so playlist segments next to a manifest are covered, and kept
+ * for the browser session so a running download never loses it.
+ */
+export function createRefererMirror(api: SessionRulesApi, extensionHost: string) {
+  const current = new Map<string, string>();
+  return async (url: string, pageUrl: string): Promise<void> => {
+    let host: string;
+    let referer: string;
+    try {
+      host = new URL(url).hostname;
+      const page = new URL(pageUrl);
+      if (page.protocol !== "https:" && page.protocol !== "http:") return;
+      referer = `${page.origin}/`;
+    } catch {
+      return;
+    }
+    if (!host || current.get(host) === referer) return;
+    current.set(host, referer);
+    const id = ruleIdForHost(host);
+    try {
+      await api.updateSessionRules({
+        removeRuleIds: [id],
+        addRules: [{
+          id,
+          action: {
+            type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
+            requestHeaders: [{
+              header: "referer",
+              operation: "set" as chrome.declarativeNetRequest.HeaderOperation,
+              value: referer,
+            }],
+          },
+          // -1 is TAB_ID_NONE: the page's own requests keep their Referer.
+          condition: { requestDomains: [host], initiatorDomains: [extensionHost], tabIds: [-1] },
+        }],
+      });
+    } catch {
+      current.delete(host);
+    }
+  };
+}
+
+/** FNV-1a: a stable id per host, so a restarted service worker replaces its own rule. */
+function ruleIdForHost(host: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < host.length; i++) hash = Math.imul(hash ^ host.charCodeAt(i), 0x01000193);
+  return (hash >>> 1) || 1;
+}
+
 async function handleNetworkRequest(
   details: RequestDetails,
   handleCapture: CaptureHandler,
