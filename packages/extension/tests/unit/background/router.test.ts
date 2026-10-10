@@ -24,6 +24,80 @@ function choice(overrides: Partial<UserChoice> = {}): UserChoice {
 }
 
 describe("router — descriptor de-duplication", () => {
+  it("scopes existing and later captures and failures to the main player, including best download", async () => {
+    const d = deps();
+    const r = createRouter(d);
+    const main = directDescriptor();
+    const preview = directDescriptor({ id: "preview" as StreamId, source: {
+      kind: "direct-url", url: "https://example.com/preview.mp4", headers: {},
+    }, variants: [{ ...hlsDescriptor().variants[0]!, height: 2160 }] });
+    r.addDescriptor(1, main);
+    r.addDescriptor(1, preview);
+    r.setDiscoveryFailure(1, { url: "https://example.com/preview.mp4", error: {
+      code: "server_busy", severity: "terminal", phase: "direct", url: "https://example.com/preview.mp4", httpStatus: 503,
+    } });
+    r.setDiscoveryScope(1, main.pageUrl, ["https://example.com/clip.mp4"]);
+    r.addDescriptor(1, directDescriptor({ id: "late-preview" as StreamId, source: {
+      kind: "direct-url", url: "https://example.com/late-preview.mp4", headers: {},
+    } }));
+    expect(r.snapshot(1).descriptors.map(item => item.id)).toEqual([main.id]);
+    expect(r.snapshot(1).failures).toEqual([]);
+    await r.startBestDownload(1);
+    expect(d.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: "https://example.com/clip.mp4" }));
+    r.setDiscoveryScope(1, main.pageUrl, ["https://example.com/preview.mp4"]);
+    expect(r.listDescriptors(1).map(item => item.id)).toEqual([preview.id]);
+    r.clearTab(1);
+    r.addDescriptor(1, main);
+    expect(r.listDescriptors(1)).toEqual([main]);
+  });
+
+  it("keeps the HLS master when a selected source is one of its variant playlists", () => {
+    const r = createRouter(deps());
+    const master = hlsDescriptor();
+    r.addDescriptor(1, master);
+    const variant = master.variants[0]!.segmentRef;
+    if (variant.kind !== "hls-segments") throw new Error("expected an HLS fixture");
+    r.setDiscoveryScope(1, master.pageUrl, [variant.playlistUrl]);
+    expect(r.listDescriptors(1)).toEqual([master]);
+  });
+
+  it("never hides a protection signal when a source scan establishes a scope", async () => {
+    const r = createRouter(deps());
+    const protectedMedia = drmDescriptor("cdm_required");
+    r.addDescriptor(1, protectedMedia);
+    r.setDiscoveryScope(1, protectedMedia.pageUrl, ["https://example.com/main.mp4"]);
+    expect(await r.startBestDownload(1)).toMatchObject({ kind: "failed", error: { code: "cdm_required" } });
+  });
+
+  it("upgrades a passive capture with quality metadata and preserves its ID", () => {
+    const r = createRouter(deps());
+    const original = directDescriptor();
+    r.addDescriptor(1, original);
+    const rich = { ...original, id: "new-id" as StreamId, mediaGroup: "player-one", variants: [{
+      ...hlsDescriptor().variants[0]!, height: 480,
+      segmentRef: { kind: "direct" as const, url: "https://example.com/clip.mp4" },
+    }] };
+    expect(r.addDescriptor(1, rich)).toBe(true);
+    expect(r.listDescriptors(1)).toHaveLength(1);
+    expect(r.findDescriptor(original.id)).toMatchObject({ mediaGroup: "player-one", variants: [{ height: 480 }] });
+    expect(r.addDescriptor(1, original)).toBe(false);
+    expect(r.findDescriptor(original.id)?.variants[0]?.height).toBe(480);
+  });
+
+  it("keeps declared numeric quality siblings and downloads the highest", async () => {
+    const d = deps();
+    const r = createRouter(d);
+    for (const height of [480, 720, 1080]) {
+      const url = `https://cdn.example/movie_${height}p.mp4`;
+      r.addDescriptor(1, directDescriptor({ id: `quality-${height}` as StreamId, mediaGroup: "player-one",
+        source: { kind: "direct-url", url, headers: {} }, variants: [{ ...hlsDescriptor().variants[0]!, height,
+          segmentRef: { kind: "direct", url } }],
+      }));
+    }
+    expect(r.listDescriptors(1)).toHaveLength(3);
+    await r.startBestDownload(1);
+    expect(d.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: "https://cdn.example/movie_1080p.mp4" }));
+  });
   it("returns the latest failed job when the popup is reopened", async () => {
     const r = createRouter(deps());
     const d = directDescriptor();

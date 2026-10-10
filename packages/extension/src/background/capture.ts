@@ -39,7 +39,7 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
   function handleCapture(tabId: number, msg: CaptureMessage): Promise<void> {
     let state = tabs.get(tabId);
     if (!state) { state = { controller: new AbortController(), pending: new Map() }; tabs.set(tabId, state); }
-    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem]);
+    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem, msg.payload.quality]);
     const existing = state.pending.get(key);
     if (existing) return existing;
     const current = state;
@@ -119,7 +119,7 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     // for the av-merge path once the video half is confirmed downloadable.
     // An unconfirmed half (expired signature, fetch failure) falls through
     // as-is and is dropped by the surfacing gate below.
-    const descriptor = cap.audioUrl !== undefined && classified.capabilities.directDownload
+    let descriptor = cap.audioUrl !== undefined && classified.capabilities.directDownload
       ? demuxedPairDescriptor(
         classified,
         cap.audioUrl,
@@ -127,6 +127,17 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
         await probeDeclaredBytes(deps, cap.audioUrl, signal),
       )
       : classified;
+
+    // Attach page-declared quality only after the URL passed the media probe.
+    // Each alternative retains its own descriptor, headers and download URL.
+    if (cap.quality && cap.audioUrl === undefined && descriptor.capabilities.directDownload && descriptor.source.kind === "direct-url") {
+      descriptor = { ...descriptor, mediaGroup: cap.quality.groupId, variants: [{
+        id: descriptor.source.url as VariantId,
+        width: null, height: cap.quality.height ?? null, frameRate: null, bitrate: null,
+        estimatedSize: declaredTotalBytes(headers), videoCodec: null, audioCodec: null,
+        audioRenditionId: null, segmentRef: { kind: "direct", url: descriptor.source.url },
+      }] };
+    }
 
     if (signal.aborted || !shouldSurfaceDescriptor(descriptor)) return;
     deps.onDescriptor(tabId, descriptor);

@@ -5,14 +5,32 @@ import { directDescriptor } from "./helpers/descriptors";
 import type { BackgroundToPopupMessage } from "../../../src/types/messages";
 
 describe("popup App", () => {
+  it("automatically scans on open and ignores a stale list response after discovery", () => {
+    let listReply: ((response: unknown) => void) | undefined;
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(((msg: { type: string }, cb?: (response: unknown) => void) => {
+      if (msg.type === "list") listReply = cb;
+      if (msg.type === "rescan") cb?.({ type: "descriptors", tabId: 1, descriptors: [directDescriptor({ title: "Discovered quality" })] });
+    }) as never);
+    render(<App />);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: "rescan", tabId: 1 }, expect.any(Function));
+    expect(screen.getByText("Discovered quality")).toBeTruthy();
+    act(() => listReply?.({ type: "descriptors", tabId: 1, descriptors: [] }));
+    expect(screen.getByText("Discovered quality")).toBeTruthy();
+  });
   it("shows a discovery failure and lets the user check the page again", () => {
     const url = "https://cdn.example/stream?secret=private-token";
+    let scans = 0;
     vi.mocked(chrome.runtime.sendMessage).mockImplementation(
       ((msg: { type?: string }, cb?: (resp: BackgroundToPopupMessage | undefined) => void) => {
         if (msg.type === "list") cb?.({ type: "descriptors", tabId: 1, descriptors: [], failures: [{ url,
           error: { code: "server_busy", severity: "terminal", phase: "direct", url, httpStatus: 503 },
         }] });
-        else if (msg.type === "rescan") cb?.({ type: "descriptors", tabId: 1, descriptors: [directDescriptor()], failures: [] });
+        else if (msg.type === "rescan") {
+          scans += 1;
+          cb?.(scans === 1
+            ? { type: "descriptors", tabId: 1, descriptors: [], failures: [{ url, error: { code: "server_busy", severity: "terminal", phase: "direct", url, httpStatus: 503 } }] }
+            : { type: "descriptors", tabId: 1, descriptors: [directDescriptor()], failures: [] });
+        }
         else cb?.(undefined);
       }) as never,
     );

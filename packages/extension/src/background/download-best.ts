@@ -33,6 +33,7 @@ export interface DownloadBestDeps {
   };
   readonly router: {
     readonly startBestDownload: (tabId: number) => Promise<BestDownloadOutcome>;
+    readonly setDiscoveryScope: (tabId: number, pageUrl: string, urls: readonly string[]) => void;
   };
   readonly handleCapture: (tabId: number, msg: CaptureMessage) => Promise<void>;
   /**
@@ -63,7 +64,7 @@ export interface CommandsLike {
 }
 
 export async function discoverPageMediaForTab(
-  deps: Pick<DownloadBestDeps, "tabs" | "runtime" | "handleCapture">,
+  deps: Pick<DownloadBestDeps, "tabs" | "runtime" | "handleCapture" | "router">,
   tabId: number,
   fallbackPageUrl: string,
 ): Promise<void> {
@@ -80,7 +81,12 @@ export async function discoverPageMediaForTab(
 
   if (!response) return;
   const pageUrl = response.pageUrl || fallbackPageUrl;
-  for (const url of response.urls) {
+  const discovered = response.media ?? response.urls.map(url => ({ url }));
+  // New bridges return only the main player's sources. Scope both the popup
+  // and the hotkey to them, including when previews were captured earlier.
+  if (response.media) deps.router.setDiscoveryScope(tabId, pageUrl, discovered.map(item => item.url));
+  for (const item of discovered) {
+    const { url } = item;
     await deps.handleCapture(tabId, {
       type: "capture",
       payload: {
@@ -88,6 +94,7 @@ export async function discoverPageMediaForTab(
         kind: "media-source",
         url,
         pageUrl,
+        ...("quality" in item && item.quality ? { quality: item.quality } : {}),
       },
     });
   }

@@ -71,6 +71,8 @@ export interface StreamDescriptor {
   readonly container: Container;
   readonly codecs: CodecSet;
   readonly variants: readonly Variant[];
+  /** Related direct files explicitly declared by one player configuration. */
+  readonly mediaGroup?: string;
   /**
    * Demuxed audio renditions (HLS EXT-X-MEDIA TYPE=AUDIO with URI, DASH audio
    * AdaptationSets), reused as audio-only {@link Variant}s (videoCodec null,

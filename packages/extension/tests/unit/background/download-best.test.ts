@@ -33,6 +33,7 @@ function deps(overrides: Partial<DownloadBestDeps> = {}): DownloadBestDeps {
       sendMessage: vi.fn(),
     },
     router: {
+      setDiscoveryScope: vi.fn(),
       startBestDownload: vi.fn(async () => ({ kind: "started", streamId: directDescriptor().id }) as const),
     },
     handleCapture: vi.fn(async () => undefined),
@@ -42,6 +43,18 @@ function deps(overrides: Partial<DownloadBestDeps> = {}): DownloadBestDeps {
 }
 
 describe("download-best command helpers", () => {
+  it("preserves source quality hints from the content scan", async () => {
+    const d = deps();
+    const quality = { groupId: "player-one", height: 720 };
+    vi.mocked(d.tabs.sendMessage).mockImplementation((_id, _msg, cb) => cb({
+      pageUrl: "https://example.com/watch", urls: ["https://cdn.example/high.mp4"],
+      media: [{ url: "https://cdn.example/high.mp4", quality }],
+    }));
+    await discoverPageMediaForTab(d, 42, "");
+    expect(d.handleCapture).toHaveBeenCalledWith(42, expect.objectContaining({ payload: expect.objectContaining({ quality }) }));
+    expect(d.router.setDiscoveryScope).toHaveBeenCalledWith(42, "https://example.com/watch", ["https://cdn.example/high.mp4"]);
+    expect(vi.mocked(d.router.setDiscoveryScope).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(d.handleCapture).mock.invocationCallOrder[0]!);
+  });
   it("asks the content bridge for embedded URLs and replays them as capture messages", async () => {
     const d = deps();
 
@@ -95,6 +108,7 @@ describe("download-best command helpers", () => {
     await discoverPageMediaForTab(d, 42, "https://fallback.example/");
 
     expect(d.handleCapture).not.toHaveBeenCalled();
+    expect(d.router.setDiscoveryScope).not.toHaveBeenCalled();
   });
 
   it("runs discovery before starting the best tab download", async () => {
@@ -125,6 +139,7 @@ describe("download-best command helpers", () => {
     const error = { code: "browser_download_failed", severity: "terminal", reason: "ENOSPC", filename: "clip.mp4" } as const;
     const d = deps({
       router: {
+        setDiscoveryScope: vi.fn(),
         startBestDownload: vi.fn(async () => ({
           kind: "failed",
           streamId: descriptor.id,
@@ -149,6 +164,7 @@ describe("download-best command helpers", () => {
   it("shows no-media feedback instead of failing silently when the page has nothing downloadable", async () => {
     const d = deps({
       router: {
+        setDiscoveryScope: vi.fn(),
         startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const),
       },
     });
@@ -177,7 +193,7 @@ describe("download-best command helpers", () => {
   it("hands the page URL to the local downloader when the page has nothing the engine can save", async () => {
     const localFallback = vi.fn(async () => localJob());
     const d = deps({
-      router: { startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const) },
+      router: { setDiscoveryScope: vi.fn(), startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const) },
       localFallback,
     });
 
@@ -191,6 +207,7 @@ describe("download-best command helpers", () => {
     const localFallback = vi.fn(async () => localJob());
     const d = deps({
       router: {
+        setDiscoveryScope: vi.fn(),
         startBestDownload: vi.fn(async () => ({
           kind: "failed",
           streamId: directDescriptor().id,
@@ -240,6 +257,7 @@ describe("download-best command helpers", () => {
     const localFallback = vi.fn(async () => localJob());
     const d = deps({
       router: {
+        setDiscoveryScope: vi.fn(),
         startBestDownload: vi.fn(async () => ({
           kind: "failed",
           streamId: directDescriptor().id,
@@ -258,7 +276,7 @@ describe("download-best command helpers", () => {
   it("reports no-media normally when the local downloader declines", async () => {
     const localFallback = vi.fn(async () => null);
     const d = deps({
-      router: { startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const) },
+      router: { setDiscoveryScope: vi.fn(), startBestDownload: vi.fn(async () => ({ kind: "no-media" }) as const) },
       localFallback,
     });
 
