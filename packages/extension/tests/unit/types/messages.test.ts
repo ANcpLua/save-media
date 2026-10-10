@@ -20,6 +20,13 @@ import type {
 import type { StreamId, VariantId } from "@savemedia/core";
 
 describe("message types", () => {
+  it("accepts bounded quality metadata and rejects malformed page hints", () => {
+    const payload = { [MAIN_BRIDGE_TAG]: true, kind: "media-source", url: "https://cdn.example/clip.mp4", pageUrl: "https://player.example/" };
+    expect(isBridgeToBackgroundMessage({ type: "capture", payload: { ...payload, quality: { groupId: "player-one", height: 720 } } })).toBe(true);
+    for (const quality of [{ groupId: "", height: 720 }, { groupId: "one", height: -1 }, { groupId: "one", height: "720" }]) {
+      expect(isBridgeToBackgroundMessage({ type: "capture", payload: { ...payload, quality } })).toBe(false);
+    }
+  });
   it("MAIN_BRIDGE_TAG is the agreed string discriminator", () => {
     expect(MAIN_BRIDGE_TAG).toBe("__savemedia");
   });

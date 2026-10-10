@@ -246,6 +246,10 @@ const pages = {
   "embedded-hls": html("embedded-hls", `<script>
     window.__savemediaFixture = {"stream":{"url":"\\/hls\\/master.m3u8","urls":{"1080p":"\\/hls-fmp4\\/master.m3u8"}}};
   </script><p>embedded hls fixture</p>`),
+  "main-player-qualities": html("main-player-qualities", `<script type="application/json">
+    {"video_url":"/low/clip.mp4","video_url_text":"480p","video_alt_url":"/direct/clip.mp4","video_alt_url_text":"720p"}
+  </script>${Array.from({ length: 20 }, (_, n) =>
+    `<video hidden preload="none" src="/direct/clip.mp4?preview=${n}"></video><a href="/direct/clip.mp4?linked=${n}">Preview</a>`).join("")}`),
   "hls-aes": html("hls-aes", `<script>fetch("/hls-aes/master.m3u8");</script><p>hls-aes fixture</p>`),
   "hls-fairplay": html("hls-fairplay", `<script>fetch("/hls-fairplay/master.m3u8");fetch("/hls-fairplay/media.m3u8");</script><p>hls fairplay fixture</p>`),
   "hls-sample-aes": html("hls-sample-aes", `<script>fetch("/hls-sample-aes/master.m3u8");fetch("/hls-sample-aes/media.m3u8");</script><p>hls sample-aes fixture</p>`),

@@ -117,7 +117,7 @@ function installGenericDiscovery(): void {
 function looksLikeMediaEntry(url: string): boolean {
   if (/\.(m3u8|mpd)(\?|#|$)/i.test(url)) return true;
   if (looksLikeFragmentUrl(url)) return false;
-  return /\.(mp4|webm|mkv)(\?|#|$)/i.test(url);
+  return /\.(mp4|webm|mkv)\/?(\?|#|$)/i.test(url);
 }
 
 function looksLikeFragmentUrl(url: string): boolean {
@@ -177,14 +177,22 @@ function observeMediaElement(el: HTMLVideoElement | HTMLAudioElement): void {
 function installMediaElementObserver(): void {
   new MutationObserver(records => {
     for (const r of records) {
+      if (r.type === "attributes") {
+        const media = r.target instanceof HTMLMediaElement ? r.target
+          : r.target instanceof HTMLSourceElement ? r.target.parentElement : null;
+        if (media instanceof HTMLMediaElement) observeMediaElement(media as HTMLVideoElement);
+      }
       r.addedNodes.forEach(n => {
         if (n instanceof HTMLVideoElement || n instanceof HTMLAudioElement) observeMediaElement(n);
+        else if (n instanceof HTMLSourceElement && n.parentElement instanceof HTMLMediaElement) {
+          observeMediaElement(n.parentElement as HTMLVideoElement);
+        }
         else if (n instanceof HTMLElement) {
           n.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
         }
       });
     }
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
 
   document.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
 }

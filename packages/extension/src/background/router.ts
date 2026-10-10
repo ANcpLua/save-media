@@ -38,6 +38,7 @@ export interface TabState {
   readonly descriptors: Map<string, StreamDescriptor>;
   readonly hlsCoveredDirectUrls: Set<string>;
   readonly failures: Map<string, DiscoveryFailure>;
+  discoveryScope: { readonly pageUrl: string; readonly urls: ReadonlySet<string> } | null;
 }
 
 export interface RouterDeps {
@@ -61,6 +62,7 @@ export interface Router {
   readonly jobs: Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>;
   readonly addDescriptor: (tabId: number, descriptor: StreamDescriptor) => boolean;
   readonly listDescriptors: (tabId: number) => readonly StreamDescriptor[];
+  readonly setDiscoveryScope: (tabId: number, pageUrl: string, urls: readonly string[]) => void;
   readonly setDiscoveryFailure: (tabId: number, failure: DiscoveryFailure) => void;
   readonly clearDiscoveryFailure: (tabId: number, url: string) => boolean;
   readonly snapshot: (tabId: number) => Extract<BackgroundToPopupMessage, { type: "descriptors" }>;
@@ -82,7 +84,7 @@ export function createRouter(deps: RouterDeps): Router {
   function getTab(tabId: number): TabState {
     let s = tabs.get(tabId);
     if (!s) {
-      s = { descriptors: new Map(), hlsCoveredDirectUrls: new Set(), failures: new Map() };
+      s = { descriptors: new Map(), hlsCoveredDirectUrls: new Set(), failures: new Map(), discoveryScope: null };
       tabs.set(tabId, s);
     }
     return s;
@@ -110,7 +112,7 @@ export function createRouter(deps: RouterDeps): Router {
    * family is kept; siblings are suppressed.
    */
   function segmentFamilyKey(d: StreamDescriptor): string | null {
-    if (d.source.kind !== "direct-url") return null;
+    if (d.source.kind !== "direct-url" || d.mediaGroup) return null;
     const url = d.source.url;
     const normalised = url.replace(/\d{2,}/g, "#");
     if (normalised === url) return null; // no numeric component → not segment-shaped
@@ -212,7 +214,19 @@ export function createRouter(deps: RouterDeps): Router {
     if (isHlsCoveredDirectDescriptor(state, descriptor)) return false;
 
     const key = descriptorKey(descriptor);
-    if (state.descriptors.has(key)) return false;
+    const existing = state.descriptors.get(key);
+    if (existing) {
+      // A passive capture may arrive before the richer page scan. Upgrade it
+      // in place so jobs, popup selection and status keep their stable ID.
+      if (!descriptor.mediaGroup || (existing.mediaGroup === descriptor.mediaGroup
+        && existing.variants[0]?.height === descriptor.variants[0]?.height)) return false;
+      const upgraded = { ...descriptor, id: existing.id };
+      for (const [indexedKey, value] of state.descriptors) {
+        if (value.id === existing.id) state.descriptors.delete(indexedKey);
+      }
+      state.descriptors.set(key, upgraded);
+      return true;
+    }
     const family = segmentFamilyKey(descriptor);
     if (family && state.descriptors.has(family)) {
       // A sibling segment from this URL family is already on file; drop.
@@ -223,13 +237,33 @@ export function createRouter(deps: RouterDeps): Router {
     return true;
   }
 
+  function setDiscoveryScope(tabId: number, pageUrl: string, urls: readonly string[]): void {
+    const state = getTab(tabId);
+    state.discoveryScope = urls.length ? { pageUrl, urls: new Set(urls.map(normalizedUrl)) } : null;
+  }
+
+  function inDiscoveryScope(state: TabState, descriptor: StreamDescriptor): boolean {
+    const scope = state.discoveryScope;
+    // Keep protection signals visible even when they have no matching source URL.
+    if (!scope || descriptor.drm) return true;
+    if (descriptor.pageUrl !== scope.pageUrl) return false;
+    const source = descriptor.source;
+    const url = source.kind === "direct-url" ? source.url
+      : source.kind === "media-element" ? source.elementSrc : source.manifestUrl;
+    if (scope.urls.has(normalizedUrl(url))) return true;
+    return isHlsMasterPlaylist(descriptor) && [...hlsVariantPlaylistUrls(descriptor)]
+      .some(variantUrl => scope.urls.has(normalizedUrl(variantUrl)));
+  }
+
   function listDescriptors(tabId: number): readonly StreamDescriptor[] {
-    const all = Array.from(tabs.get(tabId)?.descriptors.values() ?? []);
+    const state = tabs.get(tabId);
+    if (!state) return [];
+    const all = Array.from(state.descriptors.values());
     // De-dupe identity in case the same descriptor was indexed under both
     // its primary key AND a segment-family key.
     const seen = new Set<string>();
     return all.filter(d => {
-      if (seen.has(d.id)) return false;
+      if (seen.has(d.id) || !inDiscoveryScope(state, d)) return false;
       seen.add(d.id);
       return true;
     });
@@ -243,7 +277,7 @@ export function createRouter(deps: RouterDeps): Router {
   }
 
   function clearTab(tabId: number): void {
-    const ids = listDescriptors(tabId).map(d => d.id);
+    const ids = [...(tabs.get(tabId)?.descriptors.values() ?? [])].map(d => d.id);
     tabs.delete(tabId);
     for (const id of ids) if (!jobs.has(id) && !findDescriptor(id)) statuses.delete(id);
   }
@@ -259,10 +293,17 @@ export function createRouter(deps: RouterDeps): Router {
     return tabs.get(tabId)?.failures.delete(url) ?? false;
   }
 
+  function listDiscoveryFailures(tabId: number): readonly DiscoveryFailure[] {
+    const state = tabs.get(tabId);
+    if (!state) return [];
+    return [...state.failures.values()].filter(failure =>
+      !state.discoveryScope || state.discoveryScope.urls.has(normalizedUrl(failure.url)));
+  }
+
   function snapshot(tabId: number): Extract<BackgroundToPopupMessage, { type: "descriptors" }> {
     const descriptors = listDescriptors(tabId);
     return { type: "descriptors", tabId, descriptors,
-      failures: [...(tabs.get(tabId)?.failures.values() ?? [])],
+      failures: listDiscoveryFailures(tabId),
       statuses: Object.fromEntries(descriptors.flatMap(d => {
         const status = statuses.get(d.id);
         return status ? [[d.id, status]] : [];
@@ -358,7 +399,7 @@ export function createRouter(deps: RouterDeps): Router {
           };
         }
       }
-      const failure = tabs.get(tabId)?.failures.values().next().value;
+      const failure = listDiscoveryFailures(tabId)[0];
       if (failure) return { kind: "failed", streamId: `discovery:${tabId}` as StreamDescriptor["id"], error: failure.error };
       return { kind: "no-media" };
     }
@@ -497,6 +538,7 @@ export function createRouter(deps: RouterDeps): Router {
     jobs,
     addDescriptor,
     listDescriptors,
+    setDiscoveryScope,
     setDiscoveryFailure,
     clearDiscoveryFailure,
     snapshot,

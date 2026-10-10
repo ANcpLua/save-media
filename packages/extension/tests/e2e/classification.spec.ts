@@ -435,6 +435,28 @@ test.describe("extension classifies real fixture pages", () => {
     }
   });
 
+  test("keeps only main player quality options when a page has 20 previews", async () => {
+    const page = await context!.newPage();
+    const popup = await context!.newPage();
+    try {
+      await page.goto("/page/main-player-qualities.html");
+      await page.waitForLoadState("networkidle");
+      const tabId = await probe!.evaluate(async () =>
+        (await chrome.tabs.query({})).find(tab => tab.url?.includes("/page/main-player-qualities.html"))?.id);
+      expect(tabId).toBeDefined();
+      await popup.goto(`${extensionPageUrl(runtime!)}?tabId=${tabId}`);
+      const select = popup.getByRole("combobox");
+      await expect(select).toHaveCount(1);
+      await expect(select.locator("option")).toHaveText(["720p", "480p"]);
+      await expect(popup.getByRole("button", { name: /^download$/i })).toHaveCount(1);
+      await expect.poll(async () => (await descriptorsForUrlContaining("/page/main-player-qualities.html")).length).toBe(2);
+      expect(await page.locator("video").evaluateAll(videos => videos.every(video => (video as HTMLVideoElement).paused))).toBe(true);
+    } finally {
+      await popup.close();
+      await page.close();
+    }
+  });
+
   test("download pipeline saves direct MP4 as a playable MP4", async () => {
     await clearDownloadHistory();
     const page = await openFixtureAndWait("direct", ds => ds.some(d => d.protocol === "progressive-http"));

@@ -20,6 +20,16 @@ const CAPTURE_KINDS = ["media-element", "media-source", "eme", "ms-probe"] as co
 
 export type CaptureKind = typeof CAPTURE_KINDS[number];
 
+export interface MediaQuality {
+  readonly groupId: string;
+  readonly height?: number;
+}
+
+export interface DiscoveredMedia {
+  readonly url: string;
+  readonly quality?: MediaQuality;
+}
+
 export interface PageCaptureMessage {
   readonly [MAIN_BRIDGE_TAG]: true;
   readonly kind: CaptureKind;
@@ -37,6 +47,7 @@ export interface PageCaptureMessage {
    * validator: update both.
    */
   readonly audioUrl?: string;
+  readonly quality?: MediaQuality;
   readonly pageUrl: string;
 }
 
@@ -99,6 +110,7 @@ export interface LocalJobView {
 export interface ContentDiscoveryResponse {
   readonly pageUrl: string;
   readonly urls: readonly string[];
+  readonly media?: readonly DiscoveredMedia[];
 }
 
 export interface DiscoveryFailure {
@@ -164,6 +176,7 @@ const pageCaptureSchema = z.object({
   elementTag: z.enum(["video", "audio"]).optional(),
   elementSrc: z.string().optional(),
   audioUrl: z.string().optional(),
+  quality: z.object({ groupId: z.string().min(1).max(8192), height: z.number().int().min(1).max(16384).optional() }).optional(),
 });
 
 const userChoiceSchema = z.object({

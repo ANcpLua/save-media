@@ -48,6 +48,25 @@ describe("DetectedItem — direct stream card", () => {
 });
 
 describe("DetectedItem — default quality", () => {
+  it("shows progressive alternatives and sends the selected source's own ID", () => {
+    const low = directDescriptor({ id: "low" as StreamId, mediaGroup: "one", variants: [{
+      ...hlsDescriptor().variants[0]!, id: "low-variant" as VariantId, width: null, height: 480,
+      segmentRef: { kind: "direct", url: "https://cdn.example/low.mp4" },
+    }] });
+    const high = directDescriptor({ id: "high" as StreamId, mediaGroup: "one", variants: [{
+      ...low.variants[0]!, id: "high-variant" as VariantId, height: 720,
+      segmentRef: { kind: "direct", url: "https://cdn.example/high.mp4" },
+    }] });
+    render(<ul><DetectedItem descriptor={low} alternatives={[high]} /></ul>);
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(Array.from(select.options, o => o.text)).toEqual(["720p", "480p"]);
+    expect(select.value).toBe("high");
+    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    expect(chrome.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ streamId: "high" }));
+    fireEvent.change(select, { target: { value: "low" } });
+    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    expect(chrome.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ streamId: "low" }));
+  });
   it("downloads the highest variant when none is chosen, whatever the playlist order", () => {
     const base = hlsDescriptor();
     const v1080 = base.variants[0]!;

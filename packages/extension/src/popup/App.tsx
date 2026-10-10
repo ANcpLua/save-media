@@ -110,9 +110,10 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
       setTabId(id);
       setPageUrl(url);
       if (id === null) return;
+      let scanFinished = false;
       const msg: PopupToBackgroundMessage = { type: "list", tabId: id };
       chrome.runtime.sendMessage(msg, (response: unknown) => {
-        if (tabIdRef.current !== id) return;
+        if (tabIdRef.current !== id || scanFinished) return;
         if (isBackgroundToPopupMessage(response) && response.type === "descriptors") {
           setDescriptors(response.descriptors);
           setFailures(response.failures ?? []);
@@ -121,6 +122,20 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
       });
       requestSnapshot(id, snap => {
         if (tabIdRef.current === id) setSnapshot(snap);
+      });
+      // Opening/following a tab must also discover unrequested player sources.
+      // Keep the existing list visible while the bounded probes finish.
+      setScanning(true);
+      chrome.runtime.sendMessage({ type: "rescan", tabId: id }, (response: unknown) => {
+        void chrome.runtime.lastError;
+        if (tabIdRef.current !== id) return;
+        setScanning(false);
+        if (isBackgroundToPopupMessage(response) && response.type === "descriptors") {
+          scanFinished = true;
+          setDescriptors(response.descriptors);
+          setFailures(response.failures ?? []);
+          if (response.statuses) setStatuses({ ...response.statuses });
+        }
       });
     };
     const fixed = windowTabId();
@@ -260,6 +275,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
                 key={r.descriptor.id}
                 descriptor={r.descriptor}
                 status={statuses[r.descriptor.id]}
+                statuses={statuses}
+                alternatives={r.alternatives}
                 preview={r.preview}
                 isMain={r.isMain}
                 pageTitle={snapshot?.pageTitle ?? null}

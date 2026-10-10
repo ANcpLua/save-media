@@ -1,9 +1,7 @@
-// Content scripts in MV3 are injected as classic scripts — `import` is
-// a syntax error. We intentionally duplicate this constant (also defined
-// in src/types/messages.ts) so this file has no module dependencies and
-// can ship as a standalone JS file.
-//
-// See content/main.ts for why the `export {}` marker is here.
+// Vite inlines discovery into this classic content-script entry. Keep the
+// message guards local so the bridge does not pull in the zod runtime.
+import { discoverPageMedia } from "./discovery";
+
 export {};
 const BRIDGE_TAG = "__savemedia" as const;
 const CAPTURE_KINDS = ["media-element", "media-source", "eme", "ms-probe"] as const;
@@ -63,7 +61,8 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
     return false;
   }
   if (!isDiscoverPageMediaMessage(msg)) return false;
-  sendResponse({ pageUrl: location.href, urls: discoverMediaUrls() });
+  const media = discoverPageMedia(document, location.href);
+  sendResponse({ pageUrl: location.href, urls: media.map(item => item.url), media });
   return false;
 });
 
@@ -206,70 +205,6 @@ chrome.runtime.sendMessage(
   { type: "ready" },
   () => void chrome.runtime.lastError,
 );
-
-function discoverMediaUrls(): string[] {
-  const text = discoveryText();
-  const normalized = text
-    .replace(/\\u002f/gi, "/")
-    .replace(/\\\//g, "/")
-    .replace(/&amp;/g, "&");
-  const seen = new Set<string>();
-  // A player's current source need not have a file extension. Include only
-  // observed media elements here; broad page-text discovery stays filtered.
-  document.querySelectorAll<HTMLMediaElement>("video, audio").forEach(media => {
-    const sources = [media.currentSrc, media.src,
-      ...Array.from(media.querySelectorAll<HTMLSourceElement>("source"), source => source.src)];
-    for (const raw of sources) {
-      if (!raw || seen.size >= 80 || looksLikeFragmentUrl(raw)) continue;
-      try {
-        const url = new URL(raw, location.href);
-        if (url.protocol === "http:" || url.protocol === "https:") seen.add(url.href);
-      } catch { /* Ignore malformed element sources. */ }
-    }
-  });
-  const mediaUrl = /(?:(?:https?:)?\/\/|\/|\.\.?\/)[^\s"'<>]+?\.(?:m3u8|mpd|mp4|webm|mkv)(?:[^\s"'<>]*)?/gi;
-  for (const match of normalized.matchAll(mediaUrl)) {
-    if (seen.size >= 80) break;
-    const raw = match[0];
-    if (!raw || looksLikeFragmentUrl(raw)) continue;
-    try {
-      seen.add(new URL(raw, location.href).href);
-    } catch {
-      // Ignore malformed ad/script tokens.
-    }
-    if (seen.size >= 80) break;
-  }
-  return [...seen];
-}
-
-function discoveryText(): string {
-  const chunks: string[] = [];
-  document.querySelectorAll("script").forEach(script => {
-    if (script.textContent) chunks.push(script.textContent);
-    if (script.src) chunks.push(script.src);
-  });
-  document.querySelectorAll("[src], [href]").forEach(el => {
-    const src = (el as HTMLElement).getAttribute("src");
-    const href = (el as HTMLElement).getAttribute("href");
-    if (src) chunks.push(src);
-    if (href) chunks.push(href);
-  });
-  chunks.push(document.documentElement.innerHTML.slice(0, 2_000_000));
-  return chunks.join("\n");
-}
-
-function looksLikeFragmentUrl(url: string): boolean {
-  let path: string;
-  try {
-    path = new URL(url, location.href).pathname.toLowerCase();
-  } catch {
-    path = url.toLowerCase();
-  }
-  const base = path.split("/").filter(Boolean).at(-1) ?? path;
-  if (/\.(m4s|ts|mpegts)$/i.test(base)) return true;
-  if (/\.mp4\/[^/]+\.(mp4|m4s)$/i.test(path)) return true;
-  return /^(init|seg|segment|chunk|frag|fragment|part)[._-][a-z0-9._-]*\.mp4$/i.test(base);
-}
 
 function isMainPayload(value: unknown): value is MainPayload {
   if (!isRecord(value)) return false;

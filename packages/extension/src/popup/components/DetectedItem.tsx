@@ -15,11 +15,19 @@ interface Props {
   readonly preview?: Preview | null | undefined;
   readonly isMain?: boolean | undefined;
   readonly pageTitle?: string | null | undefined;
+  readonly alternatives?: readonly StreamDescriptor[] | undefined;
+  readonly statuses?: Readonly<Record<string, JobStatus>> | undefined;
 }
 
-export function DetectedItem({ descriptor, status, onCancel, preview = null, isMain = false, pageTitle = null }: Props) {
+export function DetectedItem({ descriptor: initialDescriptor, status: initialStatus, alternatives = [], statuses, onCancel, preview = null, isMain = false, pageTitle = null }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [chosenVariantId, setChosenVariantId] = useState<string | null>(null);
+  const [chosenStreamId, setChosenStreamId] = useState<string | null>(null);
+  const directChoices = [initialDescriptor, ...alternatives].sort((a, b) =>
+    (b.variants[0]?.height ?? 0) - (a.variants[0]?.height ?? 0));
+  const active = directChoices.find(d => statuses?.[d.id]?.phase === "active");
+  const descriptor = active ?? directChoices.find(d => d.id === chosenStreamId) ?? directChoices[0]!;
+  const status = statuses?.[descriptor.id] ?? (descriptor.id === initialDescriptor.id ? initialStatus : undefined);
 
   const visibleVariants = (descriptor.variants ?? []).filter(v => (v.height ?? 0) >= 720);
   const allBelowMin = descriptor.variants.length > 0 && visibleVariants.length === 0;
@@ -111,6 +119,7 @@ export function DetectedItem({ descriptor, status, onCancel, preview = null, isM
           <div className="text-muted leading-relaxed mt-0.5">
             {variant && variant.width && variant.height
               ? <>{variant.width}×{variant.height}</>
+              : variant?.height ? <>{variant.height}p</>
               : previewSize ? <>{previewSize}</> : <>size unknown</>}
             {preview?.duration ? <> · {formatDuration(preview.duration)}</> : null}
             {variant?.estimatedSize ? <> · {formatBytes(variant.estimatedSize)}</> : null}
@@ -122,7 +131,22 @@ export function DetectedItem({ descriptor, status, onCancel, preview = null, isM
         </div>
       </div>
 
-      {qualityChoices.length > 1 && !status && (
+      {directChoices.length > 1 && status?.phase !== "active" && (
+        <label className="mt-2 ml-5 flex items-center gap-2 text-muted">
+          Quality
+          <select className="bg-surface-2 rounded-md px-1.5 py-0.5 text-[12px] text-white"
+            value={descriptor.id} onChange={e => { setChosenStreamId(e.target.value); setChosenVariantId(null); }}
+            data-testid="quality-select">
+            {directChoices.map(d => (
+              <option key={d.id} value={d.id}>
+                {d.variants[0]?.height ? `${d.variants[0].height}p` : "Original"}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {directChoices.length === 1 && qualityChoices.length > 1 && !status && (
         <label className="mt-2 ml-5 flex items-center gap-2 text-muted">
           Quality
           <select

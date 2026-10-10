@@ -12,6 +12,7 @@ export interface RankedDescriptor {
   readonly descriptor: StreamDescriptor;
   readonly preview: Preview | null;
   readonly isMain: boolean;
+  readonly alternatives?: readonly StreamDescriptor[];
 }
 
 /**
@@ -43,7 +44,23 @@ export function rankDescriptors(
     };
   });
 
-  return ranked.sort((a, b) => Number(b.isMain) - Number(a.isMain) || pixels(b.descriptor) - pixels(a.descriptor));
+  const sorted = ranked.sort((a, b) => Number(b.isMain) - Number(a.isMain) || pixels(b.descriptor) - pixels(a.descriptor));
+  const grouped: RankedDescriptor[] = [];
+  const groups = new Map<string, number>();
+  for (const item of sorted) {
+    const d = item.descriptor;
+    const key = d.mediaGroup && d.capabilities.directDownload && !d.drm
+      ? JSON.stringify([d.pageUrl, d.mediaGroup]) : null;
+    const index = key === null ? undefined : groups.get(key);
+    if (index === undefined) {
+      if (key !== null) groups.set(key, grouped.length);
+      grouped.push(item);
+    } else {
+      const first = grouped[index]!;
+      grouped[index] = { ...first, alternatives: [...(first.alternatives ?? []), d] };
+    }
+  }
+  return grouped;
 }
 
 function pickMain(videos: readonly PageVideo[]): PageVideo | undefined {

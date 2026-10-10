@@ -77,6 +77,22 @@ function harness(fetchImpl: CaptureDeps["fetchFn"]) {
 }
 
 describe("capture handler — demuxed pairs", () => {
+  it("carries verified direct-file quality metadata without changing its download URL", async () => {
+    const { handle, onDescriptor } = harness(async () => response("video/mp4", FTYP_HEAD));
+    const msg = captureMsg("https://cdn.example/high.mp4/?token=sample");
+    await handle(7, { ...msg, payload: { ...msg.payload, quality: { groupId: "player-one", height: 720 } } });
+    const descriptor = onDescriptor.mock.calls[0]![1];
+    expect(descriptor.mediaGroup).toBe("player-one");
+    expect(descriptor.variants[0]).toMatchObject({ height: 720, segmentRef: { kind: "direct", url: msg.payload.url } });
+    expect(dispatch(descriptor, bestChoice)).toMatchObject({ kind: "direct", url: msg.payload.url });
+  });
+
+  it("never surfaces a quality candidate whose media probe fails", async () => {
+    const { handle, onDescriptor } = harness(async () => ({ ...response("text/html", "login"), status: 403 }));
+    const msg = captureMsg("https://cdn.example/restricted.mp4");
+    await handle(7, { ...msg, payload: { ...msg.payload, quality: { groupId: "player-one", height: 1080 } } });
+    expect(onDescriptor).not.toHaveBeenCalled();
+  });
   it("coalesces concurrent probes of the same media in one tab", async () => {
     const { handle, fetchFn, onDescriptor } = harness(async () => response("video/mp4", FTYP_HEAD));
     const msg = captureMsg("https://cdn.example/clip.mp4");
