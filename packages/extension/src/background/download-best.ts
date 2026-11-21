@@ -203,13 +203,23 @@ async function startFilePageDownload(
     const error = outcome.kind === "failed" ? outcome.error : undefined;
     const stage = outcome.kind === "failed" && !outcome.duringDiscovery ? "start download" : "file connection";
     const problem = describeFileSaveProblem(offer.filename, stage, error);
-    // A new signature can expire before verification starts. Give the site
-    // one chance to renew that address before there's a verified engine job.
-    const resource = attempt === 0 && error?.code === "access_denied" && error.httpStatus === 403
+    if (attempt > 0) return { problem };
+    const expiredResource = error?.code === "access_denied" && error.httpStatus === 403
       ? renewableResource(source.url) : null;
-    if (!resource) return { problem };
+    const certificateFailure = stage === "file connection" && error?.code === "tls_certificate_rejected";
+    if (!expiredResource && !certificateFailure) return { problem };
+
+    // Only the original file's Download control can supply a replacement.
     const refreshed = await deps.generateDownload?.(tabId, pageUrl, offer);
-    if (!refreshed || refreshed.url === source.url || renewableResource(refreshed.url) !== resource) return { problem };
+    if (!refreshed || refreshed.url === source.url) return { problem };
+    if (certificateFailure) {
+      const previous = new URL(renewableResource(source.url) ?? source.url);
+      const next = new URL(renewableResource(refreshed.url) ?? refreshed.url);
+      if (next.protocol !== "https:" || next.host === error.browserDiagnostic.host
+        || next.pathname !== previous.pathname || next.search !== previous.search) return { problem };
+    } else if (renewableResource(refreshed.url) !== expiredResource) {
+      return { problem };
+    }
     source = refreshed;
   }
 }

@@ -8,6 +8,10 @@ export interface BrowserRequestDiagnostic {
   readonly host: string;
 }
 
+export function isCertificateError(code: string): boolean {
+  return code.startsWith("net::ERR_CERT_") || code === "net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN";
+}
+
 export type JobError =
   // DRM / CDM-bound encryption
   | { code: "encrypted_media_detected";   severity: "terminal";    detectedVia: readonly DrmSignalSource[]; keySystem: string | null }
@@ -45,6 +49,7 @@ export type JobError =
   | { code: "network_unreachable";        severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; detail: string; browserDiagnostic?: BrowserRequestDiagnostic }
 
   // Browser security
+  | { code: "tls_certificate_rejected"; severity: "terminal"; phase: "manifest" | "segment" | "direct"; browserDiagnostic: BrowserRequestDiagnostic }
   | { code: "cors_blocked";               severity: "terminal";    url: string; blockedHeader: "Access-Control-Allow-Origin" | "Access-Control-Allow-Headers" | "credentials" }
   | { code: "mixed_content_blocked";      severity: "terminal";    pageProtocol: "https"; resourceProtocol: "http"; url: string }
 

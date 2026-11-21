@@ -1,4 +1,4 @@
-import type { JobError } from "./taxonomy";
+import { isCertificateError, type BrowserRequestDiagnostic, type JobError } from "./taxonomy";
 
 export type ActionKind =
   | "retry-job" | "retry-from-now" | "override-min-quality"
@@ -187,15 +187,10 @@ export function userMessage(err: JobError): UserMessage {
         action: null,
       };
 
+    case "tls_certificate_rejected":
+      return diagnosedNetworkFailure(err.browserDiagnostic);
     case "network_unreachable":
-      if (err.browserDiagnostic) {
-        const { code, host } = err.browserDiagnostic;
-        return {
-          ...networkDiagnosticMessage(code),
-          technicalDetails: `${host} · ${code}`,
-          action: { label: "Retry full download", kind: "retry-job" },
-        };
-      }
+      if (err.browserDiagnostic) return diagnosedNetworkFailure(err.browserDiagnostic);
       return {
         title: "Network request failed",
         body: `The browser could not fetch the ${err.phase} URL. This can be network loss, an expired signed URL, or a browser/security restriction. Detail: ${err.detail}`,
@@ -264,9 +259,17 @@ export function userMessage(err: JobError): UserMessage {
 
 // Browser diagnostics are hints for the user. Unknown codes keep a
 // generic title because browsers can change how their errors are reported.
+function diagnosedNetworkFailure({ code, host }: BrowserRequestDiagnostic): UserMessage {
+  return {
+    ...networkDiagnosticMessage(code),
+    technicalDetails: `${host} · ${code}`,
+    action: { label: "Retry full download", kind: "retry-job" },
+  };
+}
+
 function networkDiagnosticMessage(code: string): Pick<UserMessage, "title" | "body"> {
-  if (/^net::ERR_CERT_/.test(code) || code === "net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN") {
-    return { title: "Untrusted source", body: "The browser could not verify the media server's certificate." };
+  if (isCertificateError(code)) {
+    return { title: "Secure connection failed", body: "The browser couldn’t verify the certificate it received for this connection." };
   }
   if (/^net::ERR_DNS_/.test(code) || code === "net::ERR_NAME_NOT_RESOLVED" || code === "NS_ERROR_UNKNOWN_HOST") {
     return { title: "Video host unavailable", body: "The browser could not find the address for the video host." };

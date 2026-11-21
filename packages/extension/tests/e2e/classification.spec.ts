@@ -604,7 +604,7 @@ test.describe("extension classifies real fixture pages", () => {
     });
   }
 
-  test("reports untrusted and restricted video sources with certificate checks on", async () => {
+  test("reports certificate failures and restricted responses with certificate checks on", async () => {
     await clearDownloadHistory();
     const temporary = mkdtempSync(resolve(tmpdir(), "savemedia-cert-"));
     const key = resolve(temporary, "test.key");
@@ -656,7 +656,7 @@ test.describe("extension classifies real fixture pages", () => {
       const origin = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
 
       for (const [path, title, details] of [
-        ["/certificate.html", "Untrusted source", mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID"],
+        ["/certificate.html", "Secure connection failed", mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID"],
         ["/restriction.html", "Access restricted", "HTTP 451"],
       ] as const) {
         await page.goto(origin + path);
@@ -682,11 +682,11 @@ test.describe("extension classifies real fixture pages", () => {
       await page.goto(origin + "/named-file.html");
       popup = await openPopupFor(page);
       await popup.getByRole("button", { name: "Download", exact: true }).click();
-      await expect(popup.getByTestId("file-save-problem")).toContainText("could not verify the media server's certificate");
+      await expect(popup.getByTestId("file-save-problem")).toContainText("couldn’t verify the certificate it received for this connection");
       await expect(popup.getByRole("button", { name: "Retry download" })).toBeVisible();
       await popup.close();
       popup = await openPopupFor(page);
-      await expect(popup.getByTestId("file-save-problem")).toContainText("Couldn’t open the video file");
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Secure connection failed");
       await popup.getByTestId("file-save-problem").getByText("Technical details").click();
       await expect(popup.getByTestId("file-save-problem")).toContainText(mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID");
       // Capture the report without changing the machine's clipboard.
@@ -696,6 +696,7 @@ test.describe("extension classifies real fixture pages", () => {
       await popup.getByRole("button", { name: "Copy details" }).click();
       const report = await popup.locator("body").getAttribute("data-copied-report");
       expect(report).toContain("Stage · file connection");
+      expect(report).toContain("Code · tls_certificate_rejected");
       expect(report).toContain(mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID");
       expect(report).not.toContain("not-for-display");
       await popup.close();
@@ -704,9 +705,9 @@ test.describe("extension classifies real fixture pages", () => {
       await page.reload();
       await page.bringToFront();
       await page.keyboard.press("Alt+KeyS");
-      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Not savedCouldn’t open the video file");
+      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Not savedSecure connection failed");
       popup = await openPopupFor(page);
-      await expect(popup.getByTestId("file-save-problem")).toContainText("Couldn’t open the video file");
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Secure connection failed");
       expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
       expect(mediaRequests).toBe(0);
     } finally {

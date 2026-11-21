@@ -28,6 +28,12 @@ sandboxed frame. The extension passes the resulting navigation address to
 the direct-file verifier and keeps the original tab open. Chrome follows the
 HTTP redirects and applies its usual certificate checks.
 
+If Chrome reports a certificate rejection while probing a generated link,
+SaveMedia asks the same named file's Download control for another link once.
+It can probe an HTTPS destination with a different host and the same file
+path and parameters, allowing the site's expiring signature to change.
+The replacement goes through the normal certificate and media checks.
+
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
 chunks. Each chunk uses `If-Range` and checks its offsets, byte count, and
@@ -66,10 +72,9 @@ extension leaves existing downloads on disk.
 
 The page and the video can use different hosts. When the browser supplies
 a diagnostic during discovery, the popup shows a short reason such as
-**Untrusted source** and puts the host and browser error under **Technical
+**Secure connection failed** and puts the host and browser error under **Technical
 details**. Alt+S shows the short reason if no save can start. Available
 downloads appear above the collapsed **Unavailable sources** section.
-The browser's error event is used for display only.
 
 A failed save on a named file page stays visible next to the file when the
 popup reopens, including after an Alt+S attempt. The tab holds the result
@@ -82,11 +87,12 @@ requests. Chrome's Secure DNS setting can select an encrypted resolver on
 devices where the browser permits that choice. The media request still
 validates TLS for the original hostname. See [Chrome's Secure DNS documentation](https://support.google.com/chrome/answer/10468685).
 
-Support can diagnose the media host on the same network with TLS verification
-enabled. A certificate issued by a DNS filter's block-page service means the
-request reached that service. The network operator can review a suspected
-false positive. SaveMedia needs a verified response from the media host
-before it can offer the file. See [Whalebone's resolver troubleshooting](https://docs.whalebone.io/en/immunity/domain_resolution_analysis.html).
+The certificate error describes the connection the browser made. Two
+resolvers can return different addresses for the same hostname, and those
+addresses can present different certificates. To investigate a report,
+compare the connected addresses and TLS verification results for the same
+hostname from the same machine. The host root is sufficient for that check.
+Keep signed links out of diagnostic reports.
 
 ## Verify locally
 
@@ -97,7 +103,7 @@ the focused check.
 bun install --frozen-lockfile
 (cd packages/extension && bunx playwright install chromium)
 bun run build
-bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'site-generated download links|reports untrusted and restricted'
+bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'site-generated download links|reports certificate failures'
 bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'after source rotation'
 ```
 

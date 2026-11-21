@@ -16,9 +16,7 @@ export function describeFileSaveProblem(
 
   const { title, body, technicalDetails } = userMessage(error);
   return {
-    filename, stage, code: error.code,
-    title: title === "Untrusted source" ? "Couldn’t open the video file" : title,
-    body,
+    filename, stage, code: error.code, title, body,
     ...(technicalDetails ? { technicalDetails } : {}),
   };
 }

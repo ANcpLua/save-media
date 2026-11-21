@@ -12,7 +12,8 @@ interface PendingProbe {
 /**
  * Fetch exposes a generic TypeError for many browser failures. Observe the
  * extension's own probes and attach the browser's diagnostic to that error.
- * It is display-only. It never governs retries, routing or verification.
+ * A certificate error on the matched request also stops retries to that
+ * address. The browser remains responsible for TLS on every connection.
  */
 export function createDiagnosticFetch(
   events: RequestEvents | undefined,

@@ -1,7 +1,7 @@
 // Adapted from video-rescue/internal/rescue/downloader.go (MIT, ANcpLua).
 // See licenses/video-rescue-MIT.txt. Browser adaptation: bounded probes,
 // per-range retries and representation checks; no filesystem/native host.
-import { type JobError } from "@savemedia/core";
+import { isCertificateError, type JobError } from "@savemedia/core";
 import { BrowserFetchError, classifyNetworkFailure, type NetworkPhase } from "./error-classification";
 
 export interface RangeRetry {
@@ -49,6 +49,9 @@ export class RangeRecoveryError extends Error {
 
 /** Translate transport failures without exposing signed URLs or raw fetch errors. */
 export function rangeFailure(error: unknown, url: string, phase: NetworkPhase): JobError {
+  if (error instanceof BrowserFetchError && isCertificateError(error.diagnostic.code)) {
+    return { code: "tls_certificate_rejected", severity: "terminal", phase, browserDiagnostic: error.diagnostic };
+  }
   const status = error instanceof RangeRecoveryError ? error.status : undefined;
   let origin = "";
   try { origin = new URL(url).origin; } catch { /* No origin for a malformed URL. */ }
@@ -120,6 +123,7 @@ export async function recoverRequest<T>(
     } catch (error) {
       signal.throwIfAborted();
       if (error instanceof RangeRecoveryError && !error.retryable) throw error;
+      if (error instanceof BrowserFetchError && isCertificateError(error.diagnostic.code)) throw error;
       // TypeError is fetch's network failure; body/timeout failures may also
       // be DOMExceptions. Do not retry application errors or validation bugs.
       const retryable = error instanceof RangeRecoveryError || error instanceof TypeError

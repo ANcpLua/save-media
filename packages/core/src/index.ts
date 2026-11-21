@@ -24,7 +24,7 @@ export { classify } from "./classifier/classify";
 export { dispatch, BROWSER_OUTPUT_LIMIT_BYTES } from "./engine/dispatch";
 export { verify } from "./engine/verify";
 export { userMessage } from "./errors/messages";
-export { isTerminal, isRecoverable } from "./errors/taxonomy";
+export { isTerminal, isRecoverable, isCertificateError } from "./errors/taxonomy";
 export { computeBackoffMs, isRetryableStatus, RETRY_POLICY } from "./coordinator/retry";
 export { parseVideoCodec, parseAudioCodec, friendlyVideoCodec, friendlyAudioCodec } from "./classifier/codec-registry";
 export { detectContainerFromBytes, detectContainerFromMime } from "./classifier/container-registry";

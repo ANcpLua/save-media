@@ -161,6 +161,43 @@ describe("download-best command helpers", () => {
     expect(d.showHotkeyFeedback).toHaveBeenCalledWith(42, "failed", expect.any(String));
   });
 
+  it.each([
+    ["https://two.example/clip.mov?file=31", true],
+    ["https://one.example/clip.mov?file=31", false],
+    ["https://two.example/clip.mov?file=32", false],
+    ["http://two.example/clip.mov?file=31", false],
+  ] as const)("checks a replacement file link after a TLS rejection: %s", async (replacement, accepted) => {
+    const pageUrl = "https://example.com/watch";
+    const filename = "Clip.mov";
+    const sourceUrl = "https://one.example/clip.mov?file=31";
+    const generateDownload = vi.fn<NonNullable<DownloadBestDeps["generateDownload"]>>()
+      .mockResolvedValueOnce({ url: sourceUrl, filenameHint: filename })
+      .mockResolvedValueOnce({ url: replacement, filenameHint: filename });
+    const d = deps({ generateDownload, rememberFileSaveProblem: vi.fn() });
+    vi.mocked(d.tabs.sendMessage).mockImplementation((_id, _msg, cb) => cb({
+      pageUrl, urls: [], media: [], fileDownload: { filename },
+    }));
+    vi.mocked(d.router.startBestDownload).mockResolvedValueOnce({ kind: "no-media" })
+      .mockResolvedValueOnce({ kind: "failed", duringDiscovery: true, streamId: directDescriptor().id,
+        error: { code: "tls_certificate_rejected", severity: "terminal", phase: "direct",
+          browserDiagnostic: { host: "one.example", code: "net::ERR_CERT_AUTHORITY_INVALID" } } });
+
+    await downloadBestForTab(d, 42, pageUrl);
+
+    expect(generateDownload).toHaveBeenCalledTimes(2);
+    expect(d.handleCapture).toHaveBeenCalledTimes(accepted ? 2 : 1);
+    if (accepted) {
+      expect(d.handleCapture).toHaveBeenLastCalledWith(42, expect.objectContaining({
+        payload: expect.objectContaining({ url: replacement, filenameHint: filename }),
+      }));
+      expect(d.showHotkeyFeedback).toHaveBeenLastCalledWith(42, "started", expect.any(String));
+    } else {
+      expect(d.rememberFileSaveProblem).toHaveBeenLastCalledWith(42, pageUrl, expect.objectContaining({
+        code: "tls_certificate_rejected",
+      }));
+    }
+  });
+
   it("shows no-media feedback instead of failing silently when the page has nothing downloadable", async () => {
     const d = deps({
       router: {
