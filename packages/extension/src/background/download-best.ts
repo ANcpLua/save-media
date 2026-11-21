@@ -151,9 +151,7 @@ export async function downloadBestForTab(
     if ("problem" in result) {
       if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, discovery.pageUrl)) return;
       await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, result.problem);
-      deps.showHotkeyFeedback(tabId, "failed", result.problem.code === "tls_certificate_rejected"
-        ? "Chrome couldn’t verify this connection. Open SaveMedia to choose whether to try again."
-        : `${result.problem.title}. Open SaveMedia for details.`);
+      deps.showHotkeyFeedback(tabId, "failed", `${result.problem.title}. Open SaveMedia for details.`);
       return;
     }
     outcome = result;
@@ -212,7 +210,7 @@ export async function handleFileConnectionChoice(
   if ("problem" in result) {
     const problem = result.problem.code === "tls_certificate_rejected"
       ? { ...result.problem, code: "secure_retry_failed", title: "File wasn’t saved",
-        body: "The browser still couldn’t verify the connection to the file server. No file was downloaded." }
+        body: "The browser couldn’t verify the connection to the file server on the second attempt." }
       : result.problem;
     await deps.rememberFileSaveProblem?.(tabId, pageUrl, problem);
     deps.showHotkeyFeedback(tabId, "failed", problem.title);

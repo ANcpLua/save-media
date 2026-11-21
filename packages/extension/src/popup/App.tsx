@@ -300,8 +300,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
               <p className="break-words font-medium">{filename}</p>
               {confirmConnection ? (
                 <div className="mt-2 rounded-md border border-orange-400 bg-orange-950/60 p-2.5 text-orange-50" data-testid="file-save-problem">
-                  <p className="font-semibold text-orange-300" role="alert">Chrome couldn’t verify this connection</p>
-                  <p className="mt-1">If you continue, SaveMedia will try the site’s Download button again. Your browser must verify the connection before it can save the file.</p>
+                  <p className="font-semibold text-orange-300" role="alert">{problem.title}</p>
+                  <p className="mt-1">{problem.body}</p>
                   <div className="mt-2 flex justify-end gap-2">
                     <button type="button" onClick={() => downloadFilePage("cancel")} disabled={fileDownload === "dismissing"}
                       className="rounded-md border border-orange-300/60 px-2.5 py-1">Cancel</button>

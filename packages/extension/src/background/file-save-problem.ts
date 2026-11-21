@@ -14,6 +14,12 @@ export function describeFileSaveProblem(
     };
   }
 
+  if (stage === "file connection" && error.code === "tls_certificate_rejected") {
+    return { filename, stage, code: error.code,
+      title: "The last download attempt stopped",
+      body: "The browser couldn’t verify the file server on that attempt. If you continue, SaveMedia will try the site’s Download button again with certificate checks on." };
+  }
+
   const { title, body } = userMessage(error);
   return { filename, stage, code: error.code, title, body };
 }
