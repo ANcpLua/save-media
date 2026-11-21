@@ -7,6 +7,7 @@ import { LocalDownloader } from "./components/LocalDownloader";
 import { TechnicalDetails } from "./components/TechnicalDetails";
 import { rankDescriptors } from "./preview-match";
 import { isDownloadableCandidate } from "../util/downloadable";
+import { downloadIssueText } from "./download-status";
 
 // `?tabId=` is set when the popup was opened as its own window (the button
 // in the header); then the active tab would be the window itself.
@@ -96,7 +97,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   const [failures, setFailures] = useState<readonly DiscoveryFailure[]>(initialFailures);
   const [scanning, setScanning] = useState(false);
   const [snapshot, setSnapshot] = useState<PageMediaSnapshot | null>(null);
-  const [fileDownload, setFileDownload] = useState<"preparing" | "dismissing" | "unavailable" | null>(null);
+  const [fileDownload, setFileDownload] = useState<"preparing" | "retrying" | "dismissing" | "unavailable" | null>(null);
   const asWindow = windowTabId() !== null;
 
   useEffect(() => {
@@ -195,14 +196,19 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   const ranked = rankDescriptors(descriptors, snapshot);
   const filename = ranked.length === 0 && tabId !== null && pageUrl
     ? snapshot?.fileDownload?.filename ?? snapshot?.fileSaveProblem?.filename : undefined;
-  const problem = fileDownload !== "preparing" && filename === snapshot?.fileSaveProblem?.filename
+  const startingDownload = fileDownload === "preparing" || fileDownload === "retrying";
+  const problem = !startingDownload && filename === snapshot?.fileSaveProblem?.filename
     ? snapshot?.fileSaveProblem : null;
   const confirmConnection = problem?.code === "tls_certificate_rejected" && !!problem.resourceFingerprint;
+  const retryAvailable = !!problem || fileDownload === "unavailable";
+  let fileAction = retryAvailable ? "Retry download" : "Download";
+  if (fileDownload === "preparing") fileAction = "Preparing download…";
+  if (fileDownload === "retrying") fileAction = "Trying the site’s download link…";
   const version = manifestVersion();
 
   function downloadFilePage(choice?: "retry" | "cancel"): void {
-    if (tabId === null || !pageUrl || (!choice && scanning) || fileDownload === "preparing" || fileDownload === "dismissing") return;
-    setFileDownload(choice === "cancel" ? "dismissing" : "preparing");
+    if (tabId === null || !pageUrl || (!choice && scanning) || startingDownload || fileDownload === "dismissing") return;
+    setFileDownload(choice === "cancel" ? "dismissing" : choice === "retry" ? "retrying" : "preparing");
     const msg: PopupToBackgroundMessage = choice && filename
       ? { type: "file-connection-choice", tabId, pageUrl, filename, retry: choice === "retry" }
       : { type: "download-page", tabId, pageUrl };
@@ -240,6 +246,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "complete" } }));
       } else if (msg.type === "job-failed") {
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "failed", error: msg.error } }));
+      } else if (msg.type === "retrying-file-link" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
+        setFileDownload(current => current === "preparing" ? "retrying" : current);
       } else if (msg.type === "file-save-problem" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
         setSnapshot(prev => prev && { ...prev, fileSaveProblem: msg.problem });
       } else if (msg.type === "descriptors" && msg.tabId === tabIdRef.current) {
@@ -296,31 +304,31 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         )}
         {filename && (
           <ul className="px-2 pb-1">
-            <li className="rounded-lg bg-surface border border-accent/60 p-3 text-xs">
+            <li className="rounded-lg bg-surface border border-line p-3 text-xs">
               <p className="break-words font-medium">{filename}</p>
               {confirmConnection ? (
                 <div className="mt-2 rounded-md border border-orange-400 bg-orange-950/60 p-2.5 text-orange-50" data-testid="file-save-problem">
-                  <p className="font-semibold text-orange-300" role="alert">{problem.title}</p>
+                  <p className="font-semibold text-red-300" role="alert">{problem.title}</p>
                   <p className="mt-1">{problem.body}</p>
                   <div className="mt-2 flex justify-end gap-2">
                     <button type="button" onClick={() => downloadFilePage("cancel")} disabled={fileDownload === "dismissing"}
                       className="rounded-md border border-orange-300/60 px-2.5 py-1">Cancel</button>
                     <button type="button" onClick={() => downloadFilePage("retry")} disabled={fileDownload === "dismissing"}
-                      className="rounded-md bg-accent px-2.5 py-1 font-medium text-ink">Download anyway</button>
+                      className="rounded-md border border-red-400 bg-red-950 px-2.5 py-1 font-semibold text-red-100">Download anyway</button>
                   </div>
                 </div>
               ) : problem ? (
                 <div className="mt-2" data-testid="file-save-problem">
-                  <p className="font-semibold text-red-300" role="status">{problem.title}</p>
+                  <p className={`font-semibold ${downloadIssueText(problem)}`} role="status">{problem.title}</p>
                   <p className="mt-0.5 text-muted">{problem.body}</p>
                 </div>
               ) : fileDownload === "unavailable" && (
-                <p className="mt-2 text-muted" role="status">Couldn’t start the download. Try again.</p>
+                <p className="mt-2 text-orange-300" role="status">Couldn’t start the download. Try again.</p>
               )}
               {!confirmConnection && <div className="mt-2 flex justify-end">
-                <button type="button" onClick={() => downloadFilePage()} disabled={scanning || fileDownload === "preparing"}
-                  className="bg-accent hover:brightness-110 disabled:opacity-50 text-ink font-medium px-2.5 py-1 rounded-md">
-                  {fileDownload === "preparing" ? "Preparing download…" : problem || fileDownload === "unavailable" ? "Retry download" : "Download"}
+                <button type="button" onClick={() => downloadFilePage()} disabled={scanning || startingDownload}
+                  className={`hover:brightness-110 font-medium px-2.5 py-1 rounded-md ${fileDownload === "retrying" || retryAvailable ? "bg-orange-950 text-orange-200" : "bg-surface-2 text-white"}`}>
+                  {fileAction}
                 </button>
               </div>}
             </li>
@@ -370,7 +378,7 @@ function DiscoveryFailures({ failures }: { readonly failures: readonly Discovery
         const { title, body, technicalDetails } = userMessage(error);
         return (
           <li key={url} className="rounded-lg border border-line bg-surface p-3 text-xs text-white">
-            <p className="font-medium" role="status">{title}</p>
+            <p className={`font-medium ${downloadIssueText(error)}`} role="status">{title}</p>
             {technicalDetails ? <TechnicalDetails body={body} details={technicalDetails} /> : (
               <>
                 <p className="text-muted mt-1">{body}</p>

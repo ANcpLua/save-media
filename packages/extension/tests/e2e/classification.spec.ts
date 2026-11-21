@@ -696,7 +696,7 @@ test.describe("extension classifies real fixture pages", () => {
       await page.reload();
       await page.bringToFront();
       await page.keyboard.press("Alt+KeyS");
-      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("The last download attempt stopped");
+      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Couldn’t verify the last connection");
       popup = await openPopupFor(page);
       await popup.getByRole("button", { name: "Download anyway" }).click();
       await expect(popup.getByTestId("file-save-problem")).toContainText("File wasn’t saved");

@@ -60,7 +60,10 @@ export type BridgeToBackgroundMessage =
   | { readonly type: "download-best-hotkey"; readonly pageUrl: string }
   | { readonly type: "ready" };
 
-export type HotkeyFeedbackOutcome = "preparing" | "started" | "delegated" | "complete" | "no-media" | "failed";
+export type HotkeyFeedbackOutcome = "preparing" | "retrying" | "started" | "delegated" | "complete" | "no-media" | "failed";
+
+/** An active direct-file job with a rejected address is looking up a replacement. */
+export const REFRESHING_VIDEO_SOURCE = "Looking for a new file link";
 
 export type BackgroundToContentMessage =
   | { readonly type: "discover-page-media" }
@@ -154,6 +157,7 @@ export interface JobStatus {
 export type BackgroundToPopupMessage =
   | { readonly type: "descriptors"; readonly tabId: number; readonly descriptors: readonly StreamDescriptor[];
       readonly failures?: readonly DiscoveryFailure[]; readonly statuses?: Readonly<Record<string, JobStatus>> }
+  | { readonly type: "retrying-file-link"; readonly tabId: number; readonly pageUrl: string }
   | FileSaveProblemMessage
   | { readonly type: "local-status"; readonly settings: LocalSettingsValue; readonly host: HostPong | null; readonly permissionGranted: boolean; readonly jobs: readonly LocalJobView[] }
   | { readonly type: "local-job"; readonly job: LocalJobView }
@@ -277,6 +281,7 @@ const backgroundToPopupSchema = z.discriminatedUnion("type", [
     failures: z.array(z.object({ url: z.string(), error: record })).optional(),
     statuses: z.record(z.string(), z.object({ phase: z.enum(["queued", "active", "complete", "failed"]),
       bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional(), stage: z.string().optional(), error: record.optional() })).optional() }),
+  z.object({ type: z.literal("retrying-file-link"), tabId: z.number(), pageUrl: z.string() }),
   z.object({ type: z.literal("file-save-problem"), tabId: z.number(), pageUrl: z.string(), problem: z.object({
     filename: z.string(), stage: z.enum(["download link", "file connection", "start download"]),
     title: z.string(), body: z.string(), code: z.string(), resourceFingerprint: z.string().optional(),

@@ -44,6 +44,13 @@ host and signature to change. Chrome verifies the connection and SaveMedia
 checks the media bytes as usual. A second certificate rejection shows
 **File wasn’t saved**. Cancel dismisses the prompt.
 
+The popup shows **Ready to save** in green after a successful direct-file
+probe. **Saved** turns green once the browser reports download completion.
+Orange marks an observed obstacle or an attempt to recover from it. The
+connection warning keeps its orange box and uses red for the failed check
+and the user's **Download anyway** choice. Ordinary redirects run silently.
+These states describe requests and files and make no attribution to a provider.
+
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
 chunks. Each chunk uses `If-Range` and checks its offsets, byte count, and

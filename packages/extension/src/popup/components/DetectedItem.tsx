@@ -2,10 +2,12 @@ import { useState } from "react";
 import type { StreamDescriptor } from "@savemedia/core";
 import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
 import type { PopupToBackgroundMessage, JobStatus } from "../../types/messages";
+import { REFRESHING_VIDEO_SOURCE } from "../../types/messages";
 import { suggestFilename } from "../../util/filename";
 import { hasDownloadableDemuxedPair, isDownloadableCandidate } from "../../util/downloadable";
 import { formatDuration, type Preview } from "../preview-match";
 import { TechnicalDetails } from "./TechnicalDetails";
+import { downloadIssueText } from "../download-status";
 
 export type { JobStatus } from "../../types/messages";
 
@@ -44,8 +46,13 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
   const isDeferred = descriptor.drm?.reason === "clearkey_deferred";
   const action = outputActionLabel(descriptor);
   const isDownloadable = isDownloadableCandidate(descriptor);
-  const failure = status?.phase === "failed" && status.error ? userMessage(status.error) : null;
+  const error = status?.phase === "failed" ? status.error : undefined;
+  const failure = error ? userMessage(error) : null;
   const activeProgressWidth = status?.phase === "active" ? progressWidth(status) : "30%";
+  const refreshingSource = status?.phase === "active" && status.stage === REFRESHING_VIDEO_SOURCE;
+  const readyDirectFile = !status && isDownloadable && descriptor.source.kind === "direct-url" && descriptor.capabilities.directDownload;
+  const downloadColor = readyDirectFile || status?.phase === "complete" ? "bg-emerald-400 text-ink"
+    : status?.phase === "failed" ? "bg-orange-950 text-orange-200" : "bg-surface-2 text-white";
 
   function download() {
     if (isDrmBlocked) return;
@@ -93,7 +100,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
   }
 
   return (
-    <li className={`rounded-lg bg-surface border p-3 text-xs ${isMain ? "border-accent/60" : "border-line"}`} data-main={isMain || undefined}>
+    <li className={`rounded-lg bg-surface border p-3 text-xs ${isMain ? "border-muted/60" : "border-line"}`} data-main={isMain || undefined}>
       <div className="flex gap-2.5">
         {preview?.thumbnail ? (
           <img
@@ -112,7 +119,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
             onClick={() => setExpanded(e => !e)}
             className="flex items-center gap-1.5 w-full text-left"
           >
-            {isMain && <span className="shrink-0 rounded bg-accent text-ink font-semibold px-1 text-[10px]" data-testid="main-badge">Main</span>}
+            {isMain && <span className="shrink-0 rounded bg-surface-2 text-muted font-semibold px-1 text-[10px]" data-testid="main-badge">Main</span>}
             <span className="font-medium truncate flex-1" title={displayTitle}>{displayTitle}</span>
             <span className="text-muted shrink-0">{expanded ? "▼" : "▶"}</span>
           </button>
@@ -178,21 +185,21 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
       {status && status.phase === "active" && (
         <div className="mt-2 ml-5" data-testid="progress">
           <div className="flex items-center justify-between text-muted">
-            <span>{status.stage ?? "downloading"}</span>
+            <span className={refreshingSource ? "text-orange-300" : undefined}>{status.stage ?? "downloading"}</span>
             <span>{formatBytes(status.bytesWritten ?? 0)}{status.bytesTotal ? ` / ${formatBytes(status.bytesTotal)}` : ""}</span>
           </div>
           <div className="mt-1 h-1 rounded bg-surface-2 overflow-hidden">
             <div
-              className="h-full bg-blue-600 transition-all"
+              className={`h-full transition-all ${refreshingSource ? "bg-orange-400" : "bg-blue-600"}`}
               style={{ width: activeProgressWidth }}
             />
           </div>
         </div>
       )}
 
-      {failure && (
+      {error && failure && (
         <div className="mt-2 ml-5" data-testid="job-error">
-          <p className={failure.technicalDetails ? "font-medium" : "font-medium text-red-400"}>{failure.title}</p>
+          <p className={`font-medium ${downloadIssueText(error)}`} role="status">{failure.title}</p>
           {failure.technicalDetails
             ? <TechnicalDetails body={failure.body} details={failure.technicalDetails} />
             : <p className="text-muted mt-0.5">{failure.body}</p>}
@@ -212,6 +219,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
       )}
 
       <div className="mt-2 ml-5 flex items-center gap-2">
+        {readyDirectFile && <span className="font-medium text-emerald-400" role="status">Ready to save</span>}
         {status?.phase === "active" ? status.stage !== "finalizing" && (
           <button
             onClick={cancel}
@@ -222,7 +230,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
         ) : isDownloadable ? (
           <button
             onClick={download}
-            className="ml-auto inline-flex items-center gap-1 bg-accent hover:brightness-110 text-ink font-medium px-2.5 py-1 rounded-md text-xs"
+            className={`ml-auto inline-flex items-center gap-1 hover:brightness-110 font-medium px-2.5 py-1 rounded-md text-xs ${downloadColor}`}
           >
             <span aria-hidden="true">⬇</span> {status?.phase === "failed" ? "Retry download" : "Download"}
           </button>

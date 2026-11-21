@@ -16,6 +16,7 @@ import type {
   JobStatus,
 } from "../types/messages";
 import type { Logger } from "../util/logger";
+import { REFRESHING_VIDEO_SOURCE } from "../types/messages";
 import { suggestFilename, timestampedPath } from "../util/filename";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
 import { isDownloadableCandidate } from "../util/downloadable";
@@ -491,7 +492,7 @@ export function createRouter(deps: RouterDeps): Router {
         && error.code === "access_denied" && error.phase === "direct" && error.httpStatus === 403) {
         const controller = new AbortController();
         job.refresh = controller;
-        const phase = "Refreshing video source";
+        const phase = REFRESHING_VIDEO_SOURCE;
         statuses.set(msg.streamId, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: phase });
         const progress: BackgroundToPopupMessage = {
           type: "job-progress", streamId: msg.streamId, bytesWritten: 0, bytesTotal: null, phase,

@@ -185,6 +185,7 @@ function absolute(url: string): string {
 // id) so the page cannot substitute its own element.
 const TOAST_COLORS: Record<HotkeyFeedbackMessage["outcome"], string> = {
   "preparing": "#2563eb",
+  "retrying": "#fb923c",
   "started": "#16a34a",
   "delegated": "#2563eb",
   "complete": "#16a34a",
@@ -193,6 +194,7 @@ const TOAST_COLORS: Record<HotkeyFeedbackMessage["outcome"], string> = {
 };
 const TOAST_LABELS: Record<HotkeyFeedbackMessage["outcome"], string> = {
   "preparing": "Preparing",
+  "retrying": "Retrying",
   "started": "Saving",
   "delegated": "Local downloader",
   "complete": "Saved",
@@ -260,7 +262,7 @@ function showToast(outcome: HotkeyFeedbackMessage["outcome"], detail: string): v
         toastRoot = null;
       }
     }, 250);
-  }, outcome === "failed" ? 8_000 : outcome === "preparing" ? 12_000 : 2_400);
+  }, outcome === "failed" ? 8_000 : outcome === "preparing" || outcome === "retrying" ? 12_000 : 2_400);
 }
 
 chrome.runtime.sendMessage(
@@ -289,7 +291,7 @@ function isDiscoverPageMediaMessage(value: unknown): value is DiscoverPageMediaM
 function isHotkeyFeedbackMessage(value: unknown): value is HotkeyFeedbackMessage {
   return isRecord(value)
     && value.type === "hotkey-feedback"
-    && (value.outcome === "preparing" || value.outcome === "started" || value.outcome === "delegated" || value.outcome === "complete" || value.outcome === "no-media" || value.outcome === "failed")
+    && typeof value.outcome === "string" && Object.hasOwn(TOAST_LABELS, value.outcome)
     && typeof value.detail === "string";
 }
 

@@ -144,9 +144,10 @@ export async function downloadBestForTab(
     ? await deps.router.startBestDownload(tabId, { pageUrl: discovery.pageUrl, filename: offer.filename })
     : await deps.router.startBestDownload(tabId);
   if (offer && (outcome.kind === "no-media" || (outcome.kind === "failed" && outcome.duringDiscovery))) {
-    if (!fromPopup) deps.showHotkeyFeedback(tabId, "preparing", "Checking the file link");
+    if (outcome.kind === "failed") reportFileRetry(deps, tabId, discovery.pageUrl, fromPopup);
+    else if (!fromPopup) deps.showHotkeyFeedback(tabId, "preparing", "Checking the site’s download link");
     await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, null);
-    const result = await startFilePageDownload(deps, tabId, discovery.pageUrl, offer);
+    const result = await startFilePageDownload(deps, tabId, discovery.pageUrl, offer, { fromPopup });
     if (!result) return;
     if ("problem" in result) {
       if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, discovery.pageUrl)) return;
@@ -204,7 +205,7 @@ export async function handleFileConnectionChoice(
   }
   const offer = state?.fileDownload;
   const result = offer?.filename === filename && warning.resourceFingerprint
-    ? await startFilePageDownload(deps, tabId, pageUrl, offer, warning.resourceFingerprint)
+    ? await startFilePageDownload(deps, tabId, pageUrl, offer, { fromPopup: true, expectedFingerprint: warning.resourceFingerprint })
     : { problem: describeFileSaveProblem(filename, "download link") };
   if (!result || (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl))) return;
   if ("problem" in result) {
@@ -220,20 +221,30 @@ export async function handleFileConnectionChoice(
   await deps.rememberFileSaveProblem?.(tabId, pageUrl, null);
 }
 
+interface FileSaveAttempt {
+  readonly fromPopup: boolean;
+  readonly expectedFingerprint?: string;
+}
+
+function reportFileRetry(deps: DownloadBestDeps, tabId: number, pageUrl: string, fromPopup: boolean): void {
+  if (fromPopup) deps.runtime.sendMessage({ type: "retrying-file-link", tabId, pageUrl });
+  else deps.showHotkeyFeedback(tabId, "retrying", "Trying the site’s download link");
+}
+
 function startFilePageDownload(
-  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer, expectedFingerprint?: string,
+  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer, options: FileSaveAttempt,
 ): Promise<FilePageResult> {
   // A popup click and a shortcut can overlap before either has a stream ID.
-  const key = JSON.stringify([tabId, pageUrl, offer.filename, offer.linkedPage, expectedFingerprint]);
+  const key = JSON.stringify([tabId, pageUrl, offer.filename, offer.linkedPage, options.expectedFingerprint]);
   const pending = pendingFileLinks.get(key);
   if (pending) return pending;
-  const starting = resolveAndStartFileDownload(deps, tabId, pageUrl, offer, expectedFingerprint).finally(() => pendingFileLinks.delete(key));
+  const starting = resolveAndStartFileDownload(deps, tabId, pageUrl, offer, options).finally(() => pendingFileLinks.delete(key));
   pendingFileLinks.set(key, starting);
   return starting;
 }
 
 async function resolveAndStartFileDownload(
-  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer, expectedFingerprint?: string,
+  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer, { expectedFingerprint, fromPopup }: FileSaveAttempt,
 ): Promise<FilePageResult> {
   let source = await deps.generateDownload?.(tabId, pageUrl, offer);
   if (!source) return { problem: describeFileSaveProblem(offer.filename, "download link") };
@@ -263,6 +274,7 @@ async function resolveAndStartFileDownload(
     if (!expiredResource) return { problem };
 
     // Only the original file's Download control can supply a replacement.
+    reportFileRetry(deps, tabId, pageUrl, fromPopup);
     const refreshed = await deps.generateDownload?.(tabId, pageUrl, offer);
     if (!refreshed || refreshed.url === source.url) return { problem };
     if (renewableResource(refreshed.url) !== expiredResource) return { problem };

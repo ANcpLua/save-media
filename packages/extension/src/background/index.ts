@@ -178,6 +178,7 @@ const downloadBestDeps: DownloadBestDeps = {
 
 const FEEDBACK_BADGES: Record<HotkeyFeedbackOutcome, { text: string; color: string }> = {
   "preparing": { text: "…", color: "#2563eb" },
+  "retrying": { text: "↻", color: "#f97316" },
   "started": { text: "↓", color: "#16a34a" },
   "delegated": { text: "⇣", color: "#2563eb" },
   "complete": { text: "✓", color: "#16a34a" },
