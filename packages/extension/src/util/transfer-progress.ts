@@ -27,7 +27,7 @@ export function describeTransfer(status: TransferState) {
 
 function progressPercent(status: TransferState): number | undefined {
   if (status.bytesTotal && status.bytesTotal > 0) {
-    return clampPercent(((status.bytesWritten ?? 0) / status.bytesTotal) * 100);
+    return clampPercent(Math.floor(((status.bytesWritten ?? 0) / status.bytesTotal) * 100));
   }
 
   if (status.percent != null) return clampPercent(status.percent);

@@ -36,10 +36,11 @@ afterEach(() => {
 
 describe("engine downloadJob — integrates dispatch with job runners", () => {
   it("direct progressive + Original → runDirectJob branch (Blob URL)", async () => {
-    const result = await downloadJob(directDescriptor(), baseChoice, vi.fn(), new AbortController().signal);
+    const descriptor = directDescriptor();
+    const result = await downloadJob(descriptor, baseChoice, vi.fn(), new AbortController().signal);
     expect(result.filename).toBe("clip.mp4");
     expect(result.blobUrl).toBe("blob:integration");
-    expect(runDirectJob).toHaveBeenCalledWith({ kind: "direct", url: "https://example.com/clip.mp4", filename: "clip.mp4" }, expect.any(Function), expect.any(AbortSignal));
+    expect(runDirectJob).toHaveBeenCalledWith({ kind: "direct", url: "https://example.com/clip.mp4", filename: "clip.mp4" }, expect.any(Function), expect.any(AbortSignal), descriptor.tabId);
   });
 
   it("DRM-blocked descriptor → throws encrypted_media_detected/cdm_required", async () => {

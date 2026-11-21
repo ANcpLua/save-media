@@ -84,6 +84,44 @@ describe("direct download recovery", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it.each([false, true])("retries a late 503 using completed ranges only when the strong ETag matches (changed=%s)", async changed => {
+    const chunkSize = 4 * 1024 * 1024;
+    const data = new Uint8Array(chunkSize + fixture.length);
+    data.set(fixture);
+    new DataView(data.buffer).setUint32(fixture.length, chunkSize);
+    data.set(new TextEncoder().encode("free"), fixture.length + 4);
+    let firstAttempt = true;
+    let receivedFirst!: () => void;
+    const ready = new Promise<void>(resolve => { receivedFirst = resolve; });
+    const requested: number[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers);
+      const [start, end] = bounds(headers, data.length);
+      if (headers.has("if-range")) {
+        requested.push(start);
+        if (firstAttempt && start !== 0) {
+          await ready;
+          return new Response(null, { status: 503, headers: { "Retry-After": "60" } });
+        }
+      }
+      const response = rangedResponse(data, start, end);
+      if (!firstAttempt && changed) response.headers.set("etag", '"fixture-v2"');
+      return response;
+    });
+    const progress = (bytes: number) => { if (bytes === chunkSize) receivedFirst(); };
+    await expect(runDirectJob(plan, progress, new AbortController().signal, 7)).rejects.toMatchObject({code: "server_busy", httpStatus: 503});
+    expect(requested.sort((a, b) => a - b)).toEqual([0, chunkSize]);
+    firstAttempt = false;
+    requested.length = 0;
+    if (changed) data[fixture.length + 8] = 37;
+    const saved = await runDirectJob(plan, vi.fn(), new AbortController().signal, 7);
+    try {
+      expect(requested).toEqual(changed ? [0, chunkSize] : [chunkSize]);
+      expect(createHash("sha256").update(Buffer.from(await (await fetchOriginal(saved.blobUrl)).arrayBuffer())).digest("hex"))
+        .toBe(createHash("sha256").update(data).digest("hex"));
+    } finally { URL.revokeObjectURL(saved.blobUrl); }
+  });
+
   it("does not create a saved result for structurally invalid media", async () => {
     const data = fixture.slice();
     new DataView(data.buffer).setUint32(0, data.length + 100);

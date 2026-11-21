@@ -35,6 +35,10 @@ flag. Closing the browser or reloading the extension clears it. SaveMedia
 checks the status of its own download by ID. Duplicate detection requires
 no folder scan, cookies or access to other downloads.
 
+After a temporary transfer failure, SaveMedia can hold completed parts of one
+file in browser memory for up to ten minutes so a retry can resume. Reloading
+the extension or closing the browser clears these parts.
+
 ## Optional secure relay in Chrome builds
 
 When a build includes a secure relay, the confirmation names its hostname.

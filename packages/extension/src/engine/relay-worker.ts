@@ -1,5 +1,6 @@
 import { verifiedDirectFile } from "./jobs/direct";
 import { readBytes, type MediaFetch } from "./net/range-recovery";
+import type { RangeCheckpoint, RangeResume } from "./net/range-checkpoint";
 import type { DiscoveredMedia } from "../types/messages";
 import { userMessage, type JobError } from "@savemedia/core";
 
@@ -22,7 +23,7 @@ function publicHttps(value: string, base?: string): URL {
   return url;
 }
 
-async function transfer(input: { endpoint: string; source: DiscoveredMedia; filename: string; referrer: string }) {
+async function transfer(input: { endpoint: string; source: DiscoveredMedia; filename: string; referrer: string }, resume: RangeResume) {
   const vendor = new URL("/vendor/libcurl/", self.location.href);
   const { libcurl }: { libcurl: Curl } = await import(/* @vite-ignore */ new URL("libcurl.mjs", vendor).href);
   // Upstream's default error logger includes request URLs. Never log signed requests.
@@ -42,7 +43,7 @@ async function transfer(input: { endpoint: string; source: DiscoveredMedia; file
         if (err instanceof Error && /error code (51|60)\b/.test(err.message)) {
           throw new Error("The secure relay reached a server whose TLS certificate could not be verified.");
         }
-        throw new Error("The secure relay could not connect to the file server.");
+        throw new TypeError("The secure relay could not connect to the file server.");
       }
       if (![301, 302, 303, 307, 308].includes(response.status)) return response;
       const next = response.headers.get("location");
@@ -80,16 +81,17 @@ async function transfer(input: { endpoint: string; source: DiscoveredMedia; file
     }
   }
   const result = await verifiedDirectFile({kind: "direct", url: file.href, filename: input.filename},
-    (bytesWritten, bytesTotal, stage) => self.postMessage({progress: {bytesWritten, bytesTotal, stage}}), new AbortController().signal, fetchFile);
+    (bytesWritten, bytesTotal, stage) => self.postMessage({progress: {bytesWritten, bytesTotal, stage}}), new AbortController().signal, fetchFile, resume);
   self.postMessage(result);
 }
 
 self.onmessage = event => {
-  void transfer(event.data).catch((err: unknown) => {
-    const body = err && typeof err === "object" && "code" in err && "severity" in err
-      ? userMessage(err as JobError).body
+  let checkpoint: RangeCheckpoint | undefined;
+  void transfer(event.data, { previous: event.data.previous, interrupted: parts => { checkpoint = parts; } }).catch((err: unknown) => {
+    const jobError = err && typeof err === "object" && "code" in err && "severity" in err ? err as JobError : undefined;
+    const body = jobError ? userMessage(jobError).body
       : err instanceof Error && /^(The site |The site’s |The secure relay )/.test(err.message)
         ? err.message : "The secure relay could not finish this transfer.";
-    self.postMessage({error: body});
+    self.postMessage({error: body, code: jobError?.code, checkpoint});
   });
 };

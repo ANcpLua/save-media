@@ -1,3 +1,4 @@
+import { stableAddress } from "../util/media-address";
 // MUST be the first import. Shims window→globalThis so transitively
 // loaded videojs parsers (m3u8-parser, mpd-parser) don't crash the SW
 // at module-load with `ReferenceError: window is not defined`.
@@ -19,7 +20,7 @@ import type {
 } from "../types/messages";
 import { relayUrl } from "../engine/relay-config";
 import type { FileDownloadOffer } from "../types/messages";
-import { answerRepeat, dismissRepeats, namedFileIdentity, repeatPrompt, reserveSave, savedThisSession, stableAddress } from "./session-saves";
+import { answerRepeat, dismissRepeats, namedFileIdentity, repeatPrompt, reserveSave, savedThisSession } from "./session-saves";
 import { clearRelayStatus, relaySnapshot, saveThroughRelay } from "./save-through-relay";
 import { observeFileLink } from "./observe-file-link";
 import { createRouter } from "./router";

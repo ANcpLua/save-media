@@ -16,7 +16,7 @@ import {
 import { relayHost } from "../engine/relay-config";
 import { hotkeyErrorDetail } from "./hotkey-jobs";
 import { describeFileSaveProblem } from "./file-save-problem";
-import { renewableResource } from "./refresh-direct";
+import { renewableResource } from "../util/media-address";
 import { isDelegableError } from "../native/local-downloader";
 
 type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
@@ -46,7 +46,7 @@ export interface DownloadBestDeps {
   };
   readonly handleCapture: (tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>;
   readonly generateDownload?: (tabId: number, pageUrl: string, offer: FileDownloadOffer) => Promise<DiscoveredMedia | null>;
-  readonly relayFile?: (tabId: number, pageUrl: string, offer: FileDownloadOffer, source: DiscoveredMedia) => Promise<{saved: string} | {error: string} | null>;
+  readonly relayFile?: (tabId: number, pageUrl: string, offer: FileDownloadOffer, source: DiscoveredMedia) => Promise<{saved: string} | {error: string; code?: string} | null>;
   readonly allowRelayForSite?: (pageUrl: string) => Promise<void>;
   readonly relayAllowedForSite?: (pageUrl: string) => Promise<boolean>;
   readonly rememberFileSaveProblem?: (tabId: number, pageUrl: string, problem: FileSaveProblem | null) => Promise<void>;
@@ -279,7 +279,7 @@ async function resolveAndStartFileDownload(
     if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return null;
     const result = await deps.relayFile!(tabId, pageUrl, offer, media);
     if (!result || "saved" in result) return result;
-    return {problem: {filename: offer.filename, stage: "file connection", code: "secure_retry_failed",
+    return {problem: {filename: offer.filename, stage: "file transfer", code: result.code ?? "relay_transfer_failed",
       title: "File wasn’t saved", body: result.error}};
   }
   if (expectedFingerprint && deps.relayFile) return saveByRelay(source);

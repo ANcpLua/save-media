@@ -50,6 +50,16 @@ and returns signature fields already present in the generated link, the worker
 renews them on the transfer route. Other generated links are used as supplied.
 A site that declines the relay's address can still refuse a transfer.
 
+After a temporary range failure, the engine can keep the completed parts of
+one file in memory for up to ten minutes. This applies to direct and relay
+transfers up to 256 MiB. Retry in the same tab. The engine probes again and
+reuses parts only when the resource, exact length and strong ETag match.
+A changed file starts from byte zero. The saved output still undergoes the
+normal container and length checks. Reloading the extension releases the parts.
+To reproduce a late HTTP 503 and a changed ETag with owned bytes, run
+`bun x vitest run tests/unit/engine/jobs/direct.test.ts -t 'late 503'`
+from `packages/extension`.
+
 Both transports use the same container, range and size checks. A scoped
 worker holds one transfer in memory. Chrome writes the verified blob under
 the original filename and reports completion before the popup shows **Saved**.
@@ -69,7 +79,7 @@ identify the selection. Repeating Download or Alt+S asks for confirmation.
 The answer applies to one save. The existing Downloads file may have been
 moved or deleted since the first save.
 
-A build without a relay endpoint retains the direct **Download anyway** retry.
+A build without a relay endpoint retains the direct **Retry secure download** retry.
 
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB

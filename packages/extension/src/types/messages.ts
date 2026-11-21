@@ -120,7 +120,7 @@ export interface FileDownloadOffer {
 
 export interface FileSaveProblem {
   readonly filename: string;
-  readonly stage: "download link" | "file connection" | "start download";
+  readonly stage: "download link" | "file connection" | "start download" | "file transfer";
   readonly title: string;
   readonly body: string;
   readonly code: string;

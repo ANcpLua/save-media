@@ -1,5 +1,5 @@
 import type { FileDownloadOffer } from "../types/messages";
-import { renewableResource } from "./refresh-direct";
+import { stableAddress } from "../util/media-address";
 
 export interface SavePermit {
   finish(saved: boolean): Promise<void>;
@@ -10,15 +10,6 @@ interface RepeatPrompt {
   filename: string;
   tabId: number;
   pageUrl: string;
-}
-
-export function stableAddress(value: string): string {
-  try {
-    const url = new URL(renewableResource(value) ?? value);
-    url.hash = "";
-    url.searchParams.sort();
-    return url.href;
-  } catch { return value; }
 }
 
 export function namedFileIdentity(pageUrl: string, offer: FileDownloadOffer): string[] {

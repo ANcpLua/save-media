@@ -352,7 +352,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
                     <button type="button" onClick={() => downloadFilePage("cancel")} disabled={fileDownload === "dismissing"}
                       className="rounded-md border border-orange-300/60 px-2.5 py-1">Cancel</button>
                     <button type="button" onClick={() => downloadFilePage("retry")} disabled={fileDownload === "dismissing"}
-                      className="rounded-md border border-red-400 bg-red-950 px-2.5 py-1 font-semibold text-red-100">{relayHost ? "Use secure relay" : "Download anyway"}</button>
+                      className="rounded-md border border-red-400 bg-red-950 px-2.5 py-1 font-semibold text-red-100">{relayHost ? "Use secure relay" : "Retry secure download"}</button>
                   </div>
                 </div>
               ) : problem ? (

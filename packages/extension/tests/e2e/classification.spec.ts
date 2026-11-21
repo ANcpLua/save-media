@@ -689,7 +689,7 @@ test.describe("extension classifies real fixture pages", () => {
       popup = await openPopupFor(page);
       await popup.getByRole("button", { name: "Download", exact: true }).click();
       await expect(popup.getByTestId("file-save-problem")).toContainText("The browser couldn’t verify the file server on that attempt.");
-      await expect(popup.getByRole("button", { name: "Download anyway" })).toBeVisible();
+      await expect(popup.getByRole("button", { name: "Retry secure download" })).toBeVisible();
       await popup.close();
       popup = await openPopupFor(page);
       await expect(popup.getByTestId("file-save-problem")).toContainText("The browser couldn’t verify the file server on that attempt.");
@@ -704,7 +704,7 @@ test.describe("extension classifies real fixture pages", () => {
       await page.keyboard.press("Alt+KeyS");
       await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Couldn’t verify the last connection");
       popup = await openPopupFor(page);
-      await popup.getByRole("button", { name: "Download anyway" }).click();
+      await popup.getByRole("button", { name: "Retry secure download" }).click();
       await expect(popup.getByTestId("file-save-problem")).toContainText("File wasn’t saved");
       expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
       expect(mediaRequests).toBe(0);

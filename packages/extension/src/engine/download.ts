@@ -18,7 +18,7 @@ export const downloadJob: DownloadJob = async (descriptor, choice, onProgress, s
 
   switch (plan.kind) {
     case "direct":
-      return runDirectJob(plan, onProgress, signal);
+      return runDirectJob(plan, onProgress, signal, descriptor.tabId);
 
     case "hls-plain":
       return runHlsJob(plan, prepared, onProgress, signal);

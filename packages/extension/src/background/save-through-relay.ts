@@ -4,7 +4,7 @@ import { ensureEngineHost } from "../platform/processor-host";
 import type { RelayResult } from "../engine/relay-transfer";
 import type { DiscoveredMedia, FileDownloadOffer, FileRelayStatus, FileRelayStatusMessage } from "../types/messages";
 
-type SaveResult = {saved: string} | {error: string} | null;
+type SaveResult = {saved: string} | {error: string; code?: string} | null;
 const pending = new Map<string, Promise<SaveResult>>();
 const latest = new Map<number, FileRelayStatusMessage>();
 
@@ -50,7 +50,7 @@ export function saveThroughRelay(tabId: number, pageUrl: string, offer: FileDown
       report({filename: offer.filename, phase: "saving", stage: "Connecting to secure relay"});
       await ensureEngineHost();
       const file: RelayResult | undefined = await chrome.runtime.sendMessage({
-        type: "relay-file", requestId, filename: offer.filename, source, referrer: offer.linkedPage ?? pageUrl,
+        type: "relay-file", requestId, tabId, filename: offer.filename, source, referrer: offer.linkedPage ?? pageUrl,
       }).catch(() => undefined);
       if (!file) return {error: "The relay connection ended before the file was ready."};
       if ("error" in file) return file;

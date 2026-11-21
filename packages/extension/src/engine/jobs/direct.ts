@@ -6,6 +6,7 @@ import {
   RangeRecoveryError, recoverRequest, responseHeaders, type RangeMetadata, type RetryProgress, type MediaFetch,
 } from "../net/range-recovery";
 import { DIRECT_MEDIA_TYPES, requireDirectVideo, validateDirectBlob } from "../verify-direct";
+import { clearCheckpoint, keepCheckpoint, MAX_RESUME_BYTES, resumeIdentity, getCheckpoint, type RangeResume } from "../net/range-checkpoint";
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const WORKERS = 4;
@@ -15,13 +16,17 @@ function retryStage(retry: Parameters<RetryProgress>[0], subject: string): strin
   return `Retrying ${subject}${wait} (attempt ${retry.attempt} of ${retry.maxAttempts})`;
 }
 
-export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal): Promise<JobResult> {
-  const {blob, filename} = await verifiedDirectFile(plan, onProgress, signal, fetch);
+export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal, tabId?: number): Promise<JobResult> {
+  const scope = await resumeIdentity("direct:" + tabId, plan.url, plan.filename);
+  const {blob, filename} = await verifiedDirectFile(plan, onProgress, signal, fetch, {
+    previous: getCheckpoint(scope), interrupted: checkpoint => keepCheckpoint(scope, checkpoint),
+  });
+  clearCheckpoint(scope);
   return {blobUrl: URL.createObjectURL(blob), filename, checksum: ""};
 }
 
 export async function verifiedDirectFile(
-  plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal, fetchFile: MediaFetch,
+  plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal, fetchFile: MediaFetch, resume?: RangeResume,
 ): Promise<{blob: Blob; filename: string}> {
   const connecting: RetryProgress = retry => onProgress(0, null, retryStage(retry, "connection"));
   try {
@@ -34,7 +39,7 @@ export async function verifiedDirectFile(
     const mime = DIRECT_MEDIA_TYPES[container];
 
     const blob = metadata
-      ? await downloadRanges(probe.url, metadata, mime, onProgress, signal, fetchFile)
+      ? await downloadRanges(probe.url, metadata, mime, onProgress, signal, fetchFile, resume)
       : await downloadFull(plan.url, container, onProgress, signal, connecting, fetchFile);
     if (size !== null && size !== blob.size) throw new RangeRecoveryError("The file size changed after the probe");
 
@@ -53,16 +58,20 @@ export async function verifiedDirectFile(
   }
 }
 
-async function downloadRanges(url: string, metadata: RangeMetadata, mime: string, onProgress: ProgressFn, signal: AbortSignal, fetchFile: MediaFetch): Promise<Blob> {
+async function downloadRanges(url: string, metadata: RangeMetadata, mime: string, onProgress: ProgressFn, signal: AbortSignal, fetchFile: MediaFetch, resume?: RangeResume): Promise<Blob> {
+  const count = Math.ceil(metadata.total / CHUNK_BYTES);
+  const representation = resume && metadata.validatorHeader === "etag" && metadata.total <= MAX_RESUME_BYTES
+    ? await resumeIdentity(String(metadata.total), url, metadata.validator) : undefined;
+  const previous = resume?.previous;
+  const parts: (Blob | undefined)[] = representation && previous?.representation === representation
+    && previous.parts.length === count ? previous.parts.slice() : new Array(count);
   const controller = new AbortController();
   const abort = () => controller.abort(signal.reason);
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
   const rangeSignal = controller.signal;
-  const count = Math.ceil(metadata.total / CHUNK_BYTES);
-  const parts: BlobPart[] = new Array(count);
   let next = 0;
-  let received = 0;
+  let received = parts.reduce((total, part) => total + (part?.size ?? 0), 0);
   let lastUpdate = 0;
   const partial = new Map<number, number>();
   function bytesInHand(): number {
@@ -70,12 +79,13 @@ async function downloadRanges(url: string, metadata: RangeMetadata, mime: string
     for (const count of partial.values()) bytes += count;
     return bytes;
   }
-  onProgress(0, metadata.total, "downloading");
+  onProgress(received, metadata.total, "downloading");
 
   async function worker(): Promise<void> {
     while (next < count) {
       rangeSignal.throwIfAborted();
       const index = next++;
+      if (parts[index]) continue;
       const start = index * CHUNK_BYTES;
       const end = Math.min(start + CHUNK_BYTES, metadata.total) - 1;
       const bytes = await fetchMediaRange(url, start, end, metadata, rangeSignal, retry => {
@@ -101,11 +111,16 @@ async function downloadRanges(url: string, metadata: RangeMetadata, mime: string
   } catch (error) {
     controller.abort();
     await Promise.allSettled(workers);
+    if (resume && representation && received > 0 && !signal.aborted &&
+      (error instanceof RangeRecoveryError && error.retryable || error instanceof TypeError ||
+        error instanceof DOMException && error.name === "TimeoutError")) {
+      resume.interrupted({representation, parts});
+    }
     throw error;
   } finally {
     signal.removeEventListener("abort", abort);
   }
-  const blob = new Blob(parts, { type: mime });
+  const blob = new Blob(parts.filter((part): part is Blob => part !== undefined), { type: mime });
   if (blob.size !== metadata.total) throw new RangeRecoveryError("Completed file has the wrong byte count");
   return blob;
 }
