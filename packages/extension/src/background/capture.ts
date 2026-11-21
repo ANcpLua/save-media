@@ -90,7 +90,7 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
           const probe = await recoverRequest(async signal => {
             const r = await deps.fetchFn(url, { credentials: "include", cache: "no-store", signal });
             try {
-              checkResponseStatus(r);
+              checkResponseStatus(r, url);
               const h = responseHeaders(r);
               return { headers: h, text: await r.text() };
             } finally {
@@ -207,7 +207,7 @@ async function probeDeclaredBytes(deps: CaptureDeps, url: string, signal: AbortS
       headers: { range: "bytes=0-0" },
     });
     try { await r.body?.cancel(); } catch { /* stream already closed */ }
-    checkResponseStatus(r);
+    checkResponseStatus(r, url);
     const headers: Record<string, string> = {};
     r.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
     return declaredTotalBytes(headers);

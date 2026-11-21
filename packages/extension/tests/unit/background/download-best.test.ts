@@ -163,17 +163,18 @@ describe("download-best command helpers", () => {
   });
 
   it.each([
-    ["https://two.example/clip.mov?file=31", true],
-    ["https://one.example/clip.mov?file=31", true],
-    ["https://two.example/clip.mov?file=32", false],
-    ["http://two.example/clip.mov?file=31", false],
-  ] as const)("checks a replacement file link after a TLS rejection: %s", async (replacement, accepted) => {
+    ["one.example", "https://two.example/clip.mov?file=31", true, true],
+    ["two.example", "https://one.example/clip.mov?file=31", true, true],
+    ["one.example", "https://one.example/clip.mov?file=31", false, true],
+    ["one.example", "https://two.example/clip.mov?file=32", false, false],
+    ["one.example", "http://two.example/clip.mov?file=31", false, false],
+  ] as const)("uses site-issued replacements after %s rejects TLS: %s", async (failedHost, replacement, automatic, accepted) => {
     const pageUrl = "https://example.com/watch";
     const filename = "Clip.mov";
     const sourceUrl = "https://one.example/clip.mov?file=31";
     const generateDownload = vi.fn<NonNullable<DownloadBestDeps["generateDownload"]>>()
       .mockResolvedValueOnce({ url: sourceUrl, filenameHint: filename })
-      .mockResolvedValueOnce({ url: replacement, filenameHint: filename });
+      .mockResolvedValue({ url: replacement, filenameHint: filename });
     const d = deps({ generateDownload, rememberFileSaveProblem: vi.fn() });
     vi.mocked(d.tabs.sendMessage).mockImplementation((_id, _msg, cb) => cb({
       pageUrl, urls: [], media: [], fileDownload: { filename },
@@ -181,11 +182,17 @@ describe("download-best command helpers", () => {
     vi.mocked(d.router.startBestDownload).mockResolvedValueOnce({ kind: "no-media" })
       .mockResolvedValueOnce({ kind: "failed", duringDiscovery: true, streamId: directDescriptor().id,
         error: { code: "tls_certificate_rejected", severity: "terminal", phase: "direct",
-          browserDiagnostic: { host: "one.example", code: "net::ERR_CERT_AUTHORITY_INVALID" } } });
+          browserDiagnostic: { host: failedHost, code: "net::ERR_CERT_AUTHORITY_INVALID" } } });
 
     await downloadBestForTab(d, 42, pageUrl);
 
-    expect(generateDownload).toHaveBeenCalledTimes(1);
+    expect(generateDownload).toHaveBeenCalledTimes(2);
+    if (automatic) {
+      expect(d.handleCapture).toHaveBeenCalledTimes(2);
+      expect(d.showHotkeyFeedback).toHaveBeenLastCalledWith(42, "started", "Saving best quality");
+      expect(vi.mocked(d.rememberFileSaveProblem!).mock.calls.every(call => call[2] === null)).toBe(true);
+      return;
+    }
     const warning = vi.mocked(d.rememberFileSaveProblem!).mock.lastCall?.[2];
     expect(warning?.code).toBe("tls_certificate_rejected");
     const scansBeforeRetry = vi.mocked(d.tabs.sendMessage).mock.calls.length;
@@ -193,7 +200,7 @@ describe("download-best command helpers", () => {
       { fileSaveProblem: warning!, fileDownload: { filename } });
     expect(d.tabs.sendMessage).toHaveBeenCalledTimes(scansBeforeRetry);
 
-    expect(generateDownload).toHaveBeenCalledTimes(2);
+    expect(generateDownload).toHaveBeenCalledTimes(3);
     expect(d.handleCapture).toHaveBeenCalledTimes(accepted ? 2 : 1);
     if (accepted) {
       expect(d.handleCapture).toHaveBeenLastCalledWith(42, expect.objectContaining({

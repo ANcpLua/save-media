@@ -33,9 +33,15 @@ Once the transfer starts, another click or shortcut on that file joins the
 active job even if the site rotates its URL. After completion the user can
 explicitly save another copy.
 
-If Chrome reports a certificate rejection while probing a generated link,
-the file row offers **Cancel** and **Download anyway**. Confirmation runs the
-site's Download control again. The result can point to the same server.
+If Chrome rejects a certificate while probing a generated link, SaveMedia
+automatically runs the site's Download control in the background. It tries
+a matching HTTPS link to a different host, or follows an entry that
+previously redirected to the rejected host so the site can choose a new
+destination. A repeated failed route, an unrelated file, or three link
+renewals ends automatic recovery. A signed link returning HTTP 403 can also
+be renewed. Explicit login, payment and HTTP 451 responses end the attempt.
+If automatic recovery ends with a certificate rejection, the file row offers
+**Cancel** and **Download anyway**. Confirmation starts another checked attempt.
 The extension reads the current file and warning together from the top frame
 so confirmation can skip scanning players and capturing thumbnails. The tab, page and
 filename must still match. A digest of the file path and stable query

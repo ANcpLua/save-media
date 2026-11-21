@@ -47,8 +47,13 @@ export class RangeRecoveryError extends Error {
   }
 }
 
+class InsecureMediaRedirect extends RangeRecoveryError {}
+
 /** Translate transport failures without exposing signed URLs or raw fetch errors. */
 export function rangeFailure(error: unknown, url: string, phase: NetworkPhase): JobError {
+  if (error instanceof InsecureMediaRedirect) {
+    return { code: "insecure_media_redirect", severity: "terminal" };
+  }
   if (error instanceof BrowserFetchError && isCertificateError(error.diagnostic.code)) {
     return { code: "tls_certificate_rejected", severity: "terminal", phase, browserDiagnostic: error.diagnostic };
   }
@@ -95,7 +100,10 @@ export function responseHeaders(response: ProbeResponse): Record<string, string>
   return headers;
 }
 
-export function checkResponseStatus(response: ProbeResponse): void {
+export function checkResponseStatus(response: ProbeResponse, requestedUrl: string): void {
+  if (requestedUrl.startsWith("https:") && response.url?.startsWith("http:")) {
+    throw new InsecureMediaRedirect("The HTTPS file link redirected to HTTP");
+  }
   if (response.status >= 200 && response.status < 300) return;
   throw new RangeRecoveryError(`HTTP ${response.status}`, response.status === 408 || response.status === 429 || response.status >= 500, response.status);
 }
@@ -204,7 +212,7 @@ export async function probeMedia(
   return recoverRequest(async attemptSignal => {
     const response = await fetchFn(url, { credentials: "include", cache: "no-store", headers: { range: "bytes=0-4095" }, signal: attemptSignal });
     try {
-      checkResponseStatus(response);
+      checkResponseStatus(response, url);
       const headers = responseHeaders(response);
       if (response.status === 206) {
         const range = parseContentRange(headers["content-range"]);
@@ -233,7 +241,7 @@ export async function fetchMediaRange(
       headers: { range: `bytes=${start}-${end}`, "if-range": metadata.validator },
     });
     try {
-      checkResponseStatus(response);
+      checkResponseStatus(response, url);
       if (response.status !== 206) throw new RangeRecoveryError("Server ignored Range or the file changed");
       const headers = responseHeaders(response);
       validateRange(headers, start, end, metadata.total);

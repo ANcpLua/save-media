@@ -189,6 +189,12 @@ export function userMessage(err: JobError): UserMessage {
 
     case "tls_certificate_rejected":
       return diagnosedNetworkFailure(err.browserDiagnostic);
+    case "insecure_media_redirect":
+      return {
+        title: "The file link redirected to HTTP",
+        body: "The download started over HTTPS, but the final response used an unencrypted connection. SaveMedia stopped before saving the file.",
+        action: null,
+      };
     case "network_unreachable":
       if (err.browserDiagnostic) return diagnosedNetworkFailure(err.browserDiagnostic);
       return {

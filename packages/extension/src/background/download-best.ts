@@ -143,6 +143,12 @@ export async function downloadBestForTab(
   let outcome = offer
     ? await deps.router.startBestDownload(tabId, { pageUrl: discovery.pageUrl, filename: offer.filename })
     : await deps.router.startBestDownload(tabId);
+  if (offer && outcome.kind === "failed" && outcome.error.code === "access_denied" && outcome.error.httpStatus !== 403) {
+    const problem = describeFileSaveProblem(offer.filename, "file connection", outcome.error);
+    await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, problem);
+    deps.showHotkeyFeedback(tabId, "failed", problem.title);
+    return;
+  }
   if (offer && (outcome.kind === "no-media" || (outcome.kind === "failed" && outcome.duringDiscovery))) {
     if (outcome.kind === "failed") reportFileRetry(deps, tabId, discovery.pageUrl, fromPopup);
     else if (!fromPopup) deps.showHotkeyFeedback(tabId, "preparing", "Checking the site’s download link");
@@ -211,7 +217,7 @@ export async function handleFileConnectionChoice(
   if ("problem" in result) {
     const problem = result.problem.code === "tls_certificate_rejected"
       ? { ...result.problem, code: "secure_retry_failed", title: "File wasn’t saved",
-        body: "The browser couldn’t verify the connection to the file server on the second attempt." }
+        body: "The browser still couldn’t verify the connection to the file server." }
       : result.problem;
     await deps.rememberFileSaveProblem?.(tabId, pageUrl, problem);
     deps.showHotkeyFeedback(tabId, "failed", problem.title);
@@ -249,11 +255,16 @@ async function resolveAndStartFileDownload(
   let source = await deps.generateDownload?.(tabId, pageUrl, offer);
   if (!source) return { problem: describeFileSaveProblem(offer.filename, "download link") };
 
-  for (let attempt = 0; ; attempt++) {
-    if (expectedFingerprint && (new URL(source.url).protocol !== "https:" || await fileFingerprint(source.url) !== expectedFingerprint)) {
-      return { problem: { filename: offer.filename, stage: "download link", code: "https_link_unavailable",
-        title: "File wasn’t saved", body: "The site didn’t supply a matching HTTPS link for this file." } };
-    }
+  const fingerprint = await fileFingerprint(source.url);
+  if (expectedFingerprint && (new URL(source.url).protocol !== "https:" || fingerprint !== expectedFingerprint)) {
+    return { problem: { filename: offer.filename, stage: "download link", code: "https_link_unavailable",
+      title: "File wasn’t saved", body: "The site didn’t supply a matching HTTPS link for this file." } };
+  }
+  const rejectedHosts = new Set<string>();
+  const failedRedirects = new Set<string>();
+  const triedUrls = new Set<string>();
+  for (let renewals = 0; ; renewals++) {
+    triedUrls.add(source.url);
     await probeSource(deps, tabId, pageUrl, source, offer.linkedPage);
     if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return null;
     // A passive scan may have changed scope while the probe was in flight.
@@ -264,27 +275,39 @@ async function resolveAndStartFileDownload(
 
     const error = outcome.kind === "failed" ? outcome.error : undefined;
     const stage = outcome.kind === "failed" && !outcome.duringDiscovery ? "start download" : "file connection";
-    const problem = describeFileSaveProblem(offer.filename, stage, error);
-    if (error?.code === "tls_certificate_rejected" && stage === "file connection") {
-      return { problem: { ...problem, resourceFingerprint: await fileFingerprint(source.url) } };
-    }
-    if (attempt > 0) return { problem };
-    const expiredResource = error?.code === "access_denied" && error.httpStatus === 403
-      ? renewableResource(source.url) : null;
-    if (!expiredResource) return { problem };
+    const certificate = error?.code === "tls_certificate_rejected" && stage === "file connection" ? error.browserDiagnostic : null;
+    const failure = describeFileSaveProblem(offer.filename, stage, error);
+    const problem = certificate ? { ...failure, resourceFingerprint: fingerprint } : failure;
+    const renewableLink = stage === "file connection" && error?.code === "access_denied" && error.httpStatus === 403
+      && renewableResource(source.url) !== null;
+    if ((!certificate && !renewableLink) || renewals >= MAX_LINK_RENEWALS) return { problem };
 
-    // Only the original file's Download control can supply a replacement.
+    const entry = new URL(source.url);
+    if (certificate) {
+      rejectedHosts.add(certificate.host);
+      // A healthy entry can redirect to another host on its next request.
+      // Stop if that entry leads back to the same rejected host twice.
+      const route = JSON.stringify([entry.origin, certificate.host]);
+      if (failedRedirects.has(route)) return { problem };
+      failedRedirects.add(route);
+    }
     reportFileRetry(deps, tabId, pageUrl, fromPopup);
     const refreshed = await deps.generateDownload?.(tabId, pageUrl, offer);
-    if (!refreshed || refreshed.url === source.url) return { problem };
-    if (renewableResource(refreshed.url) !== expiredResource) return { problem };
+    if (!refreshed || await fileFingerprint(refreshed.url) !== fingerprint) return { problem };
+    const next = new URL(refreshed.url);
+    if (next.protocol !== "https:" && (certificate || next.origin !== entry.origin)) return { problem };
+    if (rejectedHosts.has(next.host) || (!certificate && triedUrls.has(refreshed.url))) return { problem };
     source = refreshed;
   }
 }
 
+// Some sites issue a distinct token on every request, even while the file is unavailable.
+const MAX_LINK_RENEWALS = 3;
+
 // Keep the file identity across popup closure without storing a signed URL.
 async function fileFingerprint(url: string): Promise<string> {
   const resource = new URL(renewableResource(url) ?? url);
+  resource.searchParams.sort();
   const bytes = new TextEncoder().encode(resource.pathname + resource.search);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");

@@ -50,6 +50,7 @@ export type JobError =
 
   // Browser security
   | { code: "tls_certificate_rejected"; severity: "terminal"; phase: "manifest" | "segment" | "direct"; browserDiagnostic: BrowserRequestDiagnostic }
+  | { code: "insecure_media_redirect"; severity: "terminal" }
   | { code: "cors_blocked";               severity: "terminal";    url: string; blockedHeader: "Access-Control-Allow-Origin" | "Access-Control-Allow-Headers" | "credentials" }
   | { code: "mixed_content_blocked";      severity: "terminal";    pageProtocol: "https"; resourceProtocol: "http"; url: string }
 

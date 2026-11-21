@@ -87,7 +87,7 @@ function downloadFull(url: string, container: OutputContainer, onProgress: Progr
     const response = await fetch(url, { credentials: "include", cache: "no-store", signal: attemptSignal });
     const reader = response.body?.getReader();
     try {
-      checkResponseStatus(response);
+      checkResponseStatus(response, url);
       const headers = responseHeaders(response);
       if (!reader || response.status !== 200 || headers["content-range"]) {
         throw new RangeRecoveryError("The server did not return a complete file");
