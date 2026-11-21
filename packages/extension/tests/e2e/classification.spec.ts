@@ -1,8 +1,8 @@
 import { test, expect, chromium, type BrowserContext, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve, dirname } from "node:path";
+import { basename, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +64,13 @@ async function launchExtensionRuntime(options: ExtensionLaunchOptions = {}): Pro
   const userDataDir = mkdtempSync(resolve(tmpdir(), "savemedia-chrome-profile-"));
   let context: BrowserContext | undefined;
   try {
+    if (options.downloadsPath) {
+      const profile = resolve(userDataDir, "Default");
+      mkdirSync(profile);
+      writeFileSync(resolve(profile, "Preferences"), JSON.stringify({
+        download: { default_directory: options.downloadsPath, prompt_for_download: false },
+      }));
+    }
     context = await chromium.launchPersistentContext(userDataDir, {
       headless: false,
       baseURL: fixtureBaseURL,
@@ -456,6 +463,78 @@ test.describe("extension classifies real fixture pages", () => {
       await page.close();
     }
   });
+
+  async function openPopupFor(page: Page): Promise<Page> {
+    const tabId = await probe!.evaluate(async url =>
+      (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, page.url());
+    expect(tabId).toBeDefined();
+    const popup = await context!.newPage();
+    await popup.goto(`${extensionPageUrl(runtime!)}?tabId=${tabId}`);
+    return popup;
+  }
+
+  test("saves two different original MOV files back to back through the popup and Alt+S", async ({ request }) => {
+    await clearDownloadHistory();
+    const page = await context!.newPage();
+    const cdp = await context!.newCDPSession(page);
+    // Keep Chromium's real output names instead of Playwright's usual UUIDs.
+    await cdp.send("Browser.setDownloadBehavior", { behavior: "default" });
+    let popup: Page | undefined;
+    try {
+      for (const [id, name, fixture] of [
+        ["31", "Test pattern 31.mov", "test-pattern.mov"],
+        ["32", "Färbige Balken 32.mov", "color-bars.mov"],
+      ]) {
+        await page.goto(`/page/file-${id}.html`);
+        popup = await openPopupFor(page);
+        await expect(popup.getByText(name!, { exact: true })).toBeVisible();
+        await expect(popup.getByRole("button", { name: "Download", exact: true })).toHaveCount(1);
+        expect((await request.post(`/file/${id}`)).status()).toBe(204);
+        if (id === "31") {
+          await popup.getByRole("button", { name: "Download", exact: true }).click();
+          await expect(popup.getByTestId("job-complete")).toBeVisible();
+        } else {
+          await popup.close();
+          popup = undefined;
+          await page.bringToFront();
+          await page.keyboard.press("Alt+KeyS");
+          await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText(`Saved${name}`);
+        }
+
+        const path = await waitForCompletedDownload(page, name!);
+        expect(basename(path)).toBe(name);
+        expect(readFileSync(path)).toEqual(readFileSync(resolve(here, "media-fixtures/direct", fixture!)));
+        expect(probeStreams(path)).toContainEqual({ codec_name: "h264", codec_type: "video" });
+        await popup?.close();
+        popup = undefined;
+      }
+      expect(await probe!.evaluate(() => chrome.downloads.search({ state: "complete" }))).toHaveLength(2);
+    } finally {
+      await popup?.close();
+      await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: downloadDir! });
+      await page.close();
+    }
+  });
+
+  for (const [scenario, response] of [["file-warning", "page"], ["file-data", "data"]] as const) {
+    test(`reports ${response === "page" ? "a warning page" : "JSON"} returned during a MOV save and writes no file`, async () => {
+      await clearDownloadHistory();
+      const page = await context!.newPage();
+      let popup: Page | undefined;
+      try {
+        await page.goto(`/page/${scenario}.html`);
+        popup = await openPopupFor(page);
+        await popup.getByRole("button", { name: "Download", exact: true }).click();
+        await expect(popup.getByTestId("job-error")).toContainText(`returned ${response === "page" ? "a page" : "data"} instead of a video`);
+        await expect(popup.getByRole("button", { name: "Retry download" })).toBeVisible();
+        await expect(popup.getByTestId("job-complete")).toHaveCount(0);
+        expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
+      } finally {
+        await popup?.close();
+        await page.close();
+      }
+    });
+  }
 
   test("download pipeline saves direct MP4 as a playable MP4", async () => {
     await clearDownloadHistory();

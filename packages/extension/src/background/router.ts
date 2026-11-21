@@ -5,7 +5,6 @@ import {
   type JobError,
   type JobPlan,
   type DispatchRefusal,
-  type OutputContainer,
   type Variant,
 } from "@savemedia/core";
 import type {
@@ -17,11 +16,9 @@ import type {
   JobStatus,
 } from "../types/messages";
 import type { Logger } from "../util/logger";
-import { suggestFilename } from "../util/filename";
-import { AlreadySavedError } from "./saved-media";
+import { suggestFilename, timestampedPath } from "../util/filename";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
 import { hasDownloadableDemuxedPair } from "../util/demuxed-pair";
-import { canRecoverWithRanges } from "../engine/net/range-recovery";
 
 export { dispatchRefusalToError } from "../util/dispatch-refusal";
 
@@ -30,7 +27,9 @@ type HlsDescriptor = StreamDescriptor & {
 };
 
 function saveFailure(err: unknown, filename: string): JobError {
-  if (err instanceof AlreadySavedError) return { code: "already_saved", severity: "terminal", existing: err.existing };
+  if (err instanceof Error && err.message === "USER_CANCELED") {
+    return { code: "user_cancelled", severity: "terminal", bytesDiscarded: 0 };
+  }
   return { code: "browser_download_failed", severity: "terminal", reason: err instanceof Error ? err.message : String(err), filename };
 }
 
@@ -49,6 +48,7 @@ export interface RouterDeps {
     download: (opts: { url: string; filename: string; conflictAction?: string }) => Promise<number>;
   };
   readonly ensureEngineHost: () => Promise<void>;
+  readonly releaseBlob?: (url: string) => void;
   readonly logger?: Logger;
 }
 
@@ -96,35 +96,22 @@ export function createRouter(deps: RouterDeps): Router {
       : d.source.kind === "hls-manifest" || d.source.kind === "dash-manifest"
         ? d.source.manifestUrl
         : d.source.elementSrc;
-    return `${d.source.kind}:${d.protocol}:${src}`;
-  }
-
-  /**
-   * Tube sites often serve a video as N sequential `.mp4` fragments at
-   * URLs that differ only by a numeric component (segment-1.mp4,
-   * segment-2.mp4, ...). Without a master playlist we can't stitch them,
-   * but we MUST stop surfacing each fragment as a separate "download
-   * this video" entry — otherwise the popup fills with junk and the
-   * user gets N partial files when they click around.
-   *
-   * Heuristic: collapse any contiguous run of 2+ digits in the URL to
-   * `#` and use that as the segment-family key. The first URL in a
-   * family is kept; siblings are suppressed.
-   */
-  function segmentFamilyKey(d: StreamDescriptor): string | null {
-    if (d.source.kind !== "direct-url" || d.mediaGroup) return null;
-    const url = d.source.url;
-    const normalised = url.replace(/\d{2,}/g, "#");
-    if (normalised === url) return null; // no numeric component → not segment-shaped
-    return `direct-family:${d.protocol}:${normalised}`;
+    return `${d.source.kind}:${d.protocol}:${d.drm?.reason ?? ""}:${normalizedUrl(src)}`;
   }
 
   function normalizedUrl(url: string): string {
     try {
-      return new URL(url).href;
+      const parsed = new URL(url);
+      parsed.hash = "";
+      return parsed.href;
     } catch {
       return url;
     }
+  }
+
+  function directAliases(d: StreamDescriptor): readonly string[] {
+    if (d.source.kind !== "direct-url" || !d.capabilities.directDownload) return [];
+    return [d.source.url, ...(d.source.finalUrl ? [d.source.finalUrl] : [])].map(normalizedUrl);
   }
 
   function directUrl(d: StreamDescriptor): string | null {
@@ -214,26 +201,31 @@ export function createRouter(deps: RouterDeps): Router {
     if (isHlsCoveredDirectDescriptor(state, descriptor)) return false;
 
     const key = descriptorKey(descriptor);
-    const existing = state.descriptors.get(key);
-    if (existing) {
-      // A passive capture may arrive before the richer page scan. Upgrade it
-      // in place so jobs, popup selection and status keep their stable ID.
-      if (!descriptor.mediaGroup || (existing.mediaGroup === descriptor.mediaGroup
-        && existing.variants[0]?.height === descriptor.variants[0]?.height)) return false;
-      const upgraded = { ...descriptor, id: existing.id };
-      for (const [indexedKey, value] of state.descriptors) {
-        if (value.id === existing.id) state.descriptors.delete(indexedKey);
-      }
-      state.descriptors.set(key, upgraded);
+    const aliases = directAliases(descriptor);
+    const matches = aliases.length > 0
+      ? [...state.descriptors.values()].filter(d => directAliases(d).some(url => aliases.includes(url))) : [];
+    const existing = state.descriptors.get(key) ?? matches[0];
+    if (!existing) {
+      state.descriptors.set(key, descriptor);
       return true;
     }
-    const family = segmentFamilyKey(descriptor);
-    if (family && state.descriptors.has(family)) {
-      // A sibling segment from this URL family is already on file; drop.
-      return false;
-    }
-    state.descriptors.set(key, descriptor);
-    if (family) state.descriptors.set(family, descriptor);
+
+    const oldKey = descriptorKey(existing);
+    const oldFinal = existing.source.kind === "direct-url" ? existing.source.finalUrl : undefined;
+    const newFinal = descriptor.source.kind === "direct-url" ? descriptor.source.finalUrl : undefined;
+    // Keep a known redirect entry over its transient destination. Refresh
+    // the destination for the same entry and upgrade passive captures with
+    // page-declared quality without losing the row ID or job status.
+    if (oldKey !== key && oldFinal && !newFinal) return false;
+    const upgradedQuality = descriptor.mediaGroup && (existing.mediaGroup !== descriptor.mediaGroup
+      || existing.variants[0]?.height !== descriptor.variants[0]?.height);
+    const refreshedRedirect = newFinal && oldFinal !== newFinal && descriptor.detectedAt >= existing.detectedAt;
+    const gainedFilename = descriptor.title && !existing.title;
+    if (!upgradedQuality && !refreshedRedirect && !gainedFilename && !(oldKey !== key && !oldFinal && newFinal)) return false;
+    for (const match of matches) state.descriptors.delete(descriptorKey(match));
+    state.descriptors.delete(oldKey);
+    state.descriptors.set(key, { ...descriptor, id: existing.id, title: descriptor.title ?? existing.title, ...(!descriptor.mediaGroup && existing.mediaGroup
+      ? { mediaGroup: existing.mediaGroup, variants: existing.variants } : {}) });
     return true;
   }
 
@@ -250,7 +242,7 @@ export function createRouter(deps: RouterDeps): Router {
     const source = descriptor.source;
     const url = source.kind === "direct-url" ? source.url
       : source.kind === "media-element" ? source.elementSrc : source.manifestUrl;
-    if (scope.urls.has(normalizedUrl(url))) return true;
+    if (scope.urls.has(normalizedUrl(url)) || directAliases(descriptor).some(alias => scope.urls.has(alias))) return true;
     return isHlsMasterPlaylist(descriptor) && [...hlsVariantPlaylistUrls(descriptor)]
       .some(variantUrl => scope.urls.has(normalizedUrl(variantUrl)));
   }
@@ -258,15 +250,7 @@ export function createRouter(deps: RouterDeps): Router {
   function listDescriptors(tabId: number): readonly StreamDescriptor[] {
     const state = tabs.get(tabId);
     if (!state) return [];
-    const all = Array.from(state.descriptors.values());
-    // De-dupe identity in case the same descriptor was indexed under both
-    // its primary key AND a segment-family key.
-    const seen = new Set<string>();
-    return all.filter(d => {
-      if (seen.has(d.id) || !inDiscoveryScope(state, d)) return false;
-      seen.add(d.id);
-      return true;
-    });
+    return [...state.descriptors.values()].filter(d => inDiscoveryScope(state, d));
   }
 
   function findDescriptor(id: StreamDescriptor["id"]): StreamDescriptor | null {
@@ -321,12 +305,6 @@ export function createRouter(deps: RouterDeps): Router {
     return sorted[0] ?? null;
   }
 
-  function outputContainerFor(d: StreamDescriptor): OutputContainer {
-    if (d.container === "webm") return "webm";
-    if (d.container === "mkv") return "mkv";
-    return "mp4";
-  }
-
   function bestDescriptorScore(d: StreamDescriptor): [number, number, number, number] {
     const variant = bestVariant(d);
     const protocolRank = d.protocol === "hls"
@@ -356,7 +334,7 @@ export function createRouter(deps: RouterDeps): Router {
     const variant = bestVariant(d);
     return {
       outputMode: "Original",
-      filename: suggestFilename(d, outputContainerFor(d)),
+      filename: suggestFilename(d),
       variantId: variant?.id ?? null,
       audioRenditionId: variant?.audioRenditionId ?? null,
     };
@@ -440,21 +418,6 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
 
-    const rangeRecovery = descriptor.source.kind === "direct-url"
-      && canRecoverWithRanges(descriptor.source.url, descriptor.source.headers);
-    if (plan.kind === "direct" && !rangeRecovery) {
-      try {
-        await deps.downloads.download({
-          url: plan.url,
-          filename: plan.filename,
-          conflictAction: "uniquify",
-        });
-        return null;
-      } catch (err) {
-        return saveFailure(err, plan.filename);
-      }
-    }
-
     jobs.set(id, { descriptor, choice, plan: plan.kind === "refuse" ? null : plan });
     statuses.set(id, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: "Starting" });
     try {
@@ -482,23 +445,27 @@ export function createRouter(deps: RouterDeps): Router {
       };
     }
     if (msg.type === "complete") {
-      jobs.delete(msg.streamId);
+      const job = jobs.get(msg.streamId);
+      const filename = job && job.plan?.kind !== "direct" ? timestampedPath(msg.filename) : msg.filename;
       try {
         await deps.downloads.download({
           url: msg.blobUrl,
-          filename: msg.filename,
+          filename,
           conflictAction: "uniquify",
         });
         statuses.set(msg.streamId, { phase: "complete" });
-        return { type: "job-complete", streamId: msg.streamId, path: msg.filename };
+        return { type: "job-complete", streamId: msg.streamId, path: filename };
       } catch (err) {
-        const error = saveFailure(err, msg.filename);
+        const error = saveFailure(err, filename);
         statuses.set(msg.streamId, { phase: "failed", error });
         return {
           type: "job-failed",
           streamId: msg.streamId,
           error,
         };
+      } finally {
+        jobs.delete(msg.streamId);
+        if (msg.blobUrl.startsWith("blob:")) deps.releaseBlob?.(msg.blobUrl);
       }
     }
     if (msg.type === "failed") {
@@ -525,9 +492,10 @@ export function createRouter(deps: RouterDeps): Router {
       return { ok: true };
     }
     if (msg.type === "cancel") {
-      jobs.delete(msg.streamId);
-      const engineMsg: BackgroundToEngineMessage = { type: "cancel-job", streamId: msg.streamId };
-      deps.runtime.sendMessage(engineMsg);
+      if (jobs.has(msg.streamId)) {
+        const engineMsg: BackgroundToEngineMessage = { type: "cancel-job", streamId: msg.streamId };
+        deps.runtime.sendMessage(engineMsg);
+      }
       return { ok: true };
     }
     return null;

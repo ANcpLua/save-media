@@ -27,6 +27,7 @@ export interface MediaQuality {
 
 export interface DiscoveredMedia {
   readonly url: string;
+  readonly filenameHint?: string;
   readonly quality?: MediaQuality;
 }
 
@@ -47,6 +48,7 @@ export interface PageCaptureMessage {
    * validator: update both.
    */
   readonly audioUrl?: string;
+  readonly filenameHint?: string;
   readonly quality?: MediaQuality;
   readonly pageUrl: string;
 }
@@ -147,7 +149,8 @@ export type PopupToBackgroundMessage =
 
 export type BackgroundToEngineMessage =
   | { readonly type: "start-job"; readonly streamId: StreamDescriptor["id"]; readonly descriptor: StreamDescriptor; readonly choice: UserChoice }
-  | { readonly type: "cancel-job"; readonly streamId: StreamDescriptor["id"] };
+  | { readonly type: "cancel-job"; readonly streamId: StreamDescriptor["id"] }
+  | { readonly type: "release-output"; readonly blobUrl: string };
 
 export type EngineToBackgroundMessage =
   | { readonly type: "progress"; readonly streamId: StreamDescriptor["id"]; readonly bytesWritten: number; readonly bytesTotal: number | null; readonly phase: string }
@@ -176,6 +179,7 @@ const pageCaptureSchema = z.object({
   elementTag: z.enum(["video", "audio"]).optional(),
   elementSrc: z.string().optional(),
   audioUrl: z.string().optional(),
+  filenameHint: z.string().max(240).optional(),
   quality: z.object({ groupId: z.string().min(1).max(8192), height: z.number().int().min(1).max(16384).optional() }).optional(),
 });
 
@@ -231,6 +235,7 @@ const popupToBackgroundSchema = z.discriminatedUnion("type", [
 const backgroundToEngineSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("start-job"), streamId, descriptor: record, choice: userChoiceSchema }),
   z.object({ type: z.literal("cancel-job"), streamId }),
+  z.object({ type: z.literal("release-output"), blobUrl: z.string().startsWith("blob:") }),
 ]);
 
 const engineToBackgroundSchema = z.discriminatedUnion("type", [

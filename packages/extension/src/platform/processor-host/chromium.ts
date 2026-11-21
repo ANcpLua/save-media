@@ -32,7 +32,7 @@ export async function ensureEngineHost(): Promise<void> {
   creating = chrome.offscreen.createDocument({
     url: OFFSCREEN_DOCUMENT_PATH,
     reasons: ["BLOBS" as chrome.offscreen.Reason],
-    justification: "Runs browser-side HLS download jobs and creates Blob URLs.",
+    justification: "Verifies browser-side media downloads and creates Blob URLs.",
   });
   try {
     await creating;

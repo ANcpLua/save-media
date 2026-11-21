@@ -1,50 +1,65 @@
-# Direct-file range recovery
+# Direct file discovery and recovery
 
-The browser implementation adapts `internal/rescue/downloader.go` and
-`internal/rescue/validate.go` from the local Video Rescue checkout at commit
-`09e855aa8172e7b83488e134a562f40bd197879d`. Its MIT license is bundled in
-`packages/extension/public/licenses/video-rescue-MIT.txt`.
+SaveMedia looks at the page's media elements and ordinary browser requests.
+A successful media response can reveal a file even when its URL has no
+extension. When the browser follows a redirect to the file, SaveMedia keeps
+the entry URL and remembers the observed destination for deduplication. A
+save starts from the entry again so the site's own redirect can choose the
+current destination. Query strings and numeric paths can identify different
+files. Only explicit redirect evidence joins distinct URLs. The extension
+uses the browser's normal access and network settings.
 
-Discovery requests the first 4 KiB of an observed media URL, including URLs
-without a file extension. It retries network errors,
-timeouts, truncated responses, HTTP 408, 429 and 5xx responses up to three
-attempts. It rejects unsuccessful HTTP responses before classification and
-cancels the response body after a bounded read if the server ignores Range.
-Manifest requests still read the complete manifest. Extensionless manifests
-are recognized by MIME type or their prefix, then fetched without Range.
+Discovery reads at most the first 4 KiB of a candidate and looks for a
+supported container or playlist. Successful status codes, filenames, and
+MIME types alone can also come from warning pages and status responses.
+A direct-file row uses the filename from the verified response's
+`Content-Disposition`, a file heading on a single-video page, or the media path. The popup shows the
+reason when discovery fails and **Check page again** probes the current
+sources. Navigation cancels probes from the previous page.
 
-Failed discovery now appears in the popup with a classified server, access,
-or network error. The popup shows the media host without exposing signed query
-parameters. "Check page again" reads the current page's media elements and
-supported links, including extensionless element sources. Successful probes
-clear their previous errors; an unsuccessful rescan preserves the error.
-Concurrent duplicate probes share one request, and navigation aborts probes
-from the previous page.
+Both the popup and Alt+S use the same download job. A range response with a
+strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
+chunks. Each chunk uses `If-Range` and checks its offsets, byte count, and
+validator. Network errors and truncated chunks get bounded retries.
+A server that serves a full response can instead be read as one stream.
+Both paths enforce the browser's 2 GiB output limit, including when the server
+omits a length. Cancellation discards the in-memory result.
 
-For HTTPS files below the existing 2 GiB browser output limit, a valid range
-response plus a strong ETag or Last-Modified validator selects the recovery
-engine. Other direct files retain the browser's normal download path.
+MP4 and QuickTime verification walks the top-level boxes and requires movie
+metadata and media data. Modern QuickTime uses the `qt  ` file type. Legacy
+QuickTime can use the same atom structure without a file-type box. WebM and
+Matroska checks recognize the EBML header. These checks establish container
+structure and check available lengths. They do not decode every frame.
+See [Apple's QuickTime movie file specification](https://developer.apple.com/documentation/quicktime-file-format/quicktime_movie_files).
 
-The engine probes again, then downloads 4 MiB chunks with four concurrent
-workers. Each chunk carries `If-Range`, checks its exact Content-Range and byte
-count, and gets up to twelve attempts with a capped linear backoff. Changed
-validators, inconsistent ranges, encoded ranges, and ignored range requests
-stop the job. Cancellation and terminal failures abort and join all workers.
-Progress counts accepted bytes once, and chunks are assembled in file order.
-The popup displays retry attempt counts. Engine progress and outcomes are
-retained in background memory when the popup closes and are restored when it
-reopens. This is not download persistence across a background-worker or
-browser restart; the extension does not keep media history on disk.
+Only verified bytes reach the browser's download manager. SaveMedia waits
+for the browser to report completion before showing **Saved** and releases
+the temporary Blob URL after success or failure. Direct saves keep the
+original filename and use the browser's normal conflict handling. Different
+movies can have the same duration and similar thumbnail frames, so the
+extension leaves existing downloads on disk.
 
-Only a complete byte count and successful container check produce a Blob URL.
-MP4 checks walk top-level box boundaries and require the file-type, movie, and
-media boxes. WebM and Matroska checks identify the EBML header. These are
-structural checks, not full decoding or proof that every frame is playable.
-The browser adaptation does not perform native FFmpeg validation, calculate a
-whole-file checksum, or reuse files from Chrome's download directory.
+## Verify locally
 
-Tests use generated local media and a local HTTPS server. They cover transient
-probe failures, truncated chunks, out-of-order completion, file changes,
-authorization failures, cancellation, size limits and exact reconstructed
-bytes. Persistent server failures still fail after the retry budget; no URL,
-permission, signature, or protected-content handling is added.
+Install the workspace dependencies, Playwright Chromium, and `ffprobe`, then run:
+
+```sh
+bun install --frozen-lockfile
+(cd packages/extension && bunx playwright install chromium)
+bun run build
+bun run --filter @savemedia/extension test:e2e:chromium -g 'original MOV files|during a MOV save|range-only'
+```
+
+The Chromium test saves two distinct local movies in one tab using the popup
+and then Alt+S. It changes each media destination after discovery and checks
+the original filename, bytes, and video track on disk. The separate failure
+cases return HTML or a 69-byte JSON response during saving and check for
+visible feedback and an empty download list. The movies come from FFmpeg's
+test pattern and color bars with a generated tone. The color bars fixture's
+first atom is tagged as free space to exercise legacy QuickTime while
+keeping all offsets intact. The HTTPS fixture covers range recovery and retries.
+
+The range and top-level box checks were adapted from
+`internal/rescue/downloader.go` and `internal/rescue/validate.go` in Video
+Rescue at commit `09e855aa8172e7b83488e134a562f40bd197879d`. The MIT notice
+is bundled at `packages/extension/public/licenses/video-rescue-MIT.txt`.

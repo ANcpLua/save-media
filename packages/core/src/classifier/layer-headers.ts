@@ -22,9 +22,9 @@ function lowerHeaders(h: Record<string, string>): Record<string, string> {
 }
 
 function extractFilename(contentDisposition: string): string | null {
-  const star = /filename\*=([^']*)''([^;]+)/i.exec(contentDisposition);
+  const star = /(?:^|;)\s*filename\*\s*=\s*UTF-8'[^']*'([^;]+)/i.exec(contentDisposition);
   if (star) {
-    try { return decodeURIComponent(star[2]!); } catch { /* fall through */ }
+    try { return decodeURIComponent(star[1]!.trim()); } catch { /* fall through */ }
   }
   const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(contentDisposition);
   if (plain) return (plain[1] ?? plain[2] ?? "").trim();

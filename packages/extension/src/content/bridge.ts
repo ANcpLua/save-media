@@ -171,7 +171,7 @@ function showToast(outcome: HotkeyFeedbackMessage["outcome"], detail: string): v
     .t.show { opacity: 1; transform: none; }
     .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
     .k { font-weight: 600; margin-right: 6px; }
-    .d { color: #9fb2be; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .d { color: #9fb2be; overflow-wrap: anywhere; }
     @media (prefers-reduced-motion: reduce) { .t { transition: none; } }
   `;
   const el = document.createElement("div");

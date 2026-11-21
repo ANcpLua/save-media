@@ -10,11 +10,11 @@ export type AudioRenditionId = string & { readonly [RENDITION_ID_BRAND]: true };
 export type ProtocolFamily = "progressive-http" | "hls" | "dash" | "unknown";
 
 export type Container =
-  | "mp4" | "webm" | "mkv"
+  | "mp4" | "mov" | "webm" | "mkv"
   | "mpegts" | "fmp4" | "cmaf"
   | "unknown";
 
-export type OutputContainer = "mp4" | "webm" | "mkv";
+export type OutputContainer = "mp4" | "mov" | "webm" | "mkv";
 
 export type ConfidenceLevel = "guessed" | "probable" | "confirmed";
 
@@ -53,7 +53,13 @@ export type DrmStatus =
     };
 
 export type StreamSource =
-  | { readonly kind: "direct-url"; readonly url: string; readonly headers: Readonly<Record<string, string>> }
+  | {
+      readonly kind: "direct-url";
+      readonly url: string;
+      readonly headers: Readonly<Record<string, string>>;
+      /** Destination observed when probing a browser-visible redirect. */
+      readonly finalUrl?: string;
+    }
   | { readonly kind: "hls-manifest"; readonly manifestUrl: string; readonly type: "master" | "media" }
   | { readonly kind: "dash-manifest"; readonly manifestUrl: string }
   | { readonly kind: "media-element"; readonly element: "video" | "audio"; readonly elementSrc: string };

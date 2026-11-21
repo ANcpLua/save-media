@@ -22,17 +22,22 @@ export function discoverPageMedia(doc: Document, pageUrl: string): DiscoveredMed
     } catch { /* Ignore malformed page data. */ }
   }
 
-  const elements = Array.from(doc.querySelectorAll<HTMLMediaElement>("video, audio"));
+  const elements = Array.from(doc.querySelectorAll<HTMLVideoElement>("video"));
   const main = elements.map(media => ({ media, score: mediaScore(media) }))
     .filter(item => item.score >= 0).sort((a, b) => b.score - a.score)[0]?.media;
   const elementPlayer: Player = { groupId: `${pageUrl}#element:${main ? elements.indexOf(main) : 0}`, media: new Map(), priority: 0 };
   if (main) {
     const media = main;
-    for (const source of media.querySelectorAll("source")) {
-      const height = resolution(source.getAttribute("label") ?? source.getAttribute("res") ?? source.getAttribute("size") ?? "");
-      add(elementPlayer, source.src, height);
+    const src = media.getAttribute("src");
+    if (src) {
+      add(elementPlayer, src);
+    } else {
+      for (const source of media.querySelectorAll<HTMLSourceElement>("source[src]")) {
+        const height = resolution(source.getAttribute("label") ?? source.getAttribute("res") ?? source.getAttribute("size") ?? "");
+        add(elementPlayer, source.src, height);
+      }
+      if (elementPlayer.media.size === 0 && media.currentSrc) add(elementPlayer, media.currentSrc);
     }
-    for (const raw of [media.currentSrc, media.getAttribute("src")]) if (raw) add(elementPlayer, raw);
   }
 
   const players = new Map<string, Player>();
@@ -78,17 +83,29 @@ export function discoverPageMedia(doc: Document, pageUrl: string): DiscoveredMed
   // prefer the explicit video config, then a source list, in document order.
   const pool = matched.length ? matched : elementPlayer.media.size ? [] : configs;
   const selected = pool.sort((a, b) => b.priority - a.priority)[0];
-  if (!selected) return [...elementPlayer.media.values()];
-  for (const media of elementPlayer.media.values()) {
-    if (![...selected.media.keys()].some(url => sameMediaUrl(url, media.url))) add(selected, media.url, media.quality?.height);
+  if (selected) {
+    for (const media of elementPlayer.media.values()) {
+      if (![...selected.media.keys()].some(url => sameMediaUrl(url, media.url))) add(selected, media.url, media.quality?.height);
+    }
   }
-  return [...selected.media.values()];
+  const media = [...(selected ?? elementPlayer).media.values()];
+  // Some file pages show the filename while serving an opaque player URL.
+  // Apply a literal filename only when the page offers one media candidate.
+  if (media.length === 1) {
+    const filenameHint = [...doc.querySelectorAll('h1, meta[property="og:title"]')]
+      .map(el => (el.getAttribute("content") ?? el.textContent ?? "").trim())
+      .find(name => name.length <= 240 && /\.(mp4|mov|qt|webm|mkv)$/i.test(name));
+    if (filenameHint) return [{ ...media[0]!, filenameHint }];
+  }
+  return media;
 }
 
 function sameMediaUrl(a: string, b: string): boolean {
   const left = new URL(a);
   const right = new URL(b);
-  return left.origin === right.origin && left.pathname === right.pathname;
+  left.hash = "";
+  right.hash = "";
+  return left.href === right.href;
 }
 
 function mediaScore(media: HTMLMediaElement): number {
@@ -101,7 +118,7 @@ function mediaScore(media: HTMLMediaElement): number {
   const visibleWidth = Math.max(0, Math.min(rect.right, view?.innerWidth ?? rect.right) - Math.max(0, rect.left));
   const visibleHeight = Math.max(0, Math.min(rect.bottom, view?.innerHeight ?? rect.bottom) - Math.max(0, rect.top));
   return visibleWidth * visibleHeight * 1000 + (media.controls ? 100 : 0)
-    + (media.closest("main, [role=main]") ? 10 : 0) + (media.tagName === "VIDEO" ? 1 : 0);
+    + (media.closest("main, [role=main]") ? 10 : 0);
 }
 
 function resolution(value: string): number | undefined {
@@ -111,7 +128,7 @@ function resolution(value: string): number | undefined {
 }
 
 function isMediaUrl(raw: string, pageUrl: string): boolean {
-  try { return /\.(mp4|webm|mkv|m3u8|mpd)\/?$/i.test(new URL(raw, pageUrl).pathname); }
+  try { return /\.(mp4|mov|qt|webm|mkv|m3u8|mpd)\/?$/i.test(new URL(raw, pageUrl).pathname); }
   catch { return false; }
 }
 

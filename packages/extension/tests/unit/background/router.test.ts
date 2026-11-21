@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRouter, dispatchRefusalToError } from "../../../src/background/router";
-import { AlreadySavedError } from "../../../src/background/saved-media";
 import { demuxedPairDescriptor } from "../../../src/background/capture";
 import { directDescriptor, hlsDescriptor, dashDescriptor, drmDescriptor, clearKeyDescriptor } from "../popup/helpers/descriptors";
 import type { UserChoice, StreamDescriptor, StreamId, VariantId, AudioRenditionId } from "@savemedia/core";
@@ -43,7 +42,7 @@ describe("router — descriptor de-duplication", () => {
     expect(r.snapshot(1).descriptors.map(item => item.id)).toEqual([main.id]);
     expect(r.snapshot(1).failures).toEqual([]);
     await r.startBestDownload(1);
-    expect(d.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: "https://example.com/clip.mp4" }));
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ streamId: main.id }));
     r.setDiscoveryScope(1, main.pageUrl, ["https://example.com/preview.mp4"]);
     expect(r.listDescriptors(1).map(item => item.id)).toEqual([preview.id]);
     r.clearTab(1);
@@ -84,6 +83,33 @@ describe("router — descriptor de-duplication", () => {
     expect(r.findDescriptor(original.id)?.variants[0]?.height).toBe(480);
   });
 
+  it("keeps numbered file identities and query-selected videos separate", () => {
+    const router = createRouter(deps());
+    const urls = ["/31", "/32", "/file?id=31", "/file?id=32"];
+    for (const [index, url] of urls.entries()) {
+      router.addDescriptor(1, directAt(`https://cdn.example${url}`, `video-${index}` as StreamId));
+    }
+    expect(router.listDescriptors(1)).toHaveLength(4);
+  });
+
+  it("retains the redirect entry and row identity while the media destination changes", () => {
+    const router = createRouter(deps());
+    const url = "https://player.example/file/31";
+    const first = "https://cdn.example/file/51";
+    const second = "https://media.example/file/52";
+    router.addDescriptor(1, directAt(first, "first" as StreamId));
+    router.addDescriptor(1, directDescriptor({ id: "entry" as StreamId, source: {
+      kind: "direct-url", url, finalUrl: first, headers: {},
+    } }));
+    router.addDescriptor(1, directDescriptor({ id: "refresh" as StreamId, source: {
+      kind: "direct-url", url, finalUrl: second, headers: {},
+    } }));
+    expect(router.addDescriptor(1, directAt(second, "destination" as StreamId))).toBe(false);
+    expect(router.listDescriptors(1)).toEqual([expect.objectContaining({
+      id: "first", source: expect.objectContaining({ url, finalUrl: second }),
+    })]);
+  });
+
   it("keeps declared numeric quality siblings and downloads the highest", async () => {
     const d = deps();
     const r = createRouter(d);
@@ -96,7 +122,7 @@ describe("router — descriptor de-duplication", () => {
     }
     expect(r.listDescriptors(1)).toHaveLength(3);
     await r.startBestDownload(1);
-    expect(d.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: "https://cdn.example/movie_1080p.mp4" }));
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ streamId: "quality-1080" }));
   });
   it("returns the latest failed job when the popup is reopened", async () => {
     const r = createRouter(deps());
@@ -220,51 +246,22 @@ describe("router — descriptor de-duplication", () => {
   });
 });
 
-describe("router — range recovery", () => {
-  it("sends a range-capable direct video through the engine", async () => {
-    const d = deps();
-    const r = createRouter(d);
-    const descriptor = directDescriptor({ source: {
-      kind: "direct-url", url: "https://cdn.example/clip.mp4",
-      headers: { "content-range": "bytes 0-4095/100000", etag: '"version-1"' },
-    } });
-    r.addDescriptor(1, descriptor);
-    expect(await r.startDownload(descriptor.id, choice())).toBeNull();
-    expect(d.ensureEngineHost).toHaveBeenCalledTimes(1);
-    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "start-job", descriptor }));
-    expect(d.downloads.download).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { "content-range": "bytes 0-4095/100000" },
-    { "content-range": "bytes 0-4095/100000", etag: 'W/"v1"' },
-    { "content-range": `bytes 0-4095/${2 * 1024 ** 3}`, etag: '"v1"' },
-  ])("keeps files without usable range metadata or above the memory limit on browser downloads", async headers => {
-    const d = deps();
-    const r = createRouter(d);
-    const descriptor = directDescriptor({ source: { kind: "direct-url", url: "https://cdn.example/clip.mp4", headers } });
-    r.addDescriptor(1, descriptor);
-    expect(await r.startDownload(descriptor.id, choice())).toBeNull();
-    expect(d.downloads.download).toHaveBeenCalled();
-    expect(d.ensureEngineHost).not.toHaveBeenCalled();
-  });
-});
-
 describe("router — startDownload routing", () => {
-  it("routes a direct stream through chrome.downloads.download", async () => {
+  it.each([
+    {},
+    { "content-range": "bytes 0-4095/100000" },
+    { "content-range": "bytes 0-4095/100000", etag: '"v1"' },
+  ])("routes every direct stream to the verifier before invoking browser downloads", async headers => {
     const d = deps();
     const r = createRouter(d);
-    r.addDescriptor(1, directDescriptor());
-    const err = await r.startDownload(directDescriptor().id, choice());
-    expect(err).toBeNull();
-    expect(d.downloads.download).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: "https://example.com/clip.mp4",
-        filename: "clip.mp4",
-        conflictAction: "uniquify",
-      }),
-    );
-    expect(d.ensureEngineHost).not.toHaveBeenCalled();
+    const descriptor = directDescriptor({ source: { kind: "direct-url", url: "https://example.com/clip.mp4", headers } });
+    r.addDescriptor(1, descriptor);
+    expect(await r.startDownload(descriptor.id, choice())).toBeNull();
+    expect(d.downloads.download).not.toHaveBeenCalled();
+    expect(d.ensureEngineHost).toHaveBeenCalledOnce();
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "start-job", streamId: descriptor.id,
+    }));
   });
 
   it("routes an HLS stream through the engine host", async () => {
@@ -310,14 +307,7 @@ describe("router — startDownload routing", () => {
     expect(err?.code).toBe("manifest_404");
   });
 
-  it("translates chrome.downloads errors into browser_download_failed", async () => {
-    const d = deps();
-    d.downloads.download.mockRejectedValueOnce(new Error("ENOSPC"));
-    const r = createRouter(d);
-    r.addDescriptor(1, directDescriptor());
-    const err = await r.startDownload(directDescriptor().id, choice());
-    expect(err?.code).toBe("browser_download_failed");
-  });
+
 });
 
 describe("router — startBestDownload", () => {
@@ -401,13 +391,10 @@ describe("router — startBestDownload", () => {
     const outcome = await r.startBestDownload(1);
 
     expect(outcome).toMatchObject({ kind: "started" });
-    expect(d.downloads.download).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: "https://example.com/clip.mp4",
-        filename: "clip name.mp4",
-      }),
-    );
-    expect(d.ensureEngineHost).not.toHaveBeenCalled();
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "start-job",
+      choice: expect.objectContaining({ filename: "clip name.mp4" }),
+    }));
   });
 
   it("skips DRM-blocked descriptors when choosing the best stream", async () => {
@@ -419,10 +406,7 @@ describe("router — startBestDownload", () => {
     const outcome = await r.startBestDownload(1);
 
     expect(outcome).toMatchObject({ kind: "started" });
-    expect(d.downloads.download).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://example.com/clip.mp4" }),
-    );
-    expect(d.ensureEngineHost).not.toHaveBeenCalled();
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ streamId: directDescriptor().id }));
   });
 
   it("skips DASH descriptors when choosing the best stream", async () => {
@@ -434,10 +418,7 @@ describe("router — startBestDownload", () => {
     const outcome = await r.startBestDownload(1);
 
     expect(outcome).toMatchObject({ kind: "started" });
-    expect(d.downloads.download).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://example.com/clip.mp4" }),
-    );
-    expect(d.ensureEngineHost).not.toHaveBeenCalled();
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ streamId: directDescriptor().id }));
   });
 
   it("starts nothing when the only descriptor is protected, and says why", async () => {
@@ -512,7 +493,7 @@ describe("router — startBestDownload", () => {
     const outcome = await r.startBestDownload(1);
 
     expect(outcome).toMatchObject({ kind: "started" });
-    expect(d.downloads.download).toHaveBeenCalled();
+    expect(d.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ streamId: directDescriptor().id }));
     expect(d.runtime.sendMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ streamId: unmaterialized.id }),
     );
@@ -583,36 +564,6 @@ describe("router — engine message handling", () => {
     }
   });
 
-  it("on complete: an already saved video becomes job-failed with already_saved, not a browser failure", async () => {
-    const d = deps();
-    d.downloads.download.mockRejectedValueOnce(new AlreadySavedError("2026-01-05 2 Morning/2026-01-05_090000.mp4"));
-    const r = createRouter(d);
-    r.jobs.set(directDescriptor().id, {
-      descriptor: directDescriptor(),
-      choice: choice(),
-      plan: { kind: "direct", url: "", filename: "" },
-    });
-    const out = await r.handleEngineMessage({
-      type: "complete",
-      streamId: directDescriptor().id,
-      blobUrl: "blob:x",
-      filename: "out.mp4",
-      checksum: "abc",
-    });
-    expect(out).toMatchObject({
-      type: "job-failed",
-      error: { code: "already_saved", existing: "2026-01-05 2 Morning/2026-01-05_090000.mp4" },
-    });
-  });
-
-  it("direct: an already saved video is reported as already_saved", async () => {
-    const d = deps();
-    d.downloads.download.mockRejectedValueOnce(new AlreadySavedError("saved.mp4"));
-    const r = createRouter(d);
-    r.addDescriptor(1, directDescriptor());
-    expect(await r.startDownload(directDescriptor().id, choice())).toEqual({ code: "already_saved", severity: "terminal", existing: "saved.mp4" });
-  });
-
   it("on complete: a file:// blobUrl is still handed to chrome.downloads and can fail honestly", async () => {
     const d = deps();
     d.downloads.download.mockRejectedValueOnce(new Error("Cannot download file:// URL"));
@@ -664,7 +615,7 @@ describe("router — popup message dispatch", () => {
     });
   });
 
-  it("'cancel' removes the job and notifies the engine host", async () => {
+  it("'cancel' notifies the engine and reserves the job until it has stopped", async () => {
     const d = deps();
     const r = createRouter(d);
     const id = directDescriptor().id;
@@ -675,7 +626,7 @@ describe("router — popup message dispatch", () => {
     });
     const out = await r.handlePopupMessage({ type: "cancel", streamId: id });
     expect(out).toEqual({ ok: true });
-    expect(r.jobs.size).toBe(0);
+    expect(r.jobs.size).toBe(1);
     const sent = vi.mocked(d.runtime.sendMessage).mock.calls[0]?.[0];
     expect(sent).toEqual({ type: "cancel-job", streamId: id });
   });

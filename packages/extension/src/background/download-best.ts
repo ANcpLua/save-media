@@ -8,7 +8,7 @@ import {
   type HotkeyFeedbackOutcome,
   type LocalJobView,
 } from "../types/messages";
-import { userMessage } from "@savemedia/core";
+import { hotkeyErrorDetail } from "./hotkey-jobs";
 import { isDelegableError } from "../native/local-downloader";
 
 type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
@@ -95,6 +95,7 @@ export async function discoverPageMediaForTab(
         url,
         pageUrl,
         ...("quality" in item && item.quality ? { quality: item.quality } : {}),
+        ...("filenameHint" in item && item.filenameHint ? { filenameHint: item.filenameHint } : {}),
       },
     });
   }
@@ -135,7 +136,7 @@ export async function downloadBestForTab(
     return;
   }
 
-  deps.showHotkeyFeedback(tabId, "failed", userMessage(outcome.error).title);
+  deps.showHotkeyFeedback(tabId, "failed", hotkeyErrorDetail(outcome.error));
   const msg: BackgroundToPopupMessage = {
     type: "job-failed",
     streamId: outcome.streamId,

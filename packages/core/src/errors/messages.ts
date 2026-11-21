@@ -18,6 +18,15 @@ function formatBytes(b: number): string {
 
 export function userMessage(err: JobError): UserMessage {
   switch (err.code) {
+    case "unexpected_media_response":
+      return {
+        title: err.response === "page" ? "The server returned a page instead of a video"
+          : err.response === "data" ? "The server returned data instead of a video"
+            : "The response is not a supported video file",
+        body: "Open or reload the file page, start playback if available, then use Check page again. If playback is blocked, check the warning shown by the browser or network.",
+        action: null,
+      };
+
     case "encrypted_media_detected":
     case "cdm_required":
     case "license_bound_stream":
@@ -200,10 +209,16 @@ export function userMessage(err: JobError): UserMessage {
     case "verification_segment_count":
     case "verification_duration":
     case "verification_checksum":
-    case "verification_container":
       return {
         title: "Download verification failed",
         body: "The downloaded file did not pass integrity checks. It has been deleted so it cannot be mistaken for a complete download.",
+        action: { label: "Retry full download", kind: "retry-job" },
+      };
+
+    case "verification_container":
+      return {
+        title: "Download verification failed",
+        body: "The response was incomplete or its file format changed. Reload the file page or retry the download.",
         action: { label: "Retry full download", kind: "retry-job" },
       };
 
@@ -228,13 +243,6 @@ export function userMessage(err: JobError): UserMessage {
         action: null,
       };
 
-    case "already_saved":
-      return {
-        title: "Already saved",
-        body: `This video is already in your downloads in equal or better quality: ${err.existing}.`,
-        action: null,
-      };
-
     case "user_cancelled":
       return {
         title: "Cancelled",
@@ -251,5 +259,5 @@ function accessDeniedBody(status: 401 | 402 | 403, explanation: string): string 
   if (explanation === "login-or-cookie") {
     return "The server requires a logged-in session or cookie that was not accepted for this request. Open the video page while logged in, then retry.";
   }
-  return "The server returned forbidden/expired access. This can be an expired signed URL, geo/account restriction, or site-side block. It is not treated as DRM unless an actual DRM signal is detected.";
+  return "The server returned HTTP 403. Reload the file page and try again. If the browser still blocks playback, check the site’s access message.";
 }

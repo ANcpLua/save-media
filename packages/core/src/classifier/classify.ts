@@ -52,7 +52,7 @@ function mergeConfidence(a: Confidence, b: Confidence): Confidence {
 }
 
 // Direct-download containers are standalone files, not manifests.
-const PROGRESSIVE_CONTAINERS = new Set<Container>(["mp4", "webm", "mkv"]);
+const PROGRESSIVE_CONTAINERS = new Set<Container>(["mp4", "mov", "webm", "mkv"]);
 
 function resolveProtocol(
   fromLayers: ProtocolFamily,

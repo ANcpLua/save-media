@@ -26,7 +26,8 @@ export function createInProcessEngineHost(deps: InProcessEngineHostDeps): InProc
         void runner.start(msg.streamId, msg.descriptor, msg.choice);
         return;
       }
-      runner.cancel(msg.streamId);
+      if (msg.type === "release-output") URL.revokeObjectURL(msg.blobUrl);
+      else runner.cancel(msg.streamId);
     },
   };
 }

@@ -210,7 +210,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
       )}
 
       <div className="mt-2 ml-5 flex items-center gap-2">
-        {status?.phase === "active" ? (
+        {status?.phase === "active" ? status.stage !== "finalizing" && (
           <button
             onClick={cancel}
             className="ml-auto bg-surface-2 hover:bg-neutral-600 text-white px-2.5 py-1 rounded-md text-xs"
@@ -222,7 +222,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
             onClick={download}
             className="ml-auto inline-flex items-center gap-1 bg-accent hover:brightness-110 text-ink font-medium px-2.5 py-1 rounded-md text-xs"
           >
-            <span aria-hidden="true">⬇</span> Download
+            <span aria-hidden="true">⬇</span> {status?.phase === "failed" ? "Retry download" : "Download"}
           </button>
         ) : null}
       </div>

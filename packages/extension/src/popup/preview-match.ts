@@ -33,7 +33,10 @@ export function rankDescriptors(
   const ranked = descriptors.map(descriptor => {
     const url = sourceUrl(descriptor);
     let video: PageVideo | undefined;
-    if (url) video = videos.find(v => sameUrl(v.src, url));
+    if (url) {
+      const finalUrl = descriptor.source.kind === "direct-url" ? descriptor.source.finalUrl : undefined;
+      video = videos.find(v => sameUrl(v.src, url) || (finalUrl && sameUrl(v.src, finalUrl)));
+    }
     if (!video && !descriptor.capabilities.directDownload) {
       video = blobVideos.length === 1 ? blobVideos[0] : blobVideos.find(v => v === main);
     }
@@ -83,7 +86,9 @@ function sameUrl(a: string, b: string): boolean {
   try {
     const ua = new URL(a);
     const ub = new URL(b);
-    return ua.origin === ub.origin && ua.pathname === ub.pathname;
+    ua.hash = "";
+    ub.hash = "";
+    return ua.href === ub.href;
   } catch {
     return false;
   }

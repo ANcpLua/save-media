@@ -3,7 +3,7 @@ import type { Container } from "../types/stream";
 const FTYP_BRAND_MAP: Record<string, Container> = {
   "isom": "mp4", "iso2": "mp4", "mp41": "mp4", "mp42": "mp4", "avc1": "mp4",
   "M4V ": "mp4",
-  "qt  ": "unknown",
+  "qt  ": "mov",
   "msdh": "fmp4", "msix": "fmp4", "dash": "fmp4", "cmfc": "cmaf", "cmf2": "cmaf",
 };
 
@@ -28,11 +28,25 @@ export function detectContainerFromBytes(bytes: Uint8Array): Container {
     return "mpegts";
   }
 
+  // Pre-2004 QuickTime can omit ftyp. The full download still has to
+  // contain well-formed movie and media-data atoms before we save it.
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let offset = 0; offset + 8 <= bytes.length;) {
+    const size = view.getUint32(offset);
+    const start = offset + 4;
+    const kind = String.fromCharCode(...bytes.subarray(start, start + 4));
+    if (size !== 0 && size < 8) break;
+    if (kind === "moov" || kind === "mdat") return "mov";
+    if (size === 0 || (kind !== "wide" && kind !== "free" && kind !== "skip")) break;
+    offset += size;
+  }
+
   return "unknown";
 }
 
 const MIME_MAP: Record<string, Container> = {
   "video/mp4": "mp4",
+  "video/quicktime": "mov",
   "video/webm": "webm",
   "video/x-matroska": "mkv",
   "video/mp2t": "mpegts",

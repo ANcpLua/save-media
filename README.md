@@ -1,13 +1,11 @@
 # savemedia
 
-Browser extension for Chrome, Edge and Firefox that saves browser-visible video
-when it can prove the bytes are one complete, playable file. It saves direct
-MP4, WebM and MKV files, plain HLS VOD with MPEG-TS segments (remuxed locally to
-MP4), clear HLS fMP4/CMAF streams, AES-128 HLS whose key the server hands over
-in the clear (decrypted locally with WebCrypto), and clear DASH with a fully
-addressed video+audio pair (merged locally into one MP4). It refuses DRM, keys
-only a CDM can unwrap, live streams, dynamic or byte-range-addressed DASH, and
-anything it cannot verify, rather than writing a broken file.
+Browser extension for Chrome, Edge and Firefox that saves complete,
+browser-visible video. It saves direct files in MP4, QuickTime, WebM and MKV.
+It also supports plain HLS VOD with MPEG-TS segments, clear HLS fMP4/CMAF,
+and clear DASH with a fully addressed video and audio pair. AES-128 HLS can
+be saved when the server gives the player the key in the clear. The extension
+refuses protected media, live streams, and responses that fail verification.
 Everything runs in the browser. There is no telemetry, no account and no server.
 
 The support contract is [`docs/design.md`](docs/design.md). The legal and
@@ -264,6 +262,9 @@ bun run --filter @savemedia/extension smoke:native   # local downloader end to e
 python3 -m unittest discover -s packages/native-host   # protocol, host internals, install.sh, setup.sh
 bun run verify           # full pre-release check
 ```
+
+For direct file changes, see [direct file discovery and recovery](docs/range-recovery.md#verify-locally)
+for a focused popup and Alt+S check.
 
 Toolchain decision, shared with the other extension repository so a third
 extension can copy either as a template: bun is the package manager, Vitest

@@ -4,6 +4,7 @@
  *
  * Serves:
  *   /direct/clip.mp4 .webm .mkv  — tiny real progressive files
+ *   /file/31 and /file/32 — QuickTime originals with changing destinations
  *   /hls/master.m3u8 + media.m3u8 + segNNN.ts — real clear HLS VOD
  *   /hls-fmp4/master.m3u8 + media.m3u8 + EXT-X-MAP init + m4s fragments — clear fMP4
  *   /hls-fmp4-mp4/* .mp4-named init/fragments — verifies chunk suppression
@@ -226,7 +227,63 @@ seg000.ts
   "/negative/asset.m4a":  { type: "audio/mp4",        body: Buffer.alloc(64, 0x00) },
 };
 
+const quickTimeFiles = new Map([
+  ["31", { body: fixture("direct/test-pattern.mov"), name: "Test pattern 31.mov", generation: 0 }],
+  ["32", { body: fixture("direct/color-bars.mov"), name: "Färbige Balken 32.mov", generation: 0 }],
+]);
+
+function serveFilePageMedia(req, res, path) {
+  const entry = /^\/file\/(31|32)$/.exec(path)?.[1];
+  if (entry) {
+    const item = quickTimeFiles.get(entry);
+    if (req.method === "POST") {
+      item.generation++;
+      res.writeHead(204).end();
+    } else {
+      res.writeHead(302, {
+        Location: `/file-media/${entry}/${item.generation}`,
+        "Cache-Control": "no-store",
+      }).end();
+    }
+    return true;
+  }
+  const match = /^\/file-media\/(31|32)\/(\d+)$/.exec(path);
+  if (match) {
+    const item = quickTimeFiles.get(match[1]);
+    if (item.generation !== Number(match[2])) {
+      res.writeHead(403).end();
+    } else {
+      // Full response with no range validator. The URL has no file suffix.
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        ...(match[1] === "32" ? { "Content-Disposition": `attachment; filename*=UTF-8'en'${encodeURIComponent(item.name)}` } : {}),
+        "Content-Length": item.body.length,
+        "Cache-Control": "no-store",
+      }).end(item.body);
+    }
+    return true;
+  }
+  if (path === "/file-warning.mov" || path === "/file-data.mov") {
+    const body = req.headers.range
+      ? quickTimeFiles.get("31").body
+      : path === "/file-warning.mov"
+        ? '<?xml version="1.0"?><html><body>Network access warning</body></html>'
+        : JSON.stringify({ message: "Preparing the file" }).padEnd(69);
+    // Both substitutes deliberately claim to be a video.
+    res.writeHead(200, { "Content-Type": "video/quicktime", "Cache-Control": "no-store" }).end(body);
+    return true;
+  }
+  return false;
+}
+
 const pages = {
+  "file-31": html("Test pattern", '<h1>Test pattern 31.mov</h1><video controls preload="metadata" src="/file/31"></video>'),
+  "file-32": html("Color bars", `<video controls></video><script>
+    fetch("/file/32").then(response => response.blob())
+      .then(blob => document.querySelector("video").src = URL.createObjectURL(blob))
+  </script>`),
+  "file-warning": html("Warning response", '<video controls src="/file-warning.mov"></video>'),
+  "file-data": html("Nonvideo response", '<video controls src="/file-data.mov"></video>'),
   direct: html("direct", `<video src="/direct/clip.mp4" controls width="640"></video>`),
   hls: html("hls", `<script>fetch("/hls/master.m3u8");</script><p>hls fixture</p>`),
   "hls-live": html("hls-live", `<script>fetch("/hls-live/master.m3u8");</script><p>hls live fixture</p>`),
@@ -274,6 +331,7 @@ const server = http.createServer((req, res) => {
     res.end(body);
     return;
   }
+  if (serveFilePageMedia(req, res, url.pathname)) return;
   const route = routes[url.pathname];
   if (!route) {
     res.writeHead(404).end();

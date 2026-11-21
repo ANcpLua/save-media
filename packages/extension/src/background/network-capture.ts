@@ -1,39 +1,73 @@
-import { MAIN_BRIDGE_TAG, type BridgeToBackgroundMessage } from "../types/messages";
-
-export type CaptureHandler = (
-  tabId: number,
-  msg: Extract<BridgeToBackgroundMessage, { type: "capture" }>,
-) => Promise<void>;
+import { detectContainerFromMime } from "@savemedia/core";
+import { MAIN_BRIDGE_TAG } from "../types/messages";
+import type { CaptureHandler } from "./capture";
 
 interface RequestDetails {
   readonly tabId: number;
   readonly url: string;
+  readonly method?: string | undefined;
   readonly type?: string | undefined;
   readonly documentUrl?: string | undefined;
   readonly initiator?: string | undefined;
 }
 
 /**
- * Network request discovery lives in the extension process instead of
- * monkey-patching page fetch/XHR. That keeps page failures attributed to
- * the page and still catches manifest/direct-media entry requests.
+ * Observe ordinary browser requests. Response headers find extensionless
+ * media and a redirect chain retains the entry URL the page actually used.
+ * Probes still need to recognize the bytes before an item is offered.
  */
 export function registerNetworkCapture(handleCapture: CaptureHandler): void {
-  if (!chrome.webRequest?.onBeforeRequest) return;
+  const webRequest = chrome.webRequest;
+  if (!webRequest?.onBeforeRequest) return;
+  const filter = { urls: ["<all_urls>"] };
 
-  chrome.webRequest.onBeforeRequest.addListener(
-    details => {
-      void handleNetworkRequest(details, handleCapture);
-    },
-    { urls: ["<all_urls>"] },
-  );
+  webRequest.onBeforeRequest.addListener(details => {
+    if (looksLikeMediaEntryUrl(details.url, details.type)) void handleNetworkRequest(details, handleCapture);
+  }, filter);
+
+  const redirects = new Map<string, string>();
+  webRequest.onBeforeRedirect.addListener(details => {
+    if (!isPageGet(details) || (details.type !== "media" && details.type !== "xmlhttprequest")) return;
+    if (redirects.has(details.requestId)) return;
+    if (redirects.size >= 512) redirects.delete(redirects.keys().next().value!);
+    redirects.set(details.requestId, details.url);
+  }, filter);
+  webRequest.onCompleted.addListener(details => { redirects.delete(details.requestId); }, filter);
+  webRequest.onErrorOccurred.addListener(details => { redirects.delete(details.requestId); }, filter);
+
+  webRequest.onHeadersReceived.addListener(details => {
+    if (!isPageGet(details) || (details.statusCode !== 200 && details.statusCode !== 206)) return;
+    const entryUrl = redirects.get(details.requestId);
+    if (!entryUrl && looksLikeMediaEntryUrl(details.url, details.type)) return;
+    const type = details.responseHeaders?.find(h => h.name.toLowerCase() === "content-type")?.value ?? "";
+    const disposition = details.responseHeaders?.find(h => h.name.toLowerCase() === "content-disposition")?.value ?? "";
+    if (!looksLikeMediaResponse(details.url, details.type, type, disposition)) return;
+    void handleNetworkRequest(details, handleCapture, entryUrl);
+  }, filter, ["responseHeaders"]);
+}
+
+function isPageGet(details: RequestDetails): boolean {
+  return details.tabId >= 0 && (details.method === undefined || details.method === "GET");
+}
+
+export function looksLikeMediaResponse(url: string, requestType: string, mime: string, disposition: string): boolean {
+  if (looksLikeFragmentUrl(url)) return false;
+  const container = detectContainerFromMime(mime);
+  const video = container !== "unknown" && container !== "mpegts";
+  if (requestType === "media") return video || !mime || /^application\/octet-stream\b/i.test(mime);
+  // Files returned to fetch are candidates only if the response identifies
+  // them as a named media download. Ordinary JSON and streaming chunks can
+  // also travel through fetch.
+  return requestType === "xmlhttprequest"
+    && /^attachment\b/i.test(disposition)
+    && (video || /filename\*?=[^;]*\.(mp4|mov|qt|webm|mkv)"?(?:;|$)/i.test(disposition));
 }
 
 export function looksLikeMediaEntryUrl(url: string, requestType?: string): boolean {
   if (/\.(m3u8|mpd)(\?|#|$)/i.test(url)) return true;
   if (looksLikeFragmentUrl(url)) return false;
   if (requestType === "xmlhttprequest") return false;
-  return /\.(mp4|webm|mkv)\/?(\?|#|$)/i.test(url);
+  return /\.(mp4|mov|qt|webm|mkv)\/?(\?|#|$)/i.test(url);
 }
 
 // Hosts where a dedicated MAIN-world site resolver (content/sites/*) is the
@@ -83,7 +117,7 @@ export interface SessionRulesApi {
  * for the browser session so a running download never loses it.
  */
 export function createRefererMirror(api: SessionRulesApi, extensionHost: string) {
-  const current = new Map<string, string>();
+  const current = new Map<string, { referer: string; ready: Promise<void> }>();
   return async (url: string, pageUrl: string): Promise<void> => {
     let host: string;
     let referer: string;
@@ -95,29 +129,30 @@ export function createRefererMirror(api: SessionRulesApi, extensionHost: string)
     } catch {
       return;
     }
-    if (!host || current.get(host) === referer) return;
-    current.set(host, referer);
+    if (!host) return;
+    const existing = current.get(host);
+    if (existing?.referer === referer) return existing.ready;
     const id = ruleIdForHost(host);
-    try {
-      await api.updateSessionRules({
-        removeRuleIds: [id],
-        addRules: [{
-          id,
-          action: {
-            type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
-            requestHeaders: [{
-              header: "referer",
-              operation: "set" as chrome.declarativeNetRequest.HeaderOperation,
-              value: referer,
-            }],
-          },
-          // -1 is TAB_ID_NONE: the page's own requests keep their Referer.
-          condition: { requestDomains: [host], initiatorDomains: [extensionHost], tabIds: [-1] },
-        }],
-      });
-    } catch {
-      current.delete(host);
-    }
+    const ready = api.updateSessionRules({
+      removeRuleIds: [id],
+      addRules: [{
+        id,
+        action: {
+          type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
+          requestHeaders: [{
+            header: "referer",
+            operation: "set" as chrome.declarativeNetRequest.HeaderOperation,
+            value: referer,
+          }],
+        },
+        // -1 is TAB_ID_NONE: the page's own requests keep their Referer.
+        condition: { requestDomains: [host], initiatorDomains: [extensionHost], tabIds: [-1] },
+      }],
+    }).catch(() => {
+      if (current.get(host)?.ready === ready) current.delete(host);
+    });
+    current.set(host, { referer, ready });
+    return ready;
   };
 }
 
@@ -131,8 +166,9 @@ function ruleIdForHost(host: string): number {
 async function handleNetworkRequest(
   details: RequestDetails,
   handleCapture: CaptureHandler,
+  entryUrl?: string,
 ): Promise<void> {
-  if (details.tabId < 0 || !looksLikeMediaEntryUrl(details.url, details.type)) return;
+  if (!isPageGet(details)) return;
 
   const pageUrl = await pageUrlFor(details);
   // A site resolver owns discovery on this page; skip the generic path.
@@ -142,20 +178,19 @@ async function handleNetworkRequest(
     payload: {
       [MAIN_BRIDGE_TAG]: true,
       kind: "media-source",
-      url: details.url,
+      url: entryUrl ?? details.url,
       pageUrl,
     },
-  });
+  }, entryUrl ? details.url : undefined);
 }
 
 async function pageUrlFor(details: RequestDetails): Promise<string> {
   if (details.documentUrl) return details.documentUrl;
-  if (details.initiator && /^https?:\/\//i.test(details.initiator)) return details.initiator;
   try {
     const tab = await chrome.tabs.get(details.tabId);
     if (tab.url) return tab.url;
   } catch {
     // Tab may have gone away between the request and our async lookup.
   }
-  return details.url;
+  return details.initiator && /^https?:\/\//i.test(details.initiator) ? details.initiator : details.url;
 }

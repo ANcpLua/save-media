@@ -1,4 +1,4 @@
-import { userMessage, type StreamId } from "@savemedia/core";
+import { userMessage, type JobError, type StreamId } from "@savemedia/core";
 import type { BackgroundToPopupMessage, HotkeyFeedbackOutcome } from "../types/messages";
 
 export interface HotkeyFeedback {
@@ -34,7 +34,7 @@ export function createHotkeyJobs(): HotkeyJobs {
       if (message.type === "job-complete") {
         return { tabId, outcome: "complete", detail: basename(message.path) || "Download finished" };
       }
-      return { tabId, outcome: "failed", detail: userMessage(message.error).title };
+      return { tabId, outcome: "failed", detail: hotkeyErrorDetail(message.error) };
     },
   };
 }
@@ -42,4 +42,12 @@ export function createHotkeyJobs(): HotkeyJobs {
 function basename(path: string | null | undefined): string {
   if (!path) return "";
   return path.split(/[\\/]/).pop() ?? path;
+}
+
+export function hotkeyErrorDetail(error: JobError): string {
+  const { title, action } = userMessage(error);
+  if (error.code === "unexpected_media_response" || error.code === "access_denied") {
+    return `${title}. Reload the file page and try again.`;
+  }
+  return action?.kind === "retry-job" ? `${title}. Try Alt+S again in a moment.` : title;
 }

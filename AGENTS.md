@@ -1,14 +1,23 @@
-# Repository instructions
+# Repository ownership
 
-- At the start of repository work, check the recorded credential expiry dates
-  and known release blockers. Follow [Publishing maintenance](README.md#publishing-maintenance)
-  when anything is due, a store needs attention, or publishing is requested.
-  Carry out routine next steps within the user's authorization without asking
-  "should I?"; surface actionable reminders and ask only for information or
-  access that cannot be obtained independently.
-- Before changing code, read the [development rules](README.md#development).
-- For releases, store retries, listing edits, or credential renewal, read
-  [Releasing](README.md#releasing) and the store/credential sections above it.
-  Follow their preflight checks and report each store's outcome separately.
-- Store IDs and version paths belong in `store.config.json`; workflow inputs
-  belong in `.github/workflows/`. Keep the README aligned when either changes.
+The owner supplies product outcomes, feedback, and evidence from real use.
+Agents share ownership of delivery. Investigate the code and running product,
+choose the design, challenge assumptions with evidence, implement, verify, and
+deliver. Fix nearby reliability, usability, and maintenance problems when
+they affect that outcome. Keep changes reviewable and explain consequential
+decisions, observed results, and remaining uncertainty. Ask only about a real
+trade-off between outcomes, an irreversible choice outside the request, or
+access only the owner can provide.
+
+- Read [Development](README.md#development) and the [boundary rules](docs/boundary-rules.md)
+  before changing capture, parsing, or download behavior. Verify the actual
+  user entry points with synthetic or owned media and document how to rerun
+  the check and why the design works.
+- Work in the existing checkout and preserve unrelated changes. Follow the
+  owner's delivery instructions for the task. Store publication requires its
+  own authorization.
+- Check recorded credential expiry dates and known release blockers. For
+  authorized release or credential work, follow [Publishing maintenance](README.md#publishing-maintenance)
+  and [Releasing](README.md#releasing). Report each store's result separately.
+  Keep store IDs and version paths in `store.config.json` and workflow inputs
+  in `.github/workflows/`. Regenerate the README store table when its source changes.

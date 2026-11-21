@@ -8,6 +8,8 @@ export interface UrlClassification {
 
 const EXT_TO_CONTAINER: Record<string, Container> = {
   mp4: "mp4",
+  mov: "mov",
+  qt: "mov",
   webm: "webm",
   mkv: "mkv",
   ts: "mpegts",
@@ -22,7 +24,7 @@ const EXT_TO_PROTOCOL: Record<string, ProtocolFamily> = {
 function extension(url: string): string | null {
   try {
     const u = new URL(url);
-    const path = u.pathname;
+    const path = u.pathname.replace(/\/+$/, "");
     const dot = path.lastIndexOf(".");
     if (dot < 0) return null;
     return path.slice(dot + 1).toLowerCase();

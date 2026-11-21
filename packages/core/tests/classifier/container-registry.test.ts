@@ -13,8 +13,8 @@ describe("container-registry magic bytes", () => {
     expect(detectContainerFromBytes(ftyp("isom"))).toBe("mp4");
   });
 
-  it("does not accept QuickTime as a supported direct container", () => {
-    expect(detectContainerFromBytes(ftyp("qt  "))).toBe("unknown");
+  it("identifies a QuickTime ftyp brand", () => {
+    expect(detectContainerFromBytes(ftyp("qt  "))).toBe("mov");
   });
 
   it("detects dash brand as fmp4", () => {

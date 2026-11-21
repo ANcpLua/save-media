@@ -18,8 +18,12 @@ describe("layer-url", () => {
     expect(r.confidence.container).toBe("guessed");
   });
 
+  it("identifies QuickTime by suffix as an unverified hint", () => {
+    expect(classifyByUrl("https://cdn/v.MOV/?id=742")).toMatchObject({ container: "mov", confidence: { container: "guessed" } });
+    expect(classifyByUrl("https://cdn/v.qt").container).toBe("mov");
+  });
+
   it("old direct containers are not accepted from URL hints", () => {
-    expect(classifyByUrl("https://cdn/v.mov").container).toBe("unknown");
     expect(classifyByUrl("https://cdn/v.avi").container).toBe("unknown");
     expect(classifyByUrl("https://cdn/v.flv").container).toBe("unknown");
   });

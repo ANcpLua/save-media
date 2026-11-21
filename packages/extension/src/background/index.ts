@@ -16,9 +16,7 @@ import type {
   PopupToBackgroundMessage,
 } from "../types/messages";
 import { createRouter } from "./router";
-import { timestampedPath } from "../util/filename";
-import { createSavedMediaGuard, type SavedMedia } from "./saved-media";
-import { isMediaInfo, probeMedia, PROBE_MEDIA, type MediaInfo } from "../engine/probe-media";
+import { saveVerifiedDownload } from "./browser-download";
 import { createCaptureHandler } from "./capture";
 import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
@@ -45,39 +43,6 @@ const firefoxEngineHost = __BROWSER__ === "firefox"
   })
   : null;
 
-const SAVED_MEDIA_KEY = "savedMedia";
-
-async function probeSavedMedia(url: string): Promise<MediaInfo | null> {
-  // Firefox runs the engine in this background page, which has a DOM.
-  if (__BROWSER__ === "firefox") return probeMedia(url);
-  await ensureEngineHost();
-  return new Promise(resolve => {
-    chrome.runtime.sendMessage({ type: PROBE_MEDIA, url }, (resp: unknown) => {
-      void chrome.runtime.lastError;
-      resolve(isMediaInfo(resp) ? resp : null);
-    });
-  });
-}
-
-const savedMedia = createSavedMediaGuard({
-  probe: probeSavedMedia,
-  download: opts => chrome.downloads.download(opts as chrome.downloads.DownloadOptions),
-  read: async () => ((await chrome.storage.local.get(SAVED_MEDIA_KEY))[SAVED_MEDIA_KEY] as SavedMedia[] | undefined) ?? [],
-  write: list => chrome.storage.local.set({ [SAVED_MEDIA_KEY]: list }),
-  exists: async id => {
-    const [item] = await chrome.downloads.search({ id });
-    return item !== undefined && item.state !== "interrupted" && (item.state === "in_progress" || item.exists);
-  },
-  remove: async id => {
-    await chrome.downloads.removeFile(id).catch(() => undefined);
-    await chrome.downloads.erase({ id });
-  },
-});
-
-chrome.downloads.onChanged.addListener(delta => {
-  if (delta.state?.current === "complete") void savedMedia.completed(delta.id);
-});
-
 router = createRouter({
   runtime: {
     sendMessage: (msg, cb) => {
@@ -93,9 +58,14 @@ router = createRouter({
     },
   },
   downloads: {
-    download: async (opts) => savedMedia.download({ ...opts, filename: timestampedPath(opts.filename) }),
+    download: opts => saveVerifiedDownload(chrome.downloads, opts as chrome.downloads.DownloadOptions),
   },
   ensureEngineHost,
+  releaseBlob: blobUrl => {
+    if (firefoxEngineHost) URL.revokeObjectURL(blobUrl);
+    else chrome.runtime.sendMessage({ type: "release-output", blobUrl } satisfies BackgroundToEngineMessage,
+      () => void chrome.runtime.lastError);
+  },
   logger,
 });
 
@@ -148,7 +118,7 @@ function broadcastLocalJob(job: LocalJobView): void {
 
 function notifyTab(tabId: number, outcome: HotkeyFeedbackOutcome, detail: string): void {
   const msg: BackgroundToContentMessage = { type: "hotkey-feedback", outcome, detail };
-  chrome.tabs.sendMessage(tabId, msg, () => void chrome.runtime.lastError);
+  chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }, () => void chrome.runtime.lastError);
 }
 
 const hotkeyJobs = createHotkeyJobs();
@@ -156,7 +126,7 @@ const hotkeyJobs = createHotkeyJobs();
 const downloadBestDeps: DownloadBestDeps = {
   tabs: {
     query: queryInfo => chrome.tabs.query(queryInfo),
-    sendMessage: (tabId, msg, cb) => chrome.tabs.sendMessage(tabId, msg, cb),
+    sendMessage: (tabId, msg, cb) => chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }, cb),
   },
   runtime: {
     lastError: () => chrome.runtime.lastError,

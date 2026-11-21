@@ -1,7 +1,9 @@
-import { classify } from "@savemedia/core";
+import { classify, type JobError } from "@savemedia/core";
 import type { AudioRenditionId, StreamDescriptor, Variant, VariantId } from "@savemedia/core";
 import type { BridgeToBackgroundMessage, DiscoveryFailure } from "../types/messages";
 import type { Logger } from "../util/logger";
+import { originalMediaFilename } from "../util/filename";
+import { DIRECT_MEDIA_TYPES, requireDirectVideo } from "../engine/verify-direct";
 import { checkResponseStatus, probeMedia, recoverRequest, responseHeaders, rangeFailure, type ProbeResponse, type ProbeInit } from "../engine/net/range-recovery";
 
 export type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
@@ -25,7 +27,7 @@ export interface CaptureDeps {
   readonly logger?: Logger;
 }
 
-export type CaptureHandler = ((tabId: number, msg: CaptureMessage) => Promise<void>) & {
+export type CaptureHandler = ((tabId: number, msg: CaptureMessage, observedUrl?: string) => Promise<void>) & {
   clearTab(tabId: number): void;
 };
 
@@ -36,46 +38,57 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     state?.controller.abort();
     tabs.delete(tabId);
   }
-  function handleCapture(tabId: number, msg: CaptureMessage): Promise<void> {
+  function handleCapture(tabId: number, msg: CaptureMessage, observedUrl?: string): Promise<void> {
     let state = tabs.get(tabId);
     if (!state) { state = { controller: new AbortController(), pending: new Map() }; tabs.set(tabId, state); }
-    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem, msg.payload.quality]);
+    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem, msg.payload.quality, msg.payload.filenameHint, observedUrl]);
     const existing = state.pending.get(key);
     if (existing) return existing;
     const current = state;
-    const pending = capture(tabId, msg, current.controller.signal).finally(() => current.pending.delete(key));
+    const pending = capture(tabId, msg, current.controller.signal, observedUrl).finally(() => current.pending.delete(key));
     current.pending.set(key, pending);
     return pending;
   }
-  async function capture(tabId: number, msg: CaptureMessage, signal: AbortSignal): Promise<void> {
+  async function capture(tabId: number, msg: CaptureMessage, signal: AbortSignal, observedUrl?: string): Promise<void> {
     const cap = msg.payload;
-    if (!cap.url && cap.kind !== "eme") return;
+    if (cap.elementTag === "audio" || (!cap.url && cap.kind !== "eme")) return;
+    if (cap.url && !/^https?:\/\//i.test(cap.url)) return;
+    if (cap.audioUrl && !/^https?:\/\//i.test(cap.audioUrl)) return;
 
-    const headers: Record<string, string> = cap.responseHeaders ? { ...cap.responseHeaders } : {};
+    const detectedAt = Date.now();
+    let headers: Record<string, string> = {};
     let bodyBytes: Uint8Array | null = null;
     let manifestText: string | null = null;
+    let finalUrl = cap.url;
+    let directContainer: ReturnType<typeof requireDirectVideo> | null = null;
 
     if (cap.url) {
-      if (deps.mirrorReferer) await deps.mirrorReferer(cap.url, cap.pageUrl);
       try {
+        if (deps.mirrorReferer) {
+          await deps.mirrorReferer(cap.url, cap.pageUrl);
+          if (observedUrl && observedUrl !== cap.url) await deps.mirrorReferer(observedUrl, cap.pageUrl);
+        }
         const url = cap.url;
         let manifest = /\.(m3u8|mpd)([?#]|$)/i.test(url);
         if (!manifest) {
           // Video Rescue probes the observed URL independently of its filename.
           // Extensionless media needs the same bounded range request as .mp4.
           const probe = await probeMedia(deps.fetchFn, url, signal);
-          delete headers["content-range"];
-          Object.assign(headers, probe.headers);
+          finalUrl = probe.url;
+          headers = probe.headers;
           bodyBytes = probe.bytes;
           const prefix = new TextDecoder().decode(probe.bytes).trimStart();
-          manifest = /(mpegurl|dash\+xml)/i.test(probe.headers["content-type"] ?? "")
-            || /^(#EXTM3U|<\?xml|<MPD(?:\s|>))/.test(prefix);
+          manifest = playlistMime(prefix) !== null;
+          if (!manifest) {
+            directContainer = requireDirectVideo(probe.bytes, headers);
+            headers["content-type"] = DIRECT_MEDIA_TYPES[directContainer];
+          }
         }
         if (manifest) {
           // A prefix cannot parse a full playlist. Re-fetch extensionless
           // manifests without Range after identifying their MIME or signature.
           const probe = await recoverRequest(async signal => {
-            const r = await deps.fetchFn(url, { credentials: "include", signal });
+            const r = await deps.fetchFn(url, { credentials: "include", cache: "no-store", signal });
             try {
               checkResponseStatus(r);
               const h = responseHeaders(r);
@@ -84,8 +97,10 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
               try { await r.body?.cancel(); } catch { /* already consumed */ }
             }
           }, signal);
-          delete headers["content-range"];
-          Object.assign(headers, probe.headers);
+          // The request may succeed with a login, warning or error document.
+          const mime = playlistMime(probe.text.trimStart());
+          if (!mime) requireDirectVideo(new TextEncoder().encode(probe.text.slice(0, 4096)), probe.headers);
+          headers = { ...probe.headers, "content-type": mime ?? probe.headers["content-type"] ?? "" };
           manifestText = probe.text;
           bodyBytes = null;
         }
@@ -93,8 +108,9 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
         if (signal.aborted) return;
         deps.logger?.debug("capture fetch failed", { err: err instanceof Error ? err.name : "probe failed" });
         if (cap.kind !== "eme") {
-          deps.onFailure?.(tabId, { url: cap.url, error: rangeFailure(err, cap.url,
-            /\.(m3u8|mpd)([?#]|$)/i.test(cap.url) ? "manifest" : "direct") });
+          const error: JobError = isUnexpectedResponse(err) ? err : rangeFailure(err, cap.url,
+            /\.(m3u8|mpd)([?#]|$)/i.test(cap.url) ? "manifest" : "direct");
+          deps.onFailure?.(tabId, { url: cap.url, error });
           return;
         }
       }
@@ -102,31 +118,47 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
       if (cap.kind !== "eme") deps.onProbeSuccess?.(tabId, cap.url);
     }
 
-    if (cap.kind === "eme" && cap.keySystem) {
-      headers["x-savemedia-eme-keysystem"] = cap.keySystem;
-    }
-
     const classified = await classify({
       tabId,
       pageUrl: cap.pageUrl,
       url: cap.url ?? cap.pageUrl,
-      headers,
+      headers: Object.fromEntries(Object.entries(headers).filter(([key]) =>
+        ["content-type", "content-disposition", "content-length", "content-range", "content-encoding", "etag", "last-modified"].includes(key))),
       bodyBytes,
       manifestText,
     });
+    let directOrStream: StreamDescriptor = { ...classified, detectedAt };
+    if (cap.kind === "eme" && cap.keySystem) {
+      directOrStream = {
+        ...directOrStream,
+        drm: {
+          reason: cap.keySystem === "org.w3.clearkey" ? "clearkey_deferred" : "cdm_required",
+          detectedVia: ["eme-hook"],
+          keySystem: cap.keySystem,
+        },
+        capabilities: { directDownload: false, remuxableTo: [], drmBlocked: true },
+      };
+    }
+    if (directContainer && classified.source.kind === "direct-url" && cap.url && finalUrl) {
+      directOrStream = {
+        ...directOrStream,
+        title: originalMediaFilename(classified.title ?? cap.filenameHint ?? null, directContainer, finalUrl, cap.url),
+        source: { ...classified.source, ...(finalUrl !== cap.url ? { finalUrl } : {}) },
+      };
+    }
 
     // A capture carrying a companion audio URL is a demuxed pair; reshape it
     // for the av-merge path once the video half is confirmed downloadable.
     // An unconfirmed half (expired signature, fetch failure) falls through
     // as-is and is dropped by the surfacing gate below.
-    let descriptor = cap.audioUrl !== undefined && classified.capabilities.directDownload
+    let descriptor = cap.audioUrl !== undefined && directOrStream.capabilities.directDownload
       ? demuxedPairDescriptor(
-        classified,
+        directOrStream,
         cap.audioUrl,
         declaredTotalBytes(headers),
         await probeDeclaredBytes(deps, cap.audioUrl, signal),
       )
-      : classified;
+      : directOrStream;
 
     // Attach page-declared quality only after the URL passed the media probe.
     // Each alternative retains its own descriptor, headers and download URL.
@@ -143,6 +175,16 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     deps.onDescriptor(tabId, descriptor);
   }
   return Object.assign(handleCapture, { clearTab });
+}
+
+function playlistMime(text: string): string | null {
+  if (text.startsWith("#EXTM3U")) return "application/vnd.apple.mpegurl";
+  if (/^(?:<\?xml[^>]*>\s*)?<MPD(?:\s|>)/.test(text)) return "application/dash+xml";
+  return null;
+}
+
+function isUnexpectedResponse(error: unknown): error is Extract<JobError, { code: "unexpected_media_response" }> {
+  return !!error && typeof error === "object" && "code" in error && error.code === "unexpected_media_response";
 }
 
 export function shouldSurfaceDescriptor(descriptor: StreamDescriptor): boolean {

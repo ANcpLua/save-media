@@ -30,7 +30,7 @@ files as video.
 
 | Capability | Status | Verification gate |
 | --- | --- | --- |
-| Direct verified `.mp4` download | Implemented | Chrome e2e downloads a real fixture and verifies with `ffprobe`. |
+| Direct verified `.mp4` and `.mov` download | Implemented | Chromium e2e checks original QuickTime filenames and bytes, video tracks with `ffprobe`, redirects, and refusals for nonvideo responses. |
 | Direct verified `.webm` / `.mkv` detection | Implemented | Fixture server and classification tests cover descriptors. |
 | Plain HLS VOD with MPEG-TS segments | Implemented | Chrome e2e remuxes a real TS fixture to playable MP4. |
 | Plain HLS VOD with clear fMP4/CMAF segments | Implemented | Chrome e2e downloads a real `EXT-X-MAP` fixture to playable MP4 after init/fragment validation. |
@@ -44,7 +44,7 @@ files as video.
 | DRM detection | Implemented | Widevine fixture is refused with `cdm_required`. |
 | ClearKey/CENC detection | Implemented | ClearKey fixture is refused with `clearkey_deferred`. |
 | Twitter/X & Instagram progressive MP4 | Implemented | MAIN-world site resolvers (`content/sites/*`) read the page's own API responses and surface the muxed progressive MP4 as a verified direct download. Unit tests cover the resolvers (golden fixtures) and the fetch/XHR interceptor wiring; generic discovery is suppressed on these hosts so the demuxed video-only stream cannot outrank it. |
-| `Alt+S` best download command | Implemented | Automated tests check command registration; headed Playwright does not reliably fire extension shortcuts. |
+| `Alt+S` best download command | Implemented | Automated tests check command registration and press Alt+S on a page in Chromium to exercise the content-script hotkey. |
 | Local downloader (opt-in) | Implemented | Optional `nativeMessaging` permission requested from the popup. Background hands only the page URL to `packages/native-host` (user-installed yt-dlp and ffmpeg) when the user asks, or as the Alt+S fallback when the in-browser engine has nothing to save or refuses for a non-DRM reason (`DELEGABLE_ERROR_CODES` allowlist). Protected media never reaches the host. Progress, completion, and failures stream back to the popup and to an in-page toast. See `docs/boundary-rules.md`. |
 | Edge runtime | Release-gated | `smoke:edge` launches Edge with the unpacked Chromium build, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, decrypts AES-128 HLS, merges clear DASH, presses Alt+S, and verifies the refusal fixtures. |
 | Firefox runtime | Release-gated | `smoke:firefox` temporarily installs the extension, opens the popup, checks runtime messaging/command registration, downloads direct MP4, remuxes HLS MPEG-TS VOD, downloads clear HLS fMP4/CMAF, decrypts AES-128 HLS, merges clear DASH, and verifies the refusal fixtures. Firefox 155 with selenium-webdriver 4.44 refuses to navigate to `moz-extension://` over classic WebDriver ("Navigation to … is not allowed in this context"), so this smoke needs a driver or Firefox version where that step works; the Chromium e2e and `smoke:edge` cover the same capabilities meanwhile. |
@@ -66,7 +66,7 @@ files as video.
 - AES-128 on a demuxed variant (av-merge fetches its two tracks by URL and
   carries no key, so it keeps the `hls_encryption_unsupported` refusal).
 - HLS Live/DVR recording.
-- Direct `.mov`, `.avi`, `.wmv`, `.flv`, or URL-only media guesses.
+- Direct `.avi`, `.wmv`, `.flv`, or URL-only media guesses.
 - Standalone audio downloads.
 - Browser store submission beyond the current privacy policy, listing draft,
   permission justification, reviewer notes, package icons, and support matrix.
@@ -87,16 +87,14 @@ Page ISOLATED world
         |
         v
 Background router
-  classifies descriptors, dedupes noisy segment URLs, owns job state
-        |
-        +-- direct verified progressive URL -> chrome.downloads.download
+  observes media responses, classifies descriptors, owns job state
         |
         v
 Chromium offscreen document
-  engine host runs plain-HLS and av-merge jobs and returns Blob URLs
+  engine host verifies direct files, HLS, and merged audio/video and returns Blob URLs
         |
         v
-chrome.downloads.download
+chrome.downloads.download, then completion feedback
 ```
 
 Firefox has a separate build target. Its background event page hosts the HLS
@@ -117,19 +115,19 @@ The detector intentionally drops noisy internal pieces:
 
 - HLS/DASH segment URLs (`.ts`, `.m4s`, numbered fragments);
 - fMP4 init segments such as `init.mp4`;
-- non-media web assets;
-- repeated numeric direct-fragment families that are not a complete video.
+- non-media web assets.
 
-Direct download is allowed only after headers or magic bytes confirm MP4, WebM,
-or MKV. `.mp4` in a URL is a hint, not permission.
+Direct media requires a recognizable MP4, QuickTime, WebM, or Matroska
+container in the response bytes. Filenames and MIME types guide discovery.
+See [direct file discovery and recovery](range-recovery.md).
 
 ## Download Jobs
 
 ### Direct
 
-Direct progressive files are handed to `chrome.downloads.download`. The
-extension does not convert progressive containers. If the server provides MKV,
-the saved file is MKV.
+The engine fetches the current response and verifies the completed file
+before handing its Blob to `chrome.downloads.download`. It preserves the
+container and original filename for direct files.
 
 ### HLS
 

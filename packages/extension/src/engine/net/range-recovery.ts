@@ -1,7 +1,7 @@
 // Adapted from video-rescue/internal/rescue/downloader.go (MIT, ANcpLua).
 // See licenses/video-rescue-MIT.txt. Browser adaptation: bounded probes,
 // per-range retries and representation checks; no filesystem/native host.
-import { BROWSER_OUTPUT_LIMIT_BYTES, type JobError } from "@savemedia/core";
+import { type JobError } from "@savemedia/core";
 import { classifyNetworkFailure, type NetworkPhase } from "./error-classification";
 
 export interface RangeRetry {
@@ -13,6 +13,7 @@ export type RetryProgress = (retry: RangeRetry) => void;
 
 export interface ProbeResponse {
   readonly status: number;
+  readonly url?: string;
   readonly headers: { forEach(cb: (value: string, key: string) => void): void };
   readonly body?: ReadableStream<Uint8Array> | null;
   clone(): { arrayBuffer(): Promise<ArrayBuffer> };
@@ -20,6 +21,7 @@ export interface ProbeResponse {
 
 export interface ProbeInit {
   readonly credentials: "include";
+  readonly cache?: "no-store";
   readonly headers?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
 }
@@ -48,16 +50,18 @@ export class RangeRecoveryError extends Error {
 /** Translate transport failures without exposing signed URLs or raw fetch errors. */
 export function rangeFailure(error: unknown, url: string, phase: NetworkPhase): JobError {
   const status = error instanceof RangeRecoveryError ? error.status : undefined;
+  let origin = "";
+  try { origin = new URL(url).origin; } catch { /* No origin for a malformed URL. */ }
   const detail = error instanceof Error && error.name === "TimeoutError"
     ? "The request timed out after retries." : "The media request could not be completed.";
-  const classified = classifyNetworkFailure({ url, status: status ?? "network-error", attemptsRemaining: 0,
-    retryAfterSeconds: null, detail }, phase, url);
+  const classified = classifyNetworkFailure({ url: origin, status: status ?? "network-error", attemptsRemaining: 0,
+    retryAfterSeconds: null, detail }, phase, origin);
   if (status !== undefined && classified) return classified;
   if (error instanceof RangeRecoveryError) {
     return { code: "engine_job_failed", severity: "terminal", at: phase === "manifest" ? "manifest" : "segment",
       detail: status === undefined ? error.message : `Media request returned HTTP ${status}. Reload the page and check again.` };
   }
-  return classified ?? { code: "network_unreachable", severity: "terminal", phase, url, detail };
+  return classified ?? { code: "network_unreachable", severity: "terminal", phase, url: origin, detail };
 }
 
 export function parseContentRange(value: string | undefined): ContentRange | null {
@@ -81,11 +85,6 @@ export function rangeMetadata(headers: Readonly<Record<string, string>>): RangeM
   return null;
 }
 
-export function canRecoverWithRanges(url: string, headers: Readonly<Record<string, string>>): boolean {
-  const metadata = rangeMetadata(headers);
-  return url.startsWith("https://") && metadata !== null && metadata.total < BROWSER_OUTPUT_LIMIT_BYTES;
-}
-
 export function responseHeaders(response: ProbeResponse): Record<string, string> {
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => { headers[key.toLowerCase()] = value; });
@@ -99,7 +98,7 @@ export function checkResponseStatus(response: ProbeResponse): void {
 
 /** Retry the whole operation, including body reads, not just response headers. */
 export async function recoverRequest<T>(
-  operation: (signal: AbortSignal) => Promise<T>,
+  operation: (signal: AbortSignal, receivedBytes: () => void) => Promise<T>,
   signal: AbortSignal,
   attempts = 3,
   onRetry?: RetryProgress,
@@ -109,9 +108,14 @@ export async function recoverRequest<T>(
     const controller = new AbortController();
     const abort = () => controller.abort(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => controller.abort(new DOMException("Range request timed out", "TimeoutError")), 45_000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const receivedBytes = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(new DOMException("Media request timed out", "TimeoutError")), 45_000);
+    };
+    receivedBytes();
     try {
-      return await operation(controller.signal);
+      return await operation(controller.signal, receivedBytes);
     } catch (error) {
       signal.throwIfAborted();
       if (error instanceof RangeRecoveryError && !error.retryable) throw error;
@@ -191,9 +195,9 @@ export async function probeMedia(
   url: string,
   signal: AbortSignal = new AbortController().signal,
   onRetry?: RetryProgress,
-): Promise<{ headers: Record<string, string>; bytes: Uint8Array }> {
+): Promise<{ url: string; headers: Record<string, string>; bytes: Uint8Array }> {
   return recoverRequest(async attemptSignal => {
-    const response = await fetchFn(url, { credentials: "include", headers: { range: "bytes=0-4095" }, signal: attemptSignal });
+    const response = await fetchFn(url, { credentials: "include", cache: "no-store", headers: { range: "bytes=0-4095" }, signal: attemptSignal });
     try {
       checkResponseStatus(response);
       const headers = responseHeaders(response);
@@ -202,12 +206,12 @@ export async function probeMedia(
         if (!range) throw new RangeRecoveryError("Invalid probe Content-Range");
         const end = Math.min(4095, range.total - 1);
         validateRange(headers, 0, end, range.total);
-        return { headers, bytes: await readBytes(response, end + 1, true) };
+        return { url: response.url || url, headers, bytes: await readBytes(response, end + 1, true) };
       }
       if (response.status !== 200) throw new RangeRecoveryError("No media body in probe response");
       // Do not advertise recovery based on a stray Content-Range on a 200.
       delete headers["content-range"];
-      return { headers, bytes: await readBytes(response, 4096, false) };
+      return { url: response.url || url, headers, bytes: await readBytes(response, 4096, false) };
     } finally {
       try { await response.body?.cancel(); } catch { /* already consumed */ }
     }
@@ -220,7 +224,7 @@ export async function fetchMediaRange(
 ): Promise<Uint8Array> {
   return recoverRequest(async attemptSignal => {
     const response = await fetch(url, {
-      credentials: "include", signal: attemptSignal,
+      credentials: "include", cache: "no-store", signal: attemptSignal,
       headers: { range: `bytes=${start}-${end}`, "if-range": metadata.validator },
     });
     try {

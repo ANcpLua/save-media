@@ -291,7 +291,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
       </div>
 
       <footer className="px-3 py-2 border-t border-line text-[10px] text-muted flex items-center justify-end">
-        <span>{descriptors.length} detected{version && ` · v${version}`}</span>
+        <span>{ranked.length} detected{version && ` · v${version}`}</span>
       </footer>
     </main>
   );

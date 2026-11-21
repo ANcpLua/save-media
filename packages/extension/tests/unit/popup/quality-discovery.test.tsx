@@ -19,7 +19,8 @@ describe("progressive quality discovery to download", () => {
       {"file":"https://cdn.example/clip_1080p.mp4/?token=denied","label":"1080p"}
     ]}</script>`;
     const downloads = { download: vi.fn(async () => 1) };
-    const router = createRouter({ downloads, runtime: { sendMessage: vi.fn() }, ensureEngineHost: vi.fn(async () => undefined) });
+    const sendToEngine = vi.fn();
+    const router = createRouter({ downloads, runtime: { sendMessage: sendToEngine }, ensureEngineHost: vi.fn(async () => undefined) });
     const pageUrl = "https://player.example/watch/1";
     for (let n = 0; n < 20; n++) {
       const url = `https://cdn.example/recommendation-${n}.mp4`;
@@ -53,12 +54,22 @@ describe("progressive quality discovery to download", () => {
     fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
     const msg = vi.mocked(chrome.runtime.sendMessage).mock.calls.at(-1)![0] as unknown as PopupToBackgroundMessage;
     await router.handlePopupMessage(msg);
-    expect(downloads.download).toHaveBeenLastCalledWith(expect.objectContaining({ url: "https://cdn.example/clip_720p.mp4/?token=high" }));
+    expect(sendToEngine).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "start-job", descriptor: expect.objectContaining({
+        source: expect.objectContaining({ url: "https://cdn.example/clip_720p.mp4/?token=high" }),
+      }),
+    }));
+    expect(downloads.download).not.toHaveBeenCalled();
 
     fireEvent.change(select, { target: { value: select.options[1]!.value } });
     fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
     await router.handlePopupMessage(vi.mocked(chrome.runtime.sendMessage).mock.calls.at(-1)![0] as unknown as PopupToBackgroundMessage);
-    expect(downloads.download).toHaveBeenLastCalledWith(expect.objectContaining({ url: "https://cdn.example/clip_480p.mp4/?token=low" }));
+    expect(sendToEngine).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "start-job", descriptor: expect.objectContaining({
+        source: expect.objectContaining({ url: "https://cdn.example/clip_480p.mp4/?token=low" }),
+      }),
+    }));
+    expect(downloads.download).not.toHaveBeenCalled();
   });
 
   it("keeps unrelated player groups and ungrouped direct files separate", () => {
