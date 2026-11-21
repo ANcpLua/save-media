@@ -34,10 +34,12 @@ active job even if the site rotates its URL. After completion the user can
 explicitly save another copy.
 
 If Chrome reports a certificate rejection while probing a generated link,
-SaveMedia asks the same named file's Download control for another link once.
-It can probe an HTTPS destination with a different host and the same file
-path and parameters, allowing the site's expiring signature to change.
-The replacement goes through the normal certificate and media checks.
+the file row offers **Cancel** and **Download anyway**. Confirmation asks
+the site's Download control for a fresh HTTPS address. The tab, page and
+filename must still match. A digest of the file path and stable query
+parameters binds the retry to the original file while allowing the delivery
+host and signature to change. Chrome verifies the connection and SaveMedia
+checks the media bytes as usual. Cancel dismisses the prompt.
 
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB

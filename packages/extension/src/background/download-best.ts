@@ -149,7 +149,9 @@ export async function downloadBestForTab(
     if ("problem" in result) {
       if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, discovery.pageUrl)) return;
       await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, result.problem);
-      deps.showHotkeyFeedback(tabId, "failed", `${result.problem.title}. Open SaveMedia for details.`);
+      deps.showHotkeyFeedback(tabId, "failed", result.problem.code === "tls_certificate_rejected"
+        ? "Chrome couldn’t verify this connection. Open SaveMedia to choose whether to try again."
+        : `${result.problem.title}. Open SaveMedia for details.`);
       return;
     }
     outcome = result;
@@ -190,25 +192,51 @@ export async function downloadBestForTab(
 type FilePageResult = Extract<BestDownloadOutcome, { kind: "started" }> | { problem: FileSaveProblem } | null;
 const pendingFileLinks = new Map<string, Promise<FilePageResult>>();
 
+export async function retryNamedFileConnection(
+  deps: DownloadBestDeps, tabId: number, pageUrl: string, filename: string, fingerprint: string,
+): Promise<void> {
+  const discovery = await discoverPageMediaForTab(deps, tabId, pageUrl, pageUrl);
+  if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return;
+  const offer = discovery?.fileDownload;
+  const result = offer?.filename === filename ? await startFilePageDownload(deps, tabId, pageUrl, offer, fingerprint)
+    : { problem: describeFileSaveProblem(filename, "download link") };
+  if (!result || (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl))) return;
+  if ("problem" in result) {
+    const problem = result.problem.code === "tls_certificate_rejected"
+      ? { ...result.problem, code: "secure_retry_failed", title: "File wasn’t saved",
+        body: "Chrome still couldn’t verify the connection for the link the site just supplied." }
+      : result.problem;
+    await deps.rememberFileSaveProblem?.(tabId, pageUrl, problem);
+    deps.showHotkeyFeedback(tabId, "failed", problem.title);
+    return;
+  }
+  deps.trackHotkeyJob?.(result.streamId, tabId);
+  await deps.rememberFileSaveProblem?.(tabId, pageUrl, null);
+}
+
 function startFilePageDownload(
-  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer,
+  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer, expectedFingerprint?: string,
 ): Promise<FilePageResult> {
   // A popup click and a shortcut can overlap before either has a stream ID.
-  const key = JSON.stringify([tabId, pageUrl, offer.filename, offer.linkedPage]);
+  const key = JSON.stringify([tabId, pageUrl, offer.filename, offer.linkedPage, expectedFingerprint]);
   const pending = pendingFileLinks.get(key);
   if (pending) return pending;
-  const starting = resolveAndStartFileDownload(deps, tabId, pageUrl, offer).finally(() => pendingFileLinks.delete(key));
+  const starting = resolveAndStartFileDownload(deps, tabId, pageUrl, offer, expectedFingerprint).finally(() => pendingFileLinks.delete(key));
   pendingFileLinks.set(key, starting);
   return starting;
 }
 
 async function resolveAndStartFileDownload(
-  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer,
+  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer, expectedFingerprint?: string,
 ): Promise<FilePageResult> {
   let source = await deps.generateDownload?.(tabId, pageUrl, offer);
   if (!source) return { problem: describeFileSaveProblem(offer.filename, "download link") };
 
   for (let attempt = 0; ; attempt++) {
+    if (expectedFingerprint && (new URL(source.url).protocol !== "https:" || await fileFingerprint(source.url) !== expectedFingerprint)) {
+      return { problem: { filename: offer.filename, stage: "download link", code: "https_link_unavailable",
+        title: "File wasn’t saved", body: "The site didn’t supply a matching HTTPS link for this file." } };
+    }
     await probeSource(deps, tabId, pageUrl, source, offer.linkedPage);
     if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return null;
     // A passive scan may have changed scope while the probe was in flight.
@@ -220,25 +248,28 @@ async function resolveAndStartFileDownload(
     const error = outcome.kind === "failed" ? outcome.error : undefined;
     const stage = outcome.kind === "failed" && !outcome.duringDiscovery ? "start download" : "file connection";
     const problem = describeFileSaveProblem(offer.filename, stage, error);
+    if (error?.code === "tls_certificate_rejected" && stage === "file connection") {
+      return { problem: { ...problem, resourceFingerprint: await fileFingerprint(source.url) } };
+    }
     if (attempt > 0) return { problem };
     const expiredResource = error?.code === "access_denied" && error.httpStatus === 403
       ? renewableResource(source.url) : null;
-    const certificateFailure = stage === "file connection" && error?.code === "tls_certificate_rejected";
-    if (!expiredResource && !certificateFailure) return { problem };
+    if (!expiredResource) return { problem };
 
     // Only the original file's Download control can supply a replacement.
     const refreshed = await deps.generateDownload?.(tabId, pageUrl, offer);
     if (!refreshed || refreshed.url === source.url) return { problem };
-    if (certificateFailure) {
-      const previous = new URL(renewableResource(source.url) ?? source.url);
-      const next = new URL(renewableResource(refreshed.url) ?? refreshed.url);
-      if (next.protocol !== "https:" || next.host === error.browserDiagnostic.host
-        || next.pathname !== previous.pathname || next.search !== previous.search) return { problem };
-    } else if (renewableResource(refreshed.url) !== expiredResource) {
-      return { problem };
-    }
+    if (renewableResource(refreshed.url) !== expiredResource) return { problem };
     source = refreshed;
   }
+}
+
+// Keep the file identity across popup closure without storing a signed URL.
+async function fileFingerprint(url: string): Promise<string> {
+  const resource = new URL(renewableResource(url) ?? url);
+  const bytes = new TextEncoder().encode(resource.pathname + resource.search);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function registerDownloadBestCommand(commands: CommandsLike | undefined, deps: DownloadBestDeps): void {

@@ -21,7 +21,7 @@ import { refreshDirectSource } from "./refresh-direct";
 import { saveVerifiedDownload } from "./browser-download";
 import { createCaptureHandler } from "./capture";
 import { createDiagnosticFetch } from "./diagnostic-fetch";
-import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
+import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, retryNamedFileConnection, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
 import { createRefererMirror, registerNetworkCapture } from "./network-capture";
 import { handleInstalled } from "./installed";
@@ -265,6 +265,13 @@ chrome.runtime.onMessage.addListener((
   }
 
   if (isPopupToBackgroundMessage(msg)) {
+    if (msg.type === "file-connection-choice") {
+      const popup = chrome.runtime.getURL("src/popup/index.html");
+      if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/, 1)[0] !== popup) return false;
+      void applyFileConnectionChoice(msg)
+        .then(() => sendResponse(router.snapshot(msg.tabId)), () => sendResponse(null));
+      return true;
+    }
     if (msg.type === "download-page") {
       void downloadBestForTab(downloadBestDeps, msg.tabId, msg.pageUrl, true)
         .then(() => sendResponse(router.snapshot(msg.tabId)), () => sendResponse(router.snapshot(msg.tabId)));
@@ -295,6 +302,19 @@ chrome.runtime.onMessage.addListener((
 
   return false;
 });
+
+async function applyFileConnectionChoice(msg: Extract<PopupToBackgroundMessage, { type: "file-connection-choice" }>): Promise<void> {
+  const { tabId, pageUrl, filename, retry } = msg;
+  if (!await isOnPage(tabId, pageUrl)) return;
+  const snapshot = await chrome.tabs.sendMessage(tabId, { type: "page-media-snapshot" }, { frameId: 0 });
+  if (snapshot?.fileSaveProblem?.code !== "tls_certificate_rejected"
+    || snapshot.fileSaveProblem.filename !== filename || snapshot.generatedDownloadFilename !== filename) return;
+  if (retry && typeof snapshot.fileSaveProblem.resourceFingerprint === "string") {
+    await retryNamedFileConnection(downloadBestDeps, tabId, pageUrl, filename, snapshot.fileSaveProblem.resourceFingerprint);
+  } else {
+    await downloadBestDeps.rememberFileSaveProblem?.(tabId, pageUrl, null);
+  }
+}
 
 // Every local-* request answers with the full status so the popup has one
 // code path to render from.

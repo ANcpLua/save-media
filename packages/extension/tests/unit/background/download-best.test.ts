@@ -4,6 +4,7 @@ import {
   downloadBestForActiveTab,
   downloadBestForTab,
   registerDownloadBestCommand,
+  retryNamedFileConnection,
   type DownloadBestDeps,
 } from "../../../src/background/download-best";
 import { MAIN_BRIDGE_TAG, type ContentDiscoveryResponse } from "../../../src/types/messages";
@@ -163,7 +164,7 @@ describe("download-best command helpers", () => {
 
   it.each([
     ["https://two.example/clip.mov?file=31", true],
-    ["https://one.example/clip.mov?file=31", false],
+    ["https://one.example/clip.mov?file=31", true],
     ["https://two.example/clip.mov?file=32", false],
     ["http://two.example/clip.mov?file=31", false],
   ] as const)("checks a replacement file link after a TLS rejection: %s", async (replacement, accepted) => {
@@ -184,16 +185,21 @@ describe("download-best command helpers", () => {
 
     await downloadBestForTab(d, 42, pageUrl);
 
+    expect(generateDownload).toHaveBeenCalledTimes(1);
+    const warning = vi.mocked(d.rememberFileSaveProblem!).mock.lastCall?.[2];
+    expect(warning?.code).toBe("tls_certificate_rejected");
+    await retryNamedFileConnection(d, 42, pageUrl, filename, warning!.resourceFingerprint!);
+
     expect(generateDownload).toHaveBeenCalledTimes(2);
     expect(d.handleCapture).toHaveBeenCalledTimes(accepted ? 2 : 1);
     if (accepted) {
       expect(d.handleCapture).toHaveBeenLastCalledWith(42, expect.objectContaining({
         payload: expect.objectContaining({ url: replacement, filenameHint: filename }),
       }));
-      expect(d.showHotkeyFeedback).toHaveBeenLastCalledWith(42, "started", expect.any(String));
+      expect(d.rememberFileSaveProblem).toHaveBeenLastCalledWith(42, pageUrl, null);
     } else {
       expect(d.rememberFileSaveProblem).toHaveBeenLastCalledWith(42, pageUrl, expect.objectContaining({
-        code: "tls_certificate_rejected",
+        code: "https_link_unavailable",
       }));
     }
   });

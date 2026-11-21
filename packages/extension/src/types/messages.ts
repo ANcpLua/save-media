@@ -100,6 +100,7 @@ export interface FileSaveProblem {
   readonly title: string;
   readonly body: string;
   readonly code: string;
+  readonly resourceFingerprint?: string;
 }
 
 export interface FileSaveProblemMessage {
@@ -160,6 +161,7 @@ export type PopupToBackgroundMessage =
   | { readonly type: "list"; readonly tabId: number }
   | { readonly type: "rescan"; readonly tabId: number }
   | { readonly type: "download-page"; readonly tabId: number; readonly pageUrl: string }
+  | { readonly type: "file-connection-choice"; readonly tabId: number; readonly pageUrl: string; readonly filename: string; readonly retry: boolean }
   | { readonly type: "local-status" }
   | { readonly type: "local-settings"; readonly patch: Partial<LocalSettingsValue> }
   | { readonly type: "local-download"; readonly tabId: number | null; readonly pageUrl: string }
@@ -245,6 +247,7 @@ const popupToBackgroundSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("list"), tabId: z.number() }),
   z.object({ type: z.literal("rescan"), tabId: z.number() }),
   z.object({ type: z.literal("download-page"), tabId: z.number(), pageUrl: z.string() }),
+  z.object({ type: z.literal("file-connection-choice"), tabId: z.number(), pageUrl: z.string(), filename: z.string(), retry: z.boolean() }),
   z.object({ type: z.literal("local-status") }),
   z.object({ type: z.literal("local-settings"), patch: localSettingsPatchSchema }),
   z.object({ type: z.literal("local-download"), tabId: numberOrNull, pageUrl: z.string() }),
@@ -272,7 +275,7 @@ const backgroundToPopupSchema = z.discriminatedUnion("type", [
       bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional(), stage: z.string().optional(), error: record.optional() })).optional() }),
   z.object({ type: z.literal("file-save-problem"), tabId: z.number(), pageUrl: z.string(), problem: z.object({
     filename: z.string(), stage: z.enum(["download link", "file connection", "start download"]),
-    title: z.string(), body: z.string(), code: z.string(),
+    title: z.string(), body: z.string(), code: z.string(), resourceFingerprint: z.string().optional(),
   }).nullable() }),
   z.object({ type: z.literal("local-status"), settings: record, permissionGranted: z.boolean(), jobs: z.array(z.unknown()) }),
   z.object({ type: z.literal("local-job"), job: localJobViewSchema }),

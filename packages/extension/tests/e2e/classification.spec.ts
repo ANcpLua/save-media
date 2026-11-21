@@ -629,7 +629,7 @@ test.describe("extension classifies real fixture pages", () => {
         res.end(`<!doctype html><h1>Certificate fixture.mov</h1><a href="#">Download</a><script>
           document.querySelector("a").addEventListener("click", event => {
             event.preventDefault();
-            location.href = "/redirect.mov";
+            location.href = "https://${mediaHost}/clip.mov?fixture=not-for-display";
           });
         </script>`);
       } else {
@@ -682,21 +682,24 @@ test.describe("extension classifies real fixture pages", () => {
       await page.goto(origin + "/named-file.html");
       popup = await openPopupFor(page);
       await popup.getByRole("button", { name: "Download", exact: true }).click();
-      await expect(popup.getByTestId("file-save-problem")).toContainText("couldn’t verify the certificate it received for this connection");
-      await expect(popup.getByRole("button", { name: "Retry download" })).toBeVisible();
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Chrome couldn’t verify this connection");
+      await expect(popup.getByRole("button", { name: "Download anyway" })).toBeVisible();
       await popup.close();
       popup = await openPopupFor(page);
-      await expect(popup.getByTestId("file-save-problem")).toContainText("Secure connection failed");
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Chrome couldn’t verify this connection");
       await expect(popup.getByTestId("file-save-problem")).not.toContainText("not-for-display");
+      await popup.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(popup.getByRole("button", { name: "Download", exact: true })).toBeVisible();
       await popup.close();
       popup = undefined;
 
       await page.reload();
       await page.bringToFront();
       await page.keyboard.press("Alt+KeyS");
-      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Not savedSecure connection failed");
+      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Chrome couldn’t verify this connection");
       popup = await openPopupFor(page);
-      await expect(popup.getByTestId("file-save-problem")).toContainText("Secure connection failed");
+      await popup.getByRole("button", { name: "Download anyway" }).click();
+      await expect(popup.getByTestId("file-save-problem")).toContainText("File wasn’t saved");
       expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
       expect(mediaRequests).toBe(0);
     } finally {
