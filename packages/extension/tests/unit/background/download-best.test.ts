@@ -4,7 +4,7 @@ import {
   downloadBestForActiveTab,
   downloadBestForTab,
   registerDownloadBestCommand,
-  retryNamedFileConnection,
+  handleFileConnectionChoice,
   type DownloadBestDeps,
 } from "../../../src/background/download-best";
 import { MAIN_BRIDGE_TAG, type ContentDiscoveryResponse } from "../../../src/types/messages";
@@ -188,7 +188,10 @@ describe("download-best command helpers", () => {
     expect(generateDownload).toHaveBeenCalledTimes(1);
     const warning = vi.mocked(d.rememberFileSaveProblem!).mock.lastCall?.[2];
     expect(warning?.code).toBe("tls_certificate_rejected");
-    await retryNamedFileConnection(d, 42, pageUrl, filename, warning!.resourceFingerprint!);
+    const scansBeforeRetry = vi.mocked(d.tabs.sendMessage).mock.calls.length;
+    await handleFileConnectionChoice(d, { type: "file-connection-choice", tabId: 42, pageUrl, filename, retry: true },
+      { fileSaveProblem: warning!, fileDownload: { filename } });
+    expect(d.tabs.sendMessage).toHaveBeenCalledTimes(scansBeforeRetry);
 
     expect(generateDownload).toHaveBeenCalledTimes(2);
     expect(d.handleCapture).toHaveBeenCalledTimes(accepted ? 2 : 1);

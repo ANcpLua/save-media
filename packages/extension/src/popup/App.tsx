@@ -96,7 +96,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   const [failures, setFailures] = useState<readonly DiscoveryFailure[]>(initialFailures);
   const [scanning, setScanning] = useState(false);
   const [snapshot, setSnapshot] = useState<PageMediaSnapshot | null>(null);
-  const [fileDownload, setFileDownload] = useState<"preparing" | "unavailable" | null>(null);
+  const [fileDownload, setFileDownload] = useState<"preparing" | "dismissing" | "unavailable" | null>(null);
   const asWindow = windowTabId() !== null;
 
   useEffect(() => {
@@ -194,14 +194,15 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
 
   const ranked = rankDescriptors(descriptors, snapshot);
   const filename = ranked.length === 0 && tabId !== null && pageUrl
-    ? snapshot?.generatedDownloadFilename ?? snapshot?.fileSaveProblem?.filename : undefined;
-  const problem = filename && fileDownload !== "preparing" ? snapshot?.fileSaveProblem : null;
-  const confirmConnection = problem?.code === "tls_certificate_rejected" && !!problem.resourceFingerprint && problem.filename === filename;
+    ? snapshot?.fileDownload?.filename ?? snapshot?.fileSaveProblem?.filename : undefined;
+  const problem = fileDownload !== "preparing" && filename === snapshot?.fileSaveProblem?.filename
+    ? snapshot?.fileSaveProblem : null;
+  const confirmConnection = problem?.code === "tls_certificate_rejected" && !!problem.resourceFingerprint;
   const version = manifestVersion();
 
   function downloadFilePage(choice?: "retry" | "cancel"): void {
-    if (tabId === null || !pageUrl || scanning || fileDownload === "preparing") return;
-    setFileDownload("preparing");
+    if (tabId === null || !pageUrl || (!choice && scanning) || fileDownload === "preparing" || fileDownload === "dismissing") return;
+    setFileDownload(choice === "cancel" ? "dismissing" : "preparing");
     const msg: PopupToBackgroundMessage = choice && filename
       ? { type: "file-connection-choice", tabId, pageUrl, filename, retry: choice === "retry" }
       : { type: "download-page", tabId, pageUrl };
@@ -298,19 +299,19 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
             <li className="rounded-lg bg-surface border border-accent/60 p-3 text-xs">
               <p className="break-words font-medium">{filename}</p>
               {confirmConnection ? (
-                <div className="mt-2 rounded-md border border-amber-400 bg-amber-950/50 p-2.5 text-amber-50" data-testid="file-save-problem">
-                  <p className="font-semibold text-amber-300" role="alert">Chrome couldn’t verify this connection</p>
-                  <p className="mt-1">Only continue if you trust the source. SaveMedia can ask the site for a fresh download link.</p>
+                <div className="mt-2 rounded-md border border-orange-400 bg-orange-950/60 p-2.5 text-orange-50" data-testid="file-save-problem">
+                  <p className="font-semibold text-orange-300" role="alert">Chrome couldn’t verify this connection</p>
+                  <p className="mt-1">If you continue, SaveMedia will try the site’s Download button again. Your browser must verify the connection before it can save the file.</p>
                   <div className="mt-2 flex justify-end gap-2">
-                    <button type="button" onClick={() => downloadFilePage("cancel")} disabled={scanning}
-                      className="rounded-md border border-amber-300/60 px-2.5 py-1">Cancel</button>
-                    <button type="button" onClick={() => downloadFilePage("retry")} disabled={scanning}
+                    <button type="button" onClick={() => downloadFilePage("cancel")} disabled={fileDownload === "dismissing"}
+                      className="rounded-md border border-orange-300/60 px-2.5 py-1">Cancel</button>
+                    <button type="button" onClick={() => downloadFilePage("retry")} disabled={fileDownload === "dismissing"}
                       className="rounded-md bg-accent px-2.5 py-1 font-medium text-ink">Download anyway</button>
                   </div>
                 </div>
               ) : problem ? (
                 <div className="mt-2" data-testid="file-save-problem">
-                  <p className="font-medium" role="status">{problem.title}</p>
+                  <p className="font-semibold text-red-300" role="status">{problem.title}</p>
                   <p className="mt-0.5 text-muted">{problem.body}</p>
                 </div>
               ) : fileDownload === "unavailable" && (

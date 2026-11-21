@@ -2,7 +2,7 @@
 // message guards local so the bridge does not pull in the zod runtime.
 import { declaredMediaFilename, discoverPageMedia } from "./discovery";
 import { captureGeneratedDownload, fileDownloadOffer } from "./generated-download";
-import type { DiscoveredMedia, FileSaveProblem, HotkeyFeedbackOutcome, PageMediaSnapshot } from "../types/messages";
+import type { DiscoveredMedia, FileSaveProblem, FileSaveState, HotkeyFeedbackOutcome, PageMediaSnapshot } from "../types/messages";
 
 export {};
 const BRIDGE_TAG = "__savemedia" as const;
@@ -61,6 +61,10 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   }
   if (isRecord(msg) && msg.type === "page-media-snapshot") {
     sendResponse(pageMediaSnapshot());
+    return false;
+  }
+  if (isRecord(msg) && msg.type === "file-save-state") {
+    sendResponse(window.top === window && msg.pageUrl === location.href ? currentFileSaveState() : null);
     return false;
   }
   if (isRecord(msg) && msg.type === "file-save-problem" && msg.pageUrl === location.href && window.top === window) {
@@ -138,10 +142,13 @@ function pageMediaSnapshot(): PageMediaSnapshot {
     visible: visibleFraction(v),
     playing: !v.paused && !v.ended && v.readyState >= 2,
   })).filter(v => v.src || v.thumbnail);
-  const generated = fileDownloadOffer()?.filename;
+  return { pageTitle: title, videos, ...currentFileSaveState() };
+}
+
+function currentFileSaveState(): FileSaveState {
+  const offer = fileDownloadOffer();
   const problem = lastFileSave?.pageUrl === location.href ? lastFileSave.problem : null;
-  return { pageTitle: title, videos, ...(generated ? { generatedDownloadFilename: generated } : {}),
-    ...(problem ? { fileSaveProblem: problem } : {}) };
+  return { ...(offer ? { fileDownload: offer } : {}), fileSaveProblem: problem };
 }
 
 function captureFrame(v: HTMLVideoElement): string | null {

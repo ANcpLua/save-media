@@ -8,8 +8,10 @@ import {
   type DiscoveredMedia,
   type FileDownloadOffer,
   type FileSaveProblem,
+  type FileSaveState,
   type HotkeyFeedbackOutcome,
   type LocalJobView,
+  type PopupToBackgroundMessage,
 } from "../types/messages";
 import { hotkeyErrorDetail } from "./hotkey-jobs";
 import { describeFileSaveProblem } from "./file-save-problem";
@@ -192,19 +194,25 @@ export async function downloadBestForTab(
 type FilePageResult = Extract<BestDownloadOutcome, { kind: "started" }> | { problem: FileSaveProblem } | null;
 const pendingFileLinks = new Map<string, Promise<FilePageResult>>();
 
-export async function retryNamedFileConnection(
-  deps: DownloadBestDeps, tabId: number, pageUrl: string, filename: string, fingerprint: string,
+export async function handleFileConnectionChoice(
+  deps: DownloadBestDeps, choice: Extract<PopupToBackgroundMessage, { type: "file-connection-choice" }>, state: FileSaveState | null,
 ): Promise<void> {
-  const discovery = await discoverPageMediaForTab(deps, tabId, pageUrl, pageUrl);
-  if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return;
-  const offer = discovery?.fileDownload;
-  const result = offer?.filename === filename ? await startFilePageDownload(deps, tabId, pageUrl, offer, fingerprint)
+  const { tabId, pageUrl, filename } = choice;
+  const warning = state?.fileSaveProblem;
+  if (warning?.code !== "tls_certificate_rejected" || warning.filename !== filename) return;
+  if (!choice.retry) {
+    await deps.rememberFileSaveProblem?.(tabId, pageUrl, null);
+    return;
+  }
+  const offer = state?.fileDownload;
+  const result = offer?.filename === filename && warning.resourceFingerprint
+    ? await startFilePageDownload(deps, tabId, pageUrl, offer, warning.resourceFingerprint)
     : { problem: describeFileSaveProblem(filename, "download link") };
   if (!result || (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl))) return;
   if ("problem" in result) {
     const problem = result.problem.code === "tls_certificate_rejected"
       ? { ...result.problem, code: "secure_retry_failed", title: "File wasn’t saved",
-        body: "Chrome still couldn’t verify the connection for the link the site just supplied." }
+        body: "The browser still couldn’t verify the connection to the file server. No file was downloaded." }
       : result.problem;
     await deps.rememberFileSaveProblem?.(tabId, pageUrl, problem);
     deps.showHotkeyFeedback(tabId, "failed", problem.title);

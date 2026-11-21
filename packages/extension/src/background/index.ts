@@ -14,6 +14,7 @@ import type {
   BackgroundToPopupMessage,
   DiscoveredMedia,
   EngineToBackgroundMessage,
+  FileSaveState,
   PopupToBackgroundMessage,
 } from "../types/messages";
 import { createRouter } from "./router";
@@ -21,7 +22,7 @@ import { refreshDirectSource } from "./refresh-direct";
 import { saveVerifiedDownload } from "./browser-download";
 import { createCaptureHandler } from "./capture";
 import { createDiagnosticFetch } from "./diagnostic-fetch";
-import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, retryNamedFileConnection, type DownloadBestDeps } from "./download-best";
+import { discoverPageMediaForTab, downloadBestForTab, handleFileConnectionChoice, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
 import { createRefererMirror, registerNetworkCapture } from "./network-capture";
 import { handleInstalled } from "./installed";
@@ -304,16 +305,9 @@ chrome.runtime.onMessage.addListener((
 });
 
 async function applyFileConnectionChoice(msg: Extract<PopupToBackgroundMessage, { type: "file-connection-choice" }>): Promise<void> {
-  const { tabId, pageUrl, filename, retry } = msg;
-  if (!await isOnPage(tabId, pageUrl)) return;
-  const snapshot = await chrome.tabs.sendMessage(tabId, { type: "page-media-snapshot" }, { frameId: 0 });
-  if (snapshot?.fileSaveProblem?.code !== "tls_certificate_rejected"
-    || snapshot.fileSaveProblem.filename !== filename || snapshot.generatedDownloadFilename !== filename) return;
-  if (retry && typeof snapshot.fileSaveProblem.resourceFingerprint === "string") {
-    await retryNamedFileConnection(downloadBestDeps, tabId, pageUrl, filename, snapshot.fileSaveProblem.resourceFingerprint);
-  } else {
-    await downloadBestDeps.rememberFileSaveProblem?.(tabId, pageUrl, null);
-  }
+  const request = { type: "file-save-state", pageUrl: msg.pageUrl } satisfies BackgroundToContentMessage;
+  const state: FileSaveState | null = await chrome.tabs.sendMessage(msg.tabId, request, { frameId: 0 });
+  await handleFileConnectionChoice(downloadBestDeps, msg, state);
 }
 
 // Every local-* request answers with the full status so the popup has one

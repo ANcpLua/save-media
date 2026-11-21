@@ -65,6 +65,7 @@ export type HotkeyFeedbackOutcome = "preparing" | "started" | "delegated" | "com
 export type BackgroundToContentMessage =
   | { readonly type: "discover-page-media" }
   | { readonly type: "page-media-snapshot" }
+  | { readonly type: "file-save-state"; readonly pageUrl: string }
   | { readonly type: "generate-download-url"; readonly pageUrl: string; readonly filename: string }
   | FileSaveProblemMessage
   | { readonly type: "hotkey-feedback"; readonly outcome: HotkeyFeedbackOutcome; readonly detail: string };
@@ -82,10 +83,13 @@ export interface PageVideo {
   readonly playing: boolean;
 }
 
-export interface PageMediaSnapshot {
+export interface PageMediaSnapshot extends FileSaveState {
   readonly pageTitle: string;
   readonly videos: readonly PageVideo[];
-  readonly generatedDownloadFilename?: string;
+}
+
+export interface FileSaveState {
+  readonly fileDownload?: FileDownloadOffer;
   readonly fileSaveProblem?: FileSaveProblem | null;
 }
 

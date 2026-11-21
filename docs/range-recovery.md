@@ -34,12 +34,15 @@ active job even if the site rotates its URL. After completion the user can
 explicitly save another copy.
 
 If Chrome reports a certificate rejection while probing a generated link,
-the file row offers **Cancel** and **Download anyway**. Confirmation asks
-the site's Download control for a fresh HTTPS address. The tab, page and
+the file row offers **Cancel** and **Download anyway**. Confirmation runs the
+site's Download control again. The result can point to the same server.
+The extension reads the current file and warning together from the top frame
+so confirmation can skip scanning players and capturing thumbnails. The tab, page and
 filename must still match. A digest of the file path and stable query
 parameters binds the retry to the original file while allowing the delivery
 host and signature to change. Chrome verifies the connection and SaveMedia
-checks the media bytes as usual. Cancel dismisses the prompt.
+checks the media bytes as usual. A second certificate rejection shows
+**File wasn’t saved**. Cancel dismisses the prompt.
 
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
@@ -101,6 +104,13 @@ hostname from the same machine. The host root is sufficient for that check.
 Keep signed links out of diagnostic reports.
 
 ## Verify locally
+
+For a Chrome preview, run `bun run build` at the repository root and load
+`packages/extension/dist-chrome` using **Load unpacked**. Subsequent builds
+use the same directory. Use **Reload** on that extension and refresh the file
+page to activate the new page scripts. Check a reported connection failure
+with the same Chrome profile and network settings as the original report.
+A save in a browser using a different resolver verifies that route only.
 
 Install the workspace dependencies, Playwright Chromium and `ffprobe` to run
 the focused check.
