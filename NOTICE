@@ -5,9 +5,3 @@ Range recovery and direct-file container checks adapt algorithms from
 Video Rescue, Copyright (c) 2026 ANcpLua, under the MIT License.
 The license is included at packages/extension/public/licenses/video-rescue-MIT.txt
 and in extension builds at licenses/video-rescue-MIT.txt.
-
-Relay-enabled Chrome builds include the unmodified libcurl.js 0.7.5 library,
-Copyright ading2210, licensed under LGPL-3.0-or-later. Its JavaScript, WASM,
-license and upstream README are individually replaceable in vendor/libcurl.
-Corresponding source and build instructions:
-https://github.com/ading2210/libcurl.js/tree/2b6cff872414dd248437a9a9fe5cf84d62ecd64c

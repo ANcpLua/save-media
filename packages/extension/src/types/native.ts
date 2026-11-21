@@ -3,8 +3,8 @@
  * host (`packages/native-host`). The host is a Native Messaging program the
  * user installs themselves; it runs the user's own yt-dlp and ffmpeg.
  *
- * The extension only ever sends a page URL plus a quality preference. It
- * never sends media URLs, keys, or page content. The host refuses DRM.
+ * A yt-dlp job takes a page URL and quality preference. The separate optional
+ * HTTPS file reader streams the publisher’s response into the browser verifier.
  */
 
 import { z } from "zod";

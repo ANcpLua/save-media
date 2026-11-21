@@ -15,20 +15,17 @@ import type {
   BackgroundToPopupMessage,
   DiscoveredMedia,
   EngineToBackgroundMessage,
-  FileSaveState,
   PopupToBackgroundMessage,
 } from "../types/messages";
-import { relayUrl } from "../engine/relay-config";
 import type { FileDownloadOffer } from "../types/messages";
 import { answerRepeat, dismissRepeats, namedFileIdentity, repeatPrompt, reserveSave, savedThisSession } from "./session-saves";
-import { clearRelayStatus, relaySnapshot, saveThroughRelay } from "./save-through-relay";
-import { observeFileLink } from "./observe-file-link";
 import { createRouter } from "./router";
 import { refreshDirectSource } from "./refresh-direct";
 import { saveVerifiedDownload } from "./browser-download";
 import { createCaptureHandler } from "./capture";
+import { registerDesktopFilePorts } from "./desktop-file-port";
 import { createDiagnosticFetch } from "./diagnostic-fetch";
-import { discoverPageMediaForTab, downloadBestForTab, handleFileConnectionChoice, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
+import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { forgetToolbarTab, toolbarBusy, updateToolbarProgress } from "./toolbar-progress";
 import type { TransferState } from "../util/transfer-progress";
 import { createHotkeyJobs } from "./hotkey-jobs";
@@ -71,9 +68,16 @@ router = createRouter({
   },
   downloads: {
     download: opts => saveVerifiedDownload(chrome.downloads, opts as chrome.downloads.DownloadOptions),
+    filename: async id => {
+      const [item] = await chrome.downloads.search({ id });
+      return item?.filename.split(/[/\\]/).at(-1);
+    },
   },
   ensureEngineHost,
-  onJobStatus: (tabId, id, status) => showTransfer(tabId, id, status.phase === "active" ? status : null),
+  onJobStatus: (tabId, id, status) => {
+    showTransfer(tabId, id, status.phase === "active" ? status : null);
+    if (status.stage === "Starting") broadcastDescriptors(tabId);
+  },
   reserveSave: async (descriptor, choice, named) => {
     const {tabId, pageUrl, source} = descriptor;
     if (source.kind === "direct-url") {
@@ -101,7 +105,16 @@ router = createRouter({
   logger,
 });
 
+async function desktopConnectionEnabled(): Promise<boolean> {
+  if (__BROWSER__ !== "chromium") return false;
+  const { desktopFileConnection } = await chrome.storage.local.get("desktopFileConnection");
+  return desktopFileConnection === true && chrome.permissions.contains({permissions: ["nativeMessaging"]});
+}
+
+if (__BROWSER__ === "chromium") registerDesktopFilePorts(desktopConnectionEnabled);
+
 const handleCapture = createCaptureHandler({
+  desktopConnectionEnabled,
   fetchFn: createDiagnosticFetch(chrome.webRequest, chrome.runtime.getURL("").replace(/\/$/, "")),
   mirrorReferer: createRefererMirror(chrome.declarativeNetRequest, new URL(chrome.runtime.getURL("")).host),
   onDescriptor: (tabId, descriptor) => {
@@ -179,6 +192,7 @@ const downloadBestDeps: DownloadBestDeps = {
   },
   router,
   handleCapture,
+  handleSaveCapture: (tabId, msg, seen, referrer) => handleCapture(tabId, msg, seen, referrer, true),
   generateDownload: async (tabId, pageUrl, { filename, linkedPage }) => {
     try {
       if (!await isOnPage(tabId, pageUrl)) return null;
@@ -186,28 +200,15 @@ const downloadBestDeps: DownloadBestDeps = {
       let source: DiscoveredMedia | null;
       if (linkedPage && __BROWSER__ === "chromium") {
         await ensureEngineHost();
-        const generate = () => chrome.runtime.sendMessage({ type: "read-linked-download", pageUrl: linkedPage, filename });
-        source = relayUrl ? await observeFileLink(-1, linkedPage, generate) : await generate();
+        source = await chrome.runtime.sendMessage({ type: "read-linked-download", pageUrl: linkedPage, filename });
       } else {
-        const generate = () => chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
-        source = relayUrl ? await observeFileLink(tabId, pageUrl, generate) : await generate();
+        source = await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
       }
       return source?.filenameHint === filename && typeof source.url === "string"
         && await isOnPage(tabId, pageUrl) ? source : null;
     } catch { return null; }
   },
-  ...(relayUrl ? {
-    relayAllowedForSite: async (pageUrl: string) => {
-      const key = "relay:" + new URL(pageUrl).origin;
-      return (await chrome.storage.session.get(key))[key] === true;
-    },
-    allowRelayForSite: (pageUrl: string) => chrome.storage.session.set({["relay:" + new URL(pageUrl).origin]: true}),
-    relayFile: (tabId, pageUrl, offer, source) => saveThroughRelay(tabId, pageUrl, offer, source,
-      async () => await isOnPage(tabId, pageUrl) && !router.listDescriptors(tabId).some(d => d.drm),
-      (id, status) => showTransfer(tabId, id, status)),
-  } : {}),
   rememberFileSaveProblem: async (tabId, pageUrl, problem) => {
-    if (problem) clearRelayStatus(tabId, pageUrl);
     const msg = { type: "file-save-problem", tabId, pageUrl, problem } satisfies BackgroundToPopupMessage;
     await chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }).catch(() => undefined);
     chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError);
@@ -255,21 +256,19 @@ chrome.runtime.onInstalled.addListener(details => {
   }, chrome.runtime.getManifest().version);
 });
 
-function clearTab(tabId: number): void {
+function clearTab(tabId: number, pageUrl?: string): void {
   handleCapture.clearTab(tabId);
-  router.clearTab(tabId);
+  router.clearTab(tabId, pageUrl);
 }
 chrome.tabs.onRemoved.addListener(tabId => {
   clearTab(tabId);
   dismissRepeats(tabId);
   forgetToolbarTab(tabId);
-  clearRelayStatus(tabId);
 });
-chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === "loading") clearTab(tabId);
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status === "loading") clearTab(tabId, info.url ?? tab.url);
   if (info.url) {
     dismissRepeats(tabId);
-    if (!relaySnapshot(tabId, info.url)) clearRelayStatus(tabId);
   }
 });
 
@@ -308,9 +307,14 @@ chrome.runtime.onMessage.addListener((
   if (msg && typeof msg === "object" && "type" in msg) {
     const request = msg as {type: unknown; tabId?: number; pageUrl?: string; id?: string; allow?: boolean; offer?: FileDownloadOffer};
     const popup = sender.id === chrome.runtime.id && sender.url?.split(/[?#]/, 1)[0] === chrome.runtime.getURL("src/popup/index.html");
+    if (request.type === "desktop-connection-enabled" && sender.id === chrome.runtime.id
+      && sender.url === chrome.runtime.getURL("src/engine/offscreen.html")) {
+      void desktopConnectionEnabled().then(sendResponse, () => sendResponse(false));
+      return true;
+    }
     if (popup && request.type === "current-save-state" && typeof request.tabId === "number" && typeof request.pageUrl === "string") {
       const {tabId, pageUrl, offer} = request;
-      const state = () => ({prompt: repeatPrompt(tabId, pageUrl), relay: relaySnapshot(tabId, pageUrl)});
+      const state = () => ({prompt: repeatPrompt(tabId, pageUrl)});
       if (!offer || typeof offer.filename !== "string") { sendResponse(state()); return false; }
       void savedThisSession(pageUrl, offer).then(saved => sendResponse({...state(), saved}), () => sendResponse(state()));
       return true;
@@ -340,13 +344,6 @@ chrome.runtime.onMessage.addListener((
   }
 
   if (isPopupToBackgroundMessage(msg)) {
-    if (msg.type === "file-connection-choice") {
-      const popup = chrome.runtime.getURL("src/popup/index.html");
-      if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/, 1)[0] !== popup) return false;
-      void applyFileConnectionChoice(msg)
-        .then(() => sendResponse(router.snapshot(msg.tabId)), () => sendResponse(null));
-      return true;
-    }
     if (msg.type === "download-page") {
       void downloadBestForTab(downloadBestDeps, msg.tabId, msg.pageUrl, true)
         .then(() => sendResponse(router.snapshot(msg.tabId)), () => sendResponse(router.snapshot(msg.tabId)));
@@ -377,12 +374,6 @@ chrome.runtime.onMessage.addListener((
 
   return false;
 });
-
-async function applyFileConnectionChoice(msg: Extract<PopupToBackgroundMessage, { type: "file-connection-choice" }>): Promise<void> {
-  const request = { type: "file-save-state", pageUrl: msg.pageUrl } satisfies BackgroundToContentMessage;
-  const state: FileSaveState | null = await chrome.tabs.sendMessage(msg.tabId, request, { frameId: 0 });
-  await handleFileConnectionChoice(downloadBestDeps, msg, state);
-}
 
 // Every local-* request answers with the full status so the popup has one
 // code path to render from.

@@ -23,18 +23,20 @@ function asOutputContainer(c: Container): OutputContainer {
   return "mp4";
 }
 
-function pickVariant(descriptor: StreamDescriptor, choice: UserChoice): Variant | null {
+/** Rank the renditions of one video using quality declared by the publisher. */
+export function compareVideoQuality(a: Variant | null, b: Variant | null): number {
+  return (b?.height ?? 0) - (a?.height ?? 0)
+    || (b?.width ?? 0) - (a?.width ?? 0)
+    || (b?.frameRate ?? 0) - (a?.frameRate ?? 0)
+    || (b?.bitrate ?? 0) - (a?.bitrate ?? 0);
+}
+
+export function pickVariant(descriptor: StreamDescriptor, choice: UserChoice): Variant | null {
   if (descriptor.variants.length === 0) return null;
   if (choice.variantId) {
     for (const v of descriptor.variants) if (v.id === choice.variantId) return v;
   }
-  // Highest height first, then highest bandwidth.
-  const sorted = [...descriptor.variants].sort((a, b) => {
-    const h = (b.height ?? 0) - (a.height ?? 0);
-    if (h !== 0) return h;
-    return (b.bitrate ?? 0) - (a.bitrate ?? 0);
-  });
-  return sorted[0] ?? null;
+  return [...descriptor.variants].sort(compareVideoQuality)[0] ?? null;
 }
 
 function estimateSize(variant: Variant | null): number | null {
@@ -161,7 +163,7 @@ function buildAvMergePlan(video: Variant, audio: Variant, choice: UserChoice): A
   };
 }
 
-function pickHlsAudioRendition(
+export function pickHlsAudioRendition(
   descriptor: StreamDescriptor,
   variant: Variant,
   choice: UserChoice,
@@ -172,6 +174,17 @@ function pickHlsAudioRendition(
     if (chosen) return chosen;
   }
   return renditions.find(r => r.audioRenditionId === variant.audioRenditionId) ?? null;
+}
+
+/** A clear HLS master can name a playable pair before its child playlists load. */
+export function hasPendingHlsPair(descriptor: StreamDescriptor, choice: UserChoice): boolean {
+  if (descriptor.protocol !== "hls" || descriptor.drm) return false;
+  const video = pickVariant(descriptor, choice);
+  if (!video?.audioRenditionId) return false;
+  const audio = pickHlsAudioRendition(descriptor, video, choice);
+  if (!audio || !mp4MergeCompatible(video, audio)) return false;
+  return video.segmentRef.kind === "hls-segments" && audio.segmentRef.kind === "hls-segments"
+    && (!video.segmentRef.segmentUrls.length || !audio.segmentRef.segmentUrls.length);
 }
 
 function pickDashAudioRendition(descriptor: StreamDescriptor, choice: UserChoice): Variant | null {

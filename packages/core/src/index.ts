@@ -21,7 +21,7 @@ export type { RetryClass } from "./coordinator/retry";
 export type { HlsKeyDeclaration, HlsKeyPlan } from "./parser/hls/keys";
 
 export { classify } from "./classifier/classify";
-export { dispatch, BROWSER_OUTPUT_LIMIT_BYTES } from "./engine/dispatch";
+export { dispatch, compareVideoQuality, pickVariant, pickHlsAudioRendition, hasPendingHlsPair, BROWSER_OUTPUT_LIMIT_BYTES } from "./engine/dispatch";
 export { verify } from "./engine/verify";
 export { userMessage } from "./errors/messages";
 export { isTerminal, isRecoverable, isCertificateError } from "./errors/taxonomy";

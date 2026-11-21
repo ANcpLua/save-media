@@ -7,7 +7,10 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const buildDir = resolve(root, "dist-build");
-const out = resolve(root, "dist-chrome");
+// Unpacked previews carry a stable, public extension identity so moving the
+// folder keeps the desktop connection's user-scoped Chrome registration.
+const preview = process.argv.includes("--preview");
+const out = resolve(root, preview ? "dist-preview" : "dist-chrome");
 
 const vite = spawnSync("bunx", ["vite", "build"], {
   cwd: root,
@@ -21,17 +24,13 @@ await mkdir(out, { recursive: true });
 if (existsSync(buildDir)) await cp(buildDir, out, { recursive: true });
 
 const manifest = JSON.parse(await readFile(resolve(root, "manifest.json"), "utf-8"));
-if (process.env.SAVEMEDIA_RELAY_URL) {
-  manifest.version_name = manifest.version + " resumable download preview";
-  manifest.content_security_policy = { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" };
-  const vendor = resolve(out, "vendor/libcurl");
-  await mkdir(vendor, { recursive: true });
-  await cp(resolve(root, "licenses/GPL-3.0.txt"), resolve(vendor, "COPYING"));
-  await cp(resolve(root, "../../NOTICE"), resolve(out, "NOTICE"));
-  const library = dirname(fileURLToPath(import.meta.resolve("libcurl.js")));
-  for (const file of ["libcurl.mjs", "libcurl.wasm", "LICENSE", "README.md"]) {
-    await cp(resolve(library, file), resolve(vendor, file));
-  }
+if (preview) {
+  const { key, description } = JSON.parse(await readFile(resolve(root, "manifest.preview.json"), "utf-8"));
+  manifest.key = key;
+  manifest.description = description;
+  manifest.permissions.push("nativeMessaging");
+  manifest.optional_permissions = manifest.optional_permissions.filter(permission => permission !== "nativeMessaging");
+  if (!manifest.optional_permissions.length) delete manifest.optional_permissions;
 }
 await writeFile(resolve(out, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log("chrome build →", out);

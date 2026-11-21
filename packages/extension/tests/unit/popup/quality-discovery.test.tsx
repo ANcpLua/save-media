@@ -51,7 +51,7 @@ describe("progressive quality discovery to download", () => {
     render(<App skipFetch initialDescriptors={router.listDescriptors(1)} />);
     const select = screen.getByRole("combobox") as HTMLSelectElement;
     expect(Array.from(select.options, option => option.text)).toEqual(["720p", "480p"]);
-    fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     const msg = vi.mocked(chrome.runtime.sendMessage).mock.calls.at(-1)![0] as unknown as PopupToBackgroundMessage;
     await router.handlePopupMessage(msg);
     expect(sendToEngine).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -62,7 +62,7 @@ describe("progressive quality discovery to download", () => {
     expect(downloads.download).not.toHaveBeenCalled();
 
     fireEvent.change(select, { target: { value: select.options[1]!.value } });
-    fireEvent.click(screen.getByRole("button", { name: /^download$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     await router.handlePopupMessage(vi.mocked(chrome.runtime.sendMessage).mock.calls.at(-1)![0] as unknown as PopupToBackgroundMessage);
     expect(sendToEngine).toHaveBeenLastCalledWith(expect.objectContaining({
       type: "start-job", descriptor: expect.objectContaining({

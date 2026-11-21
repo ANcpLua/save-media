@@ -1,9 +1,11 @@
 # savemedia native host
 
 An optional, opt-in native messaging host for the savemedia browser extension.
-When enabled, the extension can hand a page URL to this host, and the host runs
-the copies of `yt-dlp` and `ffmpeg` that you have already installed on your own
-machine. Nothing is bundled and nothing is installed by this package.
+For a publisher-issued public file link, **Use local connection** lets Chrome
+read the file through the system curl on your computer. The extension validates
+the video and writes it through Chrome's normal Downloads flow. The separate
+**Local downloader** option hands a page address to your installed yt-dlp and
+ffmpeg.
 
 ## Policy
 
@@ -21,7 +23,8 @@ machine. Nothing is bundled and nothing is installed by this package.
 ## Requirements
 
 - Python 3.9 or newer (`python3` on `PATH`).
-- `yt-dlp` and `ffmpeg` installed by you. On macOS, for example:
+- The direct-file connection uses system curl. The page downloader requires
+  `yt-dlp` and `ffmpeg` installed by you. On macOS, for example:
   `brew install yt-dlp ffmpeg`. On Linux, use your distribution's package
   manager for `ffmpeg` and `python3 -m pip install --user yt-dlp`.
 - macOS or Linux. Windows is not covered by `install.sh`.
@@ -39,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/ANcpLua/save-media/main/packages/na
   | bash -s -- --extension-id <id>
 ```
 
-`setup.sh` downloads `host.py` and `install.sh` into
+`setup.sh` downloads `host.py`, `file_transport.py`, and `install.sh` into
 `~/Library/Application Support/savemedia/native-host` (macOS) or
 `~/.local/share/savemedia/native-host` (Linux) and runs the installer. It does
 not install yt-dlp or ffmpeg; if they are missing it prints the `brew install`
@@ -146,3 +149,21 @@ python3 test_host.py
 ```
 
 The tests spawn the host with a temporary `HOME` so the log stays isolated.
+
+## Local file connection
+
+Chrome requests `file-connection-status` before enabling this path. Version 1
+accepts one `read-file` per native port with a request ID, an HTTPS file URL,
+and optional origin referrer, byte range and validator. The host returns
+`file-headers` with the HTTP status, final URL and media headers. Each
+`file-pull` delivers a single base64 `file-chunk` or `file-end`. Closing
+the port cancels the connection. The browser applies its usual media and
+completeness checks before a download appears in Chrome.
+
+The host sends the file server's hostname to Cloudflare DNS over HTTPS and
+connects directly to a public address returned by the lookup. curl checks the
+certificate against the original hostname. The same checks apply to each HTTP
+redirect. Only the hostname reaches the DNS resolver. The signed address and
+file bytes travel between the computer and the publisher's file server. This
+transport omits cookies and credentials from browser storage. Native host logs
+omit file addresses and response bodies.

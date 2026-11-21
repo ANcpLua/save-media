@@ -25,7 +25,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-HOST_VERSION = "1.0.0"
+HOST_VERSION = "1.1.0"
 PROTOCOL_VERSION = 1
 DOWNLOAD_TIMEOUT_SECONDS = 30 * 60
 KILL_GRACE_SECONDS = 3.0
@@ -651,6 +651,7 @@ def handle_ping() -> None:
         send({
             "type": "pong",
             "hostVersion": HOST_VERSION,
+            "fileTransport": 1,
             "protocolVersion": PROTOCOL_VERSION,
             "ytdlp": cached_tool_info("yt-dlp"),
             "ffmpeg": cached_tool_info("ffmpeg"),
@@ -690,7 +691,9 @@ def dispatch(message: Dict[str, Any]) -> None:
     kind = message.get("type")
     raw_id = message.get("id")
     msg_id = raw_id if isinstance(raw_id, str) else ""
-    if kind == "ping":
+    if kind == "file-connection-status":
+        send({"type": "file-connection-status", "version": 1})
+    elif kind == "ping":
         handle_ping()
     elif kind == "download":
         handle_download(message)
@@ -704,6 +707,7 @@ def dispatch(message: Dict[str, Any]) -> None:
 
 def main() -> int:
     log("host started pid=%d version=%s" % (os.getpid(), HOST_VERSION))
+    file_read = None
     while True:
         try:
             message = read_message()
@@ -713,11 +717,33 @@ def main() -> int:
         if message is None:
             break
         try:
-            dispatch(message)
+            if file_read is not None:
+                if message.get("id") != file_read.request_id:
+                    break
+                if message.get("type") == "file-pull":
+                    file_read.pull_event.set()
+                elif message.get("type") == "cancel":
+                    break
+                else:
+                    send_failed(file_read.request_id, "invalid_request", "unexpected local connection request")
+                    break
+            elif message.get("type") == "read-file":
+                request_id = message.get("id")
+                if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
+                    send_failed("", "invalid_request", "read-file requires a request id")
+                    break
+                from file_transport import FileRead
+                file_read = FileRead(message, send)
+                file_read.start()
+            else:
+                dispatch(message)
         except Exception as exc:
             log("dispatch error: %r" % exc)
             raw_id = message.get("id")
             send_failed(raw_id if isinstance(raw_id, str) else "", "unknown", "internal host error")
+    if file_read is not None:
+        file_read.cancel()
+        file_read.join(3)
     with _jobs_lock:
         jobs = list(_jobs.values())
     for job in jobs:

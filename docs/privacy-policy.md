@@ -1,8 +1,8 @@
 # savemedia Privacy Policy
 
-Effective date: 2026-10-05
+Effective date: 2026-11-21
 
-savemedia is a browser extension that runs locally in the user's browser. It
+savemedia is a browser extension that runs locally on the user's computer. It
 detects browser-visible video candidates, lets the user choose a supported
 candidate, and asks the browser to save the resulting file.
 
@@ -39,18 +39,6 @@ After a temporary transfer failure, SaveMedia can hold completed parts of one
 file in browser memory for up to ten minutes so a retry can resume. Reloading
 the extension or closing the browser clears these parts.
 
-## Optional secure relay in Chrome builds
-
-When a build includes a secure relay, the confirmation names its hostname.
-Choosing **Use secure relay** permits fallback for the current site until the
-browser session ends. The relay operator sees the client's IP address, target
-hostnames and ports, timing and transfer volume. The extension verifies the
-origin certificate inside the browser. The HTTPS request path, query,
-signature, response and media bytes remain encrypted through the relay.
-The relay client uses a fresh session without browser cookies. Each completed
-file is written by the browser. Ordinary discovery and direct downloads use
-the browser connection.
-
 ## Optional Local Downloader
 
 The extension includes an optional feature that is off by default. When the
@@ -58,14 +46,27 @@ user switches it on, the browser asks for the `nativeMessaging` permission and
 the extension may pass the current page URL and the user's quality preference
 to a separate program the user installed on their own computer
 (`packages/native-host`). That program runs the user's own copies of yt-dlp and
-ffmpeg and writes files to the user's Downloads folder. The extension never
-sends media URLs, cookies, page content, or keys to that program. The program
+ffmpeg and writes files to the user's Downloads folder. This download mode sends the page address and selected settings. The program
 may, at the user's explicit setting, read the browser's cookie store locally to
 act with the user's own session; those cookies never leave the user's computer
 and are never logged.
 
-The `storage` permission holds these local settings. Relay-enabled builds
-also remember approved site origins in browser-session storage.
+### Optional local connection
+
+**Use local connection** enables a separate recovery option for file saves.
+The standard extension requests Chrome’s native messaging permission when
+this option is selected. The dedicated desktop preview declares it at install
+time. Both require the user to enable the local connection before using it.
+When a media connection fails, the extension can send the publisher-issued
+HTTPS file address, the referring page’s origin and byte-range information to
+that helper on the same computer. The address may include a temporary download
+token. The helper sends the file hostname to Cloudflare’s DNS-over-HTTPS resolver.
+It connects directly to the publisher’s server, verifies its TLS certificate and
+returns bytes to Chrome for verification and saving. File contents and signed
+links are kept out of DNS queries and diagnostic logs. This mode uses no browser
+cookies and saves no list of file addresses. Turn it off in **Local downloader**.
+
+The `storage` permission holds these local settings and the browser-session download receipts described above.
 
 The `declarativeNetRequestWithHostAccess` permission lets the extension's own
 requests for a detected video carry the page's origin as Referer, as the
@@ -90,9 +91,9 @@ fMP4/CMAF fragments locally.
 ## Credentials, Protected Media, and Access Control
 
 savemedia does not collect usernames, passwords, payment details, cookies, or
-license keys. It does not bypass DRM, paywalls, login restrictions, geographic
-restrictions, expired signed URLs, or protected streams. If the browser or the
-server denies access, or if DRM, a key held by a protected media module, a
+license keys. A site’s own download control can issue a fresh link when its
+previous link expires. The extension respects server access restrictions,
+including sign-in, payment and geographic restrictions. If DRM, a key held by a protected media module, a
 live or still-growing presentation, or DASH addressed by byte ranges is
 detected, savemedia refuses the download instead of attempting a workaround.
 

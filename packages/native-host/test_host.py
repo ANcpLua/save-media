@@ -80,7 +80,7 @@ class HostProtocolTests(unittest.TestCase):
         self.host.send({"type": "ping"})
         reply = self.host.recv()
         self.assertEqual(reply["type"], "pong")
-        self.assertEqual(reply["hostVersion"], "1.0.0")
+        self.assertEqual(reply["hostVersion"], "1.1.0")
         self.assertEqual(reply["protocolVersion"], 1)
         for tool in ("ytdlp", "ffmpeg"):
             info = reply[tool]

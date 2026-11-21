@@ -3,16 +3,21 @@ import type { StreamDescriptor } from "@savemedia/core";
 import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
 import type { PopupToBackgroundMessage, JobStatus } from "../../types/messages";
 import { formatBytes, TransferProgress } from "./TransferProgress";
-import { suggestFilename } from "../../util/filename";
-import { hasDownloadableDemuxedPair, isDownloadableCandidate } from "../../util/downloadable";
+import { compareDownloads, downloadOptions } from "../../util/downloadable";
 import { formatDuration, type Preview } from "../preview-match";
 import { TechnicalDetails } from "./TechnicalDetails";
 import { downloadIssueText } from "../download-status";
+import { canRecoverFile, LocalConnectionAction, type LocalConnection } from "./LocalConnection";
 
 export type { JobStatus } from "../../types/messages";
 
 interface Props {
   readonly descriptor: StreamDescriptor;
+  readonly onSaveBest?: (() => void) | undefined;
+  readonly preparingStage?: string | undefined;
+  readonly originalName?: string | undefined;
+  readonly couldNotStart?: boolean | undefined;
+  readonly localConnection?: LocalConnection | undefined;
   readonly status?: JobStatus | undefined;
   readonly onCancel?: ((streamId: StreamDescriptor["id"]) => void) | undefined;
   readonly preview?: Preview | null | undefined;
@@ -22,30 +27,28 @@ interface Props {
   readonly statuses?: Readonly<Record<string, JobStatus>> | undefined;
 }
 
-export function DetectedItem({ descriptor: initialDescriptor, status: initialStatus, alternatives = [], statuses, onCancel, preview = null, isMain = false, pageTitle = null }: Props) {
+export function DetectedItem({ descriptor: initialDescriptor, status: initialStatus, onSaveBest, preparingStage, originalName, couldNotStart, localConnection, alternatives = [], statuses, onCancel, preview = null, isMain = false, pageTitle = null }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [chosenVariantId, setChosenVariantId] = useState<string | null>(null);
   const [chosenStreamId, setChosenStreamId] = useState<string | null>(null);
-  const directChoices = [initialDescriptor, ...alternatives].sort((a, b) =>
-    (b.variants[0]?.height ?? 0) - (a.variants[0]?.height ?? 0));
+  const directChoices = [initialDescriptor, ...alternatives].sort(compareDownloads);
   const active = directChoices.find(d => statuses?.[d.id]?.phase === "active");
   const descriptor = active ?? directChoices.find(d => d.id === chosenStreamId) ?? directChoices[0]!;
   const status = statuses?.[descriptor.id] ?? (descriptor.id === initialDescriptor.id ? initialStatus : undefined);
 
-  const visibleVariants = (descriptor.variants ?? []).filter(v => (v.height ?? 0) >= 720);
-  const allBelowMin = descriptor.variants.length > 0 && visibleVariants.length === 0;
-  const qualityChoices = [...descriptor.variants]
-    .filter(v => v.videoCodec !== null || v.height !== null)
-    .sort((a, b) => (b.height ?? 0) - (a.height ?? 0) || (b.bitrate ?? 0) - (a.bitrate ?? 0));
-  const variant = descriptor.variants.find(v => v.id === chosenVariantId) ?? qualityChoices[0] ?? descriptor.variants[0];
-  const displayTitle = descriptor.title ?? pageTitle ?? hostOf(descriptor.pageUrl);
+  const options = downloadOptions(descriptor);
+  const selection = options.find(o => o.variant?.id === chosenVariantId) ?? options[0];
+  const variant = selection?.variant ?? descriptor.variants[0];
+  const qualityChoices = options.flatMap(o => o.variant ? [o.variant] : []);
+  const allBelowMin = qualityChoices.length > 0 && qualityChoices.every(v => v.height !== null && v.height < 720);
+  const displayTitle = status?.fileName ?? originalName ?? descriptor.title ?? pageTitle ?? hostOf(descriptor.pageUrl);
   const previewSize = preview && preview.width > 0 && preview.height > 0 ? `${preview.width}×${preview.height}` : null;
   const vcodec = variant?.videoCodec ?? descriptor.codecs.video;
   const acodec = variant?.audioCodec ?? descriptor.codecs.audio;
   const isDrmBlocked = descriptor.capabilities.drmBlocked;
   const isDeferred = descriptor.drm?.reason === "clearkey_deferred";
   const action = outputActionLabel(descriptor);
-  const isDownloadable = isDownloadableCandidate(descriptor);
+  const isDownloadable = !!selection;
   const error = status?.phase === "failed" ? status.error : undefined;
   const failure = error ? userMessage(error) : null;
   const readyDirectFile = !status && isDownloadable && descriptor.source.kind === "direct-url" && descriptor.capabilities.directDownload;
@@ -53,17 +56,12 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
     : status?.phase === "failed" ? "bg-orange-950 text-orange-200" : "bg-surface-2 text-white";
 
   function download() {
-    if (isDrmBlocked) return;
-    const msg: PopupToBackgroundMessage = {
-      type: "download",
-      streamId: descriptor.id,
-      choice: {
-        outputMode: "Original",
-        filename: suggestFilename(descriptor),
-        variantId: variant?.id ?? null,
-        audioRenditionId: null,
-      },
-    };
+    if (!selection || isDrmBlocked) return;
+    if (onSaveBest && descriptor === directChoices[0] && selection === options[0]) {
+      onSaveBest();
+      return;
+    }
+    const msg: PopupToBackgroundMessage = { type: "download", streamId: descriptor.id, choice: selection.choice };
     chrome.runtime.sendMessage(msg);
   }
 
@@ -180,31 +178,35 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
         </div>
       )}
 
-      {status?.phase === "active" && <div className="ml-5"><TransferProgress status={status}/></div>}
+      {status?.phase === "active" ? <div className="ml-5"><TransferProgress status={status}/></div>
+        : preparingStage ? <div className="ml-5"><TransferProgress status={{stage: preparingStage}}/></div>
+        : couldNotStart && !failure && <p className="mt-2 ml-5 text-orange-300" role="status">Couldn’t start the download. Try again.</p>}
 
-      {error && failure && (
+      {!preparingStage && error && failure && (
         <div className="mt-2 ml-5" data-testid="job-error">
           <p className={`font-medium ${downloadIssueText(error)}`} role="status">{failure.title}</p>
           {failure.technicalDetails
             ? <TechnicalDetails body={failure.body} details={failure.technicalDetails} />
             : <p className="text-muted mt-0.5">{failure.body}</p>}
+          {isDownloadable && canRecoverFile(error) && localConnection &&
+            <LocalConnectionAction connection={localConnection} retry={download} />}
         </div>
       )}
 
-      {status?.phase === "complete" && (
-        <p className="mt-2 ml-5 text-emerald-400" data-testid="job-complete">✓ Saved.</p>
+      {!preparingStage && status?.phase === "complete" && (
+        <p className="mt-2 ml-5 text-emerald-400" data-testid="job-complete" role="status">{status.savedAs ? `Saved to Downloads · ${status.savedAs}` : "Saved to Downloads"}</p>
       )}
 
       {!isDownloadable && !status && (
         <p className="mt-2 ml-5 text-amber-500" data-testid="unsupported-card">
           {descriptor.protocol === "dash"
-            ? "DASH detected. savemedia only downloads verified direct video files and plain HLS VOD playlists."
+            ? "DASH detected. This presentation has no supported video and audio pair."
             : "This media entry is not a supported download."}
         </p>
       )}
 
       <div className="mt-2 ml-5 flex items-center gap-2">
-        {readyDirectFile && <span className="font-medium text-emerald-400" role="status">Ready to save</span>}
+        {readyDirectFile && !preparingStage && !couldNotStart && <span className="font-medium text-emerald-400" role="status">Ready to save</span>}
         {status?.phase === "active" ? status.stage !== "finalizing" && status.stage !== "Writing to Downloads" && (
           <button
             onClick={cancel}
@@ -212,12 +214,12 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
           >
             Cancel
           </button>
-        ) : isDownloadable ? (
+        ) : isDownloadable && !preparingStage ? (
           <button
             onClick={download}
             className={`ml-auto inline-flex items-center gap-1 hover:brightness-110 font-medium px-2.5 py-1 rounded-md text-xs ${downloadColor}`}
           >
-            <span aria-hidden="true">⬇</span> {status?.phase === "failed" ? "Retry download" : status?.phase === "complete" ? "Save another copy…" : "Download"}
+            <span aria-hidden="true">⬇</span> {status?.phase === "failed" || couldNotStart ? "Retry save" : status?.phase === "complete" ? "Save another copy…" : "Save"}
           </button>
         ) : null}
       </div>
@@ -232,7 +234,7 @@ function hostOf(url: string): string {
 function outputActionLabel(d: StreamDescriptor): string {
   if (d.capabilities.directDownload) return "direct";
   if (d.protocol === "hls") return "hls";
-  if (hasDownloadableDemuxedPair(d)) return "av-merge";
+  if (d.protocol === "dash" && downloadOptions(d).length) return "av-merge";
   return "unsupported";
 }
 

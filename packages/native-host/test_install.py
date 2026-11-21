@@ -167,10 +167,11 @@ class SetupScriptTest(unittest.TestCase):
             target = os.path.join(self.home, "Library", "Application Support", "savemedia", "native-host")
         else:
             target = os.path.join(self.home, ".local", "share", "savemedia", "native-host")
-        for name in ("host.py", "install.sh"):
+        for name in ("host.py", "file_transport.py", "install.sh"):
             path = os.path.join(target, name)
             self.assertTrue(os.path.isfile(path), path)
-            self.assertTrue(os.stat(path).st_mode & stat.S_IXUSR, name + " executable")
+            if name != "file_transport.py":
+                self.assertTrue(os.stat(path).st_mode & stat.S_IXUSR, name + " executable")
             with open(path, "rb") as got, open(os.path.join(HERE, name), "rb") as want:
                 self.assertEqual(got.read(), want.read(), name + " copied verbatim")
         self.assertIn("Helper files in: " + target, proc.stdout)

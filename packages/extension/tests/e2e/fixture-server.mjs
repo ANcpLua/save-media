@@ -282,11 +282,17 @@ function serveFilePageMedia(req, res, path) {
     return true;
   }
   if (path === "/file-warning.mov" || path === "/file-data.mov") {
-    const body = req.headers.range
-      ? quickTimeFiles.get("31").body
-      : path === "/file-warning.mov"
-        ? '<?xml version="1.0"?><html><body>Network access warning</body></html>'
-        : JSON.stringify({ message: "Preparing the file" }).padEnd(69);
+    if (req.headers.range) {
+      // A valid partial probe without a validator forces a whole-file request.
+      const file = quickTimeFiles.get("31").body;
+      const prefix = file.subarray(0, 4096);
+      res.writeHead(206, { "Content-Type": "video/quicktime",
+        "Content-Range": `bytes 0-${prefix.length - 1}/${file.length}` }).end(prefix);
+      return true;
+    }
+    const body = path === "/file-warning.mov"
+      ? '<?xml version="1.0"?><html><body>Network access warning</body></html>'
+      : JSON.stringify({ message: "Preparing the file" }).padEnd(69);
     // Both substitutes deliberately claim to be a video.
     res.writeHead(200, { "Content-Type": "video/quicktime", "Cache-Control": "no-store" }).end(body);
     return true;

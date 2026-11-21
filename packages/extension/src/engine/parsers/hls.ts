@@ -8,7 +8,7 @@ import type {
 import type { ProgressFn } from "../job";
 import { fetchWithRetry } from "../net/fetch-with-retry";
 import { classifyNetworkFailure } from "../net/error-classification";
-import { parseHlsKeyDeclarations } from "@savemedia/core";
+import { parseHlsKeyDeclarations, pickHlsAudioRendition, pickVariant } from "@savemedia/core";
 import type { HlsKeyDeclaration } from "@savemedia/core";
 
 /**
@@ -131,19 +131,20 @@ export async function materializeDemuxedHls(
   choice: UserChoice,
   onProgress: ProgressFn,
   signal: AbortSignal,
+  request: typeof fetchWithRetry = fetchWithRetry,
 ): Promise<StreamDescriptor> {
   if (descriptor.protocol !== "hls" || descriptor.drm) return descriptor;
 
   const variant = pickVariant(descriptor, choice);
   if (!variant || variant.audioRenditionId === null) return descriptor;
-  const rendition = pickAudioRendition(descriptor, variant, choice);
+  const rendition = pickHlsAudioRendition(descriptor, variant, choice);
   if (!rendition) return descriptor;
 
   if (!needsMaterialization(variant) && !needsMaterialization(rendition)) return descriptor;
 
   onProgress(0, null, "fetching-playlist");
-  const video = await materializeTrack(variant, signal);
-  const audio = await materializeTrack(rendition, signal);
+  const video = await materializeTrack(variant, signal, request);
+  const audio = await materializeTrack(rendition, signal, request);
 
   return {
     ...descriptor,
@@ -152,45 +153,14 @@ export async function materializeDemuxedHls(
   };
 }
 
-// Mirrors dispatch's selection (explicit choice.variantId, else highest height
-// then bitrate) so the engine materializes exactly the tracks dispatch picks.
-// Must stay in sync with pickVariant in @savemedia/core engine/dispatch.ts.
-function pickVariant(descriptor: StreamDescriptor, choice: UserChoice): Variant | null {
-  if (descriptor.variants.length === 0) return null;
-  if (choice.variantId) {
-    for (const v of descriptor.variants) if (v.id === choice.variantId) return v;
-  }
-  const sorted = [...descriptor.variants].sort((a, b) => {
-    const h = (b.height ?? 0) - (a.height ?? 0);
-    if (h !== 0) return h;
-    return (b.bitrate ?? 0) - (a.bitrate ?? 0);
-  });
-  return sorted[0] ?? null;
-}
-
-// Mirrors dispatch's pickHlsAudioRendition: explicit choice overrides the
-// variant's linked audio group.
-function pickAudioRendition(
-  descriptor: StreamDescriptor,
-  variant: Variant,
-  choice: UserChoice,
-): Variant | null {
-  const renditions = descriptor.audioRenditions ?? [];
-  if (choice.audioRenditionId) {
-    const chosen = renditions.find(r => r.audioRenditionId === choice.audioRenditionId);
-    if (chosen) return chosen;
-  }
-  return renditions.find(r => r.audioRenditionId === variant.audioRenditionId) ?? null;
-}
-
 function needsMaterialization(v: Variant): boolean {
   return v.segmentRef.kind === "hls-segments" && v.segmentRef.segmentUrls.length === 0;
 }
 
-async function materializeTrack(v: Variant, signal: AbortSignal): Promise<Variant> {
+async function materializeTrack(v: Variant, signal: AbortSignal, request: typeof fetchWithRetry): Promise<Variant> {
   if (!needsMaterialization(v) || v.segmentRef.kind !== "hls-segments") return v;
   const playlistUrl = v.segmentRef.playlistUrl;
-  const resp = await fetchWithRetry(playlistUrl, signal, "manifest").catch(err => {
+  const resp = await request(playlistUrl, signal, "manifest").catch(err => {
     throw classifyNetworkFailure(err, "manifest", playlistUrl) ?? err;
   });
   const media = parseHlsMediaPlaylistRuntime(await resp.text(), playlistUrl);

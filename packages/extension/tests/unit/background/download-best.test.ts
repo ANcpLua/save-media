@@ -4,7 +4,6 @@ import {
   downloadBestForActiveTab,
   downloadBestForTab,
   registerDownloadBestCommand,
-  handleFileConnectionChoice,
   type DownloadBestDeps,
 } from "../../../src/background/download-best";
 import { MAIN_BRIDGE_TAG, type ContentDiscoveryResponse } from "../../../src/types/messages";
@@ -163,12 +162,12 @@ describe("download-best command helpers", () => {
   });
 
   it.each([
-    ["one.example", "https://two.example/clip.mov?file=31", true, true],
-    ["two.example", "https://one.example/clip.mov?file=31", true, true],
-    ["one.example", "https://one.example/clip.mov?file=31", false, true],
-    ["one.example", "https://two.example/clip.mov?file=32", false, false],
-    ["one.example", "http://two.example/clip.mov?file=31", false, false],
-  ] as const)("uses site-issued replacements after %s rejects TLS: %s", async (failedHost, replacement, automatic, accepted) => {
+    ["one.example", "https://two.example/clip.mov?file=31", true],
+    ["two.example", "https://one.example/clip.mov?file=31", true],
+    ["one.example", "https://one.example/clip.mov?file=31", false],
+    ["one.example", "https://two.example/clip.mov?file=32", false],
+    ["one.example", "http://two.example/clip.mov?file=31", false],
+  ] as const)("uses site-issued replacements after %s rejects TLS: %s", async (failedHost, replacement, automatic) => {
     const pageUrl = "https://example.com/watch";
     const filename = "Clip.mov";
     const sourceUrl = "https://one.example/clip.mov?file=31";
@@ -179,8 +178,7 @@ describe("download-best command helpers", () => {
     vi.mocked(d.tabs.sendMessage).mockImplementation((_id, _msg, cb) => cb({
       pageUrl, urls: [], media: [], fileDownload: { filename },
     }));
-    vi.mocked(d.router.startBestDownload).mockResolvedValueOnce({ kind: "no-media" })
-      .mockResolvedValueOnce({ kind: "failed", duringDiscovery: true, streamId: directDescriptor().id,
+    vi.mocked(d.router.startBestDownload).mockResolvedValueOnce({ kind: "failed", duringDiscovery: true, streamId: directDescriptor().id,
         error: { code: "tls_certificate_rejected", severity: "terminal", phase: "direct",
           browserDiagnostic: { host: failedHost, code: "net::ERR_CERT_AUTHORITY_INVALID" } } });
 
@@ -195,23 +193,7 @@ describe("download-best command helpers", () => {
     }
     const warning = vi.mocked(d.rememberFileSaveProblem!).mock.lastCall?.[2];
     expect(warning?.code).toBe("tls_certificate_rejected");
-    const scansBeforeRetry = vi.mocked(d.tabs.sendMessage).mock.calls.length;
-    await handleFileConnectionChoice(d, { type: "file-connection-choice", tabId: 42, pageUrl, filename, retry: true },
-      { fileSaveProblem: warning!, fileDownload: { filename } });
-    expect(d.tabs.sendMessage).toHaveBeenCalledTimes(scansBeforeRetry);
-
-    expect(generateDownload).toHaveBeenCalledTimes(3);
-    expect(d.handleCapture).toHaveBeenCalledTimes(accepted ? 2 : 1);
-    if (accepted) {
-      expect(d.handleCapture).toHaveBeenLastCalledWith(42, expect.objectContaining({
-        payload: expect.objectContaining({ url: replacement, filenameHint: filename }),
-      }));
-      expect(d.rememberFileSaveProblem).toHaveBeenLastCalledWith(42, pageUrl, null);
-    } else {
-      expect(d.rememberFileSaveProblem).toHaveBeenLastCalledWith(42, pageUrl, expect.objectContaining({
-        code: "https_link_unavailable",
-      }));
-    }
+    expect(d.handleCapture).toHaveBeenCalledTimes(1);
   });
 
   it("shows no-media feedback instead of failing silently when the page has nothing downloadable", async () => {

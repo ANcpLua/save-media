@@ -1,6 +1,6 @@
 {
   "name": "@savemedia/native-host",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "test": "python3 -m unittest discover -s . -p 'test_*.py'",

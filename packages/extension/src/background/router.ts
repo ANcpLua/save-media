@@ -5,7 +5,7 @@ import {
   type JobError,
   type JobPlan,
   type DispatchRefusal,
-  type Variant,
+  hasPendingHlsPair,
 } from "@savemedia/core";
 import type {
   PopupToBackgroundMessage,
@@ -20,7 +20,7 @@ import type { Logger } from "../util/logger";
 import { REFRESHING_VIDEO_SOURCE } from "../types/messages";
 import { suggestFilename, timestampedPath } from "../util/filename";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
-import { isDownloadableCandidate } from "../util/downloadable";
+import { compareDownloads, downloadOptions } from "../util/downloadable";
 
 export { dispatchRefusalToError } from "../util/dispatch-refusal";
 
@@ -36,6 +36,7 @@ function saveFailure(err: unknown, filename: string): JobError {
 }
 
 export interface TabState {
+  lastNamedStream?: StreamDescriptor["id"];
   readonly descriptors: Map<string, StreamDescriptor>;
   readonly hlsCoveredDirectUrls: Set<string>;
   readonly failures: Map<string, DiscoveryFailure>;
@@ -48,6 +49,7 @@ export interface RouterDeps {
   };
   readonly downloads: {
     download: (opts: { url: string; filename: string; conflictAction?: string }) => Promise<number>;
+    filename?: (downloadId: number) => Promise<string | undefined>;
   };
   readonly onJobStatus?: (tabId: number, id: string, status: JobStatus) => void;
   readonly reserveSave?: (descriptor: StreamDescriptor, choice: UserChoice, file?: NamedFile) => Promise<SavePermit | null>;
@@ -59,6 +61,7 @@ export interface RouterDeps {
 
 interface ActiveJob {
   readonly permit?: SavePermit;
+  readonly fileName?: string;
   readonly descriptor: StreamDescriptor;
   readonly choice: UserChoice;
   readonly plan: JobPlan | null;
@@ -87,7 +90,7 @@ export interface Router {
   readonly clearDiscoveryFailure: (tabId: number, url: string) => boolean;
   readonly snapshot: (tabId: number) => Extract<BackgroundToPopupMessage, { type: "descriptors" }>;
   readonly findDescriptor: (id: StreamDescriptor["id"]) => StreamDescriptor | null;
-  readonly clearTab: (tabId: number) => void;
+  readonly clearTab: (tabId: number, pageUrl?: string) => void;
   readonly startDownload: (id: StreamDescriptor["id"], choice: UserChoice) => Promise<JobError | null>;
   readonly startBestDownload: (tabId: number, file?: NamedFile) => Promise<BestDownloadOutcome>;
   readonly handleEngineMessage: (msg: EngineToBackgroundMessage) => Promise<BackgroundToPopupMessage | null>;
@@ -102,8 +105,8 @@ export function createRouter(deps: RouterDeps): Router {
   const statuses = new Map<string, JobStatus>();
 
   function setStatus(id: StreamDescriptor["id"], status: JobStatus): void {
-    statuses.set(id, status);
     const job = jobs.get(id);
+    statuses.set(id, job?.fileName ? { ...status, fileName: job.fileName } : status);
     if (job) deps.onJobStatus?.(job.descriptor.tabId, id, status);
   }
 
@@ -265,6 +268,7 @@ export function createRouter(deps: RouterDeps): Router {
     // Keep protection signals visible even when they have no matching source URL.
     if (!scope || descriptor.drm) return true;
     if (descriptor.pageUrl !== scope.pageUrl) return false;
+    if (jobs.has(descriptor.id)) return true;
     const source = descriptor.source;
     const url = source.kind === "direct-url" ? source.url
       : source.kind === "media-element" ? source.elementSrc : source.manifestUrl;
@@ -286,9 +290,18 @@ export function createRouter(deps: RouterDeps): Router {
     return null;
   }
 
-  function clearTab(tabId: number): void {
+  function clearTab(tabId: number, pageUrl?: string): void {
     const ids = [...(tabs.get(tabId)?.descriptors.values() ?? [])].map(d => d.id);
     tabs.delete(tabId);
+    // A page reload replaces its captures. The transfer still belongs to
+    // this tab and document address, and the popup can rejoin it immediately.
+    if (pageUrl) {
+      for (const { descriptor, fileName } of jobs.values()) {
+        if (descriptor.tabId !== tabId || descriptor.pageUrl !== pageUrl) continue;
+        addDescriptor(tabId, descriptor);
+        if (fileName) getTab(tabId).lastNamedStream = descriptor.id;
+      }
+    }
     for (const id of ids) if (!jobs.has(id) && !findDescriptor(id)) statuses.delete(id);
   }
 
@@ -311,7 +324,12 @@ export function createRouter(deps: RouterDeps): Router {
   }
 
   function snapshot(tabId: number): Extract<BackgroundToPopupMessage, { type: "descriptors" }> {
-    const descriptors = listDescriptors(tabId);
+    const descriptors = [...listDescriptors(tabId)];
+    const lastNamed = tabs.get(tabId)?.lastNamedStream;
+    const lastDescriptor = lastNamed && findDescriptor(lastNamed);
+    // Reopening the popup can rescan a preview or a fresh signed URL while
+    // the original job still holds the name Chrome assigned on disk.
+    if (lastDescriptor && !descriptors.some(d => d.id === lastDescriptor.id)) descriptors.push(lastDescriptor);
     return { type: "descriptors", tabId, descriptors,
       failures: listDiscoveryFailures(tabId),
       statuses: Object.fromEntries(descriptors.flatMap(d => {
@@ -321,65 +339,19 @@ export function createRouter(deps: RouterDeps): Router {
     };
   }
 
-  function bestVariant(d: StreamDescriptor): Variant | null {
-    if (d.variants.length === 0) return null;
-    const sorted = [...d.variants].sort((a, b) => {
-      const h = (b.height ?? 0) - (a.height ?? 0);
-      if (h !== 0) return h;
-      return (b.bitrate ?? 0) - (a.bitrate ?? 0);
-    });
-    return sorted[0] ?? null;
-  }
-
-  function bestDescriptorScore(d: StreamDescriptor): [number, number, number, number] {
-    const variant = bestVariant(d);
-    const protocolRank = d.protocol === "hls"
-      ? 3
-      : d.protocol === "progressive-http"
-        ? 2
-        : 1;
-    return [
-      variant?.height ?? 0,
-      variant?.bitrate ?? 0,
-      protocolRank,
-      d.detectedAt,
-    ];
-  }
-
-  function compareBestDescriptors(a: StreamDescriptor, b: StreamDescriptor): number {
-    const as = bestDescriptorScore(a);
-    const bs = bestDescriptorScore(b);
-    for (let i = 0; i < as.length; i++) {
-      const diff = (bs[i] ?? 0) - (as[i] ?? 0);
-      if (diff !== 0) return diff;
-    }
-    return a.id.localeCompare(b.id);
-  }
-
-  function bestDownloadChoice(d: StreamDescriptor): UserChoice {
-    const variant = bestVariant(d);
-    return {
-      outputMode: "Original",
-      filename: suggestFilename(d),
-      variantId: variant?.id ?? null,
-      audioRenditionId: variant?.audioRenditionId ?? null,
-    };
-  }
-
   async function startBestDownload(tabId: number, file?: NamedFile): Promise<BestDownloadOutcome> {
     if (file) {
-      for (const [streamId, { descriptor }] of jobs) {
+      for (const [streamId, { descriptor, fileName }] of jobs) {
         if (descriptor.tabId === tabId && descriptor.pageUrl === file.pageUrl
-          && descriptor.title === file.filename && descriptor.source.kind === "direct-url") {
+          && fileName === file.filename) {
           return { kind: "started", streamId };
         }
       }
     }
     const descriptors = [...listDescriptors(tabId)];
-    const descriptor = descriptors
-      .filter(isDownloadableCandidate)
-      .sort(compareBestDescriptors)[0];
-    if (!descriptor) {
+    const preferred = descriptors.sort(compareDownloads)[0];
+    const best = preferred && downloadOptions(preferred)[0];
+    if (!best) {
       // Protected media is media. Reporting it as "nothing on this page" was
       // wrong for the user and unsafe for the boundary: no-media is what the
       // local downloader may take over, so a Widevine page got delegated.
@@ -397,7 +369,7 @@ export function createRouter(deps: RouterDeps): Router {
       // delegability, so dash_unsupported still reaches the local downloader
       // when that is on, which is the documented DASH fallback.
       for (const candidate of descriptors) {
-        const plan = dispatch(candidate, bestDownloadChoice(candidate));
+        const plan = dispatch(candidate, { outputMode: "Original", filename: suggestFilename(candidate), variantId: null, audioRenditionId: null });
         if (plan.kind === "refuse") {
           return {
             kind: "failed",
@@ -411,23 +383,14 @@ export function createRouter(deps: RouterDeps): Router {
       return { kind: "no-media" };
     }
 
-    const error = await startDownload(descriptor.id, bestDownloadChoice(descriptor), file);
+    const { descriptor, choice } = best;
+    // The publisher's selected file control names the original. An attachment
+    // server may encode its spaces as literal plus signs in Content-Disposition.
+    const selected = file && descriptor.capabilities.directDownload
+      ? { ...choice, filename: suggestFilename({ ...descriptor, title: file.filename }) } : choice;
+    const error = await startDownload(descriptor.id, selected, file);
     if (error === "skipped") return {kind: "skipped"};
     return error ? { kind: "failed", streamId: descriptor.id, error } : { kind: "started", streamId: descriptor.id };
-  }
-
-  /**
-   * Demuxed HLS holds only media-playlist URLs until the engine host fetches
-   * them (materializeDemuxedHls), so the pre-flight dispatch here sees empty
-   * segment lists and would refuse a runnable pair.
-   */
-  function isUnmaterializedDemuxedHls(d: StreamDescriptor): boolean {
-    return d.protocol === "hls"
-      && !d.drm
-      && d.variants.some(v =>
-        v.audioRenditionId !== null
-        && v.segmentRef.kind === "hls-segments"
-        && v.segmentRef.segmentUrls.length === 0);
   }
 
   async function startDownload(id: StreamDescriptor["id"], choice: UserChoice, file?: NamedFile): Promise<JobError | "skipped" | null> {
@@ -443,14 +406,15 @@ export function createRouter(deps: RouterDeps): Router {
       // Forward an unmaterialized demuxed pair to the engine host, which
       // materializes both media playlists and re-dispatches authoritatively
       // (engine/download.ts); genuine refusals come back as job-failed.
-      if (plan.reason !== "no_usable_variant" || !isUnmaterializedDemuxedHls(descriptor)) {
+      if (plan.reason !== "no_usable_variant" || !hasPendingHlsPair(descriptor, choice)) {
         return dispatchRefusalToError(plan.reason, descriptor);
       }
     }
 
     const permit = await deps.reserveSave?.(descriptor, choice, file);
     if (permit === null) return "skipped";
-    jobs.set(id, { descriptor, choice, ...(permit ? {permit} : {}), plan: plan.kind === "refuse" ? null : plan });
+    jobs.set(id, { descriptor, choice, ...(file ? { fileName: file.filename } : {}), ...(permit ? {permit} : {}), plan: plan.kind === "refuse" ? null : plan });
+    if (file) getTab(descriptor.tabId).lastNamedStream = id;
     setStatus(id, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: "Starting" });
     try {
       await deps.ensureEngineHost();
@@ -484,14 +448,15 @@ export function createRouter(deps: RouterDeps): Router {
         const writing = {type: "job-progress" as const, streamId: msg.streamId, bytesWritten: 0, bytesTotal: null, phase: "Writing to Downloads"};
         setStatus(msg.streamId, {phase: "active", bytesWritten: 0, bytesTotal: null, stage: writing.phase});
         deps.runtime.sendMessage(writing);
-        await deps.downloads.download({
+        const downloadId = await deps.downloads.download({
           url: msg.blobUrl,
           filename,
           conflictAction: "uniquify",
         });
         await job?.permit?.finish(true);
-        setStatus(msg.streamId, { phase: "complete" });
-        return { type: "job-complete", streamId: msg.streamId, path: filename };
+        const savedAs = await deps.downloads.filename?.(downloadId).catch(() => undefined) ?? filename;
+        setStatus(msg.streamId, { phase: "complete", savedAs });
+        return { type: "job-complete", streamId: msg.streamId, path: savedAs };
       } catch (err) {
         await job?.permit?.finish(false);
         const error = saveFailure(err, filename);

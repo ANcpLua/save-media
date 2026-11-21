@@ -1,3 +1,4 @@
+import { compareDownloads } from "../util/downloadable";
 import type { StreamDescriptor } from "@savemedia/core";
 import type { PageMediaSnapshot, PageVideo } from "../types/messages";
 
@@ -47,7 +48,7 @@ export function rankDescriptors(
     };
   });
 
-  const sorted = ranked.sort((a, b) => Number(b.isMain) - Number(a.isMain) || pixels(b.descriptor) - pixels(a.descriptor));
+  const sorted = ranked.sort((a, b) => Number(b.isMain) - Number(a.isMain) || compareDownloads(a.descriptor, b.descriptor));
   const grouped: RankedDescriptor[] = [];
   const groups = new Map<string, number>();
   for (const item of sorted) {
@@ -92,10 +93,6 @@ function sameUrl(a: string, b: string): boolean {
   } catch {
     return false;
   }
-}
-
-function pixels(d: StreamDescriptor): number {
-  return Math.max(0, ...d.variants.map(v => (v.width ?? 0) * (v.height ?? 0)));
 }
 
 export function formatDuration(seconds: number): string {

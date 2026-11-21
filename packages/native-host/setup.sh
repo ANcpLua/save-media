@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/ANcpLua/save-media/main/packages/native-host/setup.sh \
 #     | bash -s -- --extension-id <id>
 #
-# Downloads host.py and install.sh into a per-user directory and registers the
+# Downloads the native host files into a per-user directory and registers the
 # helper for the browsers on this machine. It does not install yt-dlp or
 # ffmpeg; it tells you how if they are missing.
 set -euo pipefail
@@ -22,7 +22,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 mkdir -p "$TARGET"
-for f in host.py install.sh; do
+for f in file_transport.py host.py install.sh; do
   curl -fsSL "$BASE_URL/$f" -o "$TARGET/$f.tmp"
   mv "$TARGET/$f.tmp" "$TARGET/$f"
 done

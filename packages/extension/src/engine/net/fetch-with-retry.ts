@@ -19,6 +19,7 @@ export async function fetchWithRetry(
   signal: AbortSignal,
   cls: RetryClass,
   init: RequestInit = {},
+  fetchFile: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ): Promise<Response> {
   const policy = RETRY_POLICY[cls];
   const maxAttempts = "maxAttempts" in policy ? policy.maxAttempts : 1;
@@ -31,7 +32,7 @@ export async function fetchWithRetry(
 
     let response: Response | undefined;
     try {
-      response = await fetch(url, { ...init, signal });
+      response = await fetchFile(url, { ...init, signal });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       lastStatus = "network-error";
@@ -42,6 +43,7 @@ export async function fetchWithRetry(
     if (response) {
       if (response.ok) return response;
       lastStatus = response.status;
+      await response.body?.cancel().catch(() => undefined);
       lastDetail = response.statusText || `HTTP ${response.status}`;
       retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
       if (!isRetryableStatus(cls, response.status)) {

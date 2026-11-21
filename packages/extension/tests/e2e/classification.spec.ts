@@ -465,7 +465,7 @@ test.describe("extension classifies real fixture pages", () => {
       const select = popup.getByRole("combobox");
       await expect(select).toHaveCount(1);
       await expect(select.locator("option")).toHaveText(["720p", "480p"]);
-      await expect(popup.getByRole("button", { name: /^download$/i })).toHaveCount(1);
+      await expect(popup.getByRole("button", { name: /^save$/i })).toHaveCount(1);
       await expect.poll(async () => (await descriptorsForUrlContaining("/page/main-player-qualities.html")).length).toBe(2);
       expect(await page.locator("video").evaluateAll(videos => videos.every(video => (video as HTMLVideoElement).paused))).toBe(true);
     } finally {
@@ -500,7 +500,7 @@ test.describe("extension classifies real fixture pages", () => {
         await page.goto(path);
         popup = await openPopupFor(page);
         await expect(popup.getByText(file.name, { exact: true })).toHaveCount(1);
-        const download = popup.getByRole("button", { name: "Download", exact: true });
+        const download = popup.getByRole("button", { name: "Save", exact: true });
         await expect(download).toHaveCount(1);
         await expect(download).toBeEnabled();
         if (file.page === "linked-31") {
@@ -556,13 +556,13 @@ test.describe("extension classifies real fixture pages", () => {
           releaseFileInfo();
         }
         await expect(popup.getByText(name!, { exact: true })).toBeVisible();
-        await expect(popup.getByRole("button", { name: "Download", exact: true })).toHaveCount(1);
+        await expect(popup.getByRole("button", { name: "Save", exact: true })).toHaveCount(1);
         const oldSource = id === "31" ? await page.locator("video").getAttribute("src") : null;
         expect((await request.post(`/file/${id}`)).status()).toBe(204);
         if (id === "31") {
           expect(oldSource).toBeTruthy();
           expect((await request.get(oldSource!)).status()).toBe(403);
-          await popup.getByRole("button", { name: "Download", exact: true }).click();
+          await popup.getByRole("button", { name: "Save", exact: true }).click();
           await expect(popup.getByTestId("job-complete")).toBeVisible();
           expect(await page.locator("video").getAttribute("src")).toBe(oldSource);
           expect(context!.pages().filter(tab => tab.url() === page.url())).toEqual([page]);
@@ -598,9 +598,9 @@ test.describe("extension classifies real fixture pages", () => {
       try {
         await page.goto(`/page/${scenario}.html`);
         popup = await openPopupFor(page);
-        await popup.getByRole("button", { name: "Download", exact: true }).click();
+        await popup.getByRole("button", { name: "Save", exact: true }).click();
         await expect(popup.getByTestId("job-error")).toContainText(`returned ${response === "page" ? "a page" : "data"} instead of a video`);
-        await expect(popup.getByRole("button", { name: "Retry download" })).toBeVisible();
+        await expect(popup.getByRole("button", { name: "Retry save" })).toBeVisible();
         await expect(popup.getByTestId("job-complete")).toHaveCount(0);
         expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
       } finally {
@@ -669,7 +669,7 @@ test.describe("extension classifies real fixture pages", () => {
         popup = await openPopupFor(page);
         await expect(popup.getByRole("status").filter({ hasText: title })).toBeVisible();
         await expect(popup.getByRole("button", { name: "Check page again" })).toBeEnabled();
-        await expect(popup.getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
+        await expect(popup.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
         const technicalDetails = popup.getByText(details, { exact: true });
         await expect(technicalDetails).toBeHidden();
         await popup.getByText("Technical details", { exact: true }).click();
@@ -687,25 +687,23 @@ test.describe("extension classifies real fixture pages", () => {
 
       await page.goto(origin + "/named-file.html");
       popup = await openPopupFor(page);
-      await popup.getByRole("button", { name: "Download", exact: true }).click();
-      await expect(popup.getByTestId("file-save-problem")).toContainText("The browser couldn’t verify the file server on that attempt.");
-      await expect(popup.getByRole("button", { name: "Retry secure download" })).toBeVisible();
+      await popup.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Chrome couldn’t establish a verified connection");
+      await expect(popup.getByRole("button", { name: "Retry save" })).toBeVisible();
       await popup.close();
       popup = await openPopupFor(page);
-      await expect(popup.getByTestId("file-save-problem")).toContainText("The browser couldn’t verify the file server on that attempt.");
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Chrome couldn’t establish a verified connection");
       await expect(popup.getByTestId("file-save-problem")).not.toContainText("not-for-display");
-      await popup.getByRole("button", { name: "Cancel", exact: true }).click();
-      await expect(popup.getByRole("button", { name: "Download", exact: true })).toBeVisible();
       await popup.close();
       popup = undefined;
 
       await page.reload();
       await page.bringToFront();
       await page.keyboard.press("Alt+KeyS");
-      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Couldn’t verify the last connection");
+      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("File server unavailable");
       popup = await openPopupFor(page);
-      await popup.getByRole("button", { name: "Retry secure download" }).click();
-      await expect(popup.getByTestId("file-save-problem")).toContainText("File wasn’t saved");
+      await popup.getByRole("button", { name: "Retry save" }).click();
+      await expect(popup.getByTestId("file-save-problem")).toContainText("File server unavailable");
       expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
       expect(mediaRequests).toBe(0);
     } finally {

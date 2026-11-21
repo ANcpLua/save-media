@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { LocalConnection } from "./LocalConnection";
 import {
   isBackgroundToPopupMessage,
   type LocalJobView,
@@ -19,6 +20,7 @@ interface Props {
   readonly pageUrl: string | null;
   readonly initialStatus?: Status | undefined;
   readonly skipFetch?: boolean;
+  readonly localConnection?: LocalConnection;
 }
 
 const COOKIE_OPTIONS: readonly { readonly value: LocalSettingsValue["cookies"]; readonly label: string }[] = [
@@ -83,10 +85,11 @@ function CopyLine({ command, testId }: { readonly command: string; readonly test
   );
 }
 
-export function LocalDownloader({ tabId, pageUrl, initialStatus, skipFetch = false }: Props) {
+export function LocalDownloader({ tabId, pageUrl, initialStatus, skipFetch = false, localConnection }: Props) {
   const [status, setStatus] = useState<Status | null>(initialStatus ?? null);
   const [open, setOpen] = useState(initialStatus?.settings.enabled ?? false);
   const [busy, setBusy] = useState(false);
+  const [connectionError, setConnectionError] = useState(false);
 
   useEffect(() => {
     if (skipFetch) return;
@@ -161,7 +164,9 @@ export function LocalDownloader({ tabId, pageUrl, initialStatus, skipFetch = fal
           <span aria-hidden="true">{open ? "▼" : "▶"}</span>
           Local downloader
         </button>
-        <StatusPill enabled={enabled} host={host} />
+        {!enabled && localConnection?.enabled
+          ? <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] text-emerald-300">File recovery on</span>
+          : <StatusPill enabled={enabled} host={host} />}
         <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-muted cursor-pointer">
           <input
             type="checkbox"
@@ -171,14 +176,22 @@ export function LocalDownloader({ tabId, pageUrl, initialStatus, skipFetch = fal
             onChange={toggleEnabled}
             data-testid="local-enable"
           />
-          On
+          yt-dlp
         </label>
       </div>
 
       {open && (
         <div className="mt-2 space-y-2 text-xs">
+          {localConnection?.enabled && <div className="flex items-center justify-between gap-2">
+            <span>Local file connection is on</span>
+            <button type="button" onClick={() => {
+              setConnectionError(false);
+              void localConnection.disable().catch(() => setConnectionError(true));
+            }} className="rounded-md bg-surface-2 px-2 py-0.5 font-medium text-white">Turn off local connection</button>
+          </div>}
+          {connectionError && <p className="text-orange-300" role="status">Chrome couldn’t change the local connection setting. Try again.</p>}
           <p className="text-muted leading-relaxed">
-            Saves videos the browser cannot, using a small helper on this computer. Nothing is bundled and protected media is refused.
+            Enable yt-dlp to save through the tools installed on this computer.
           </p>
 
           {enabled && host === null && (

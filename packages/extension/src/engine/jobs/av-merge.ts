@@ -19,14 +19,15 @@ export async function runAvMergeJob(
   onProgress: ProgressFn,
   signal: AbortSignal,
   externalSink?: JobSink,
+  request: typeof fetchWithRetry = fetchWithRetry,
 ): Promise<JobResult> {
   onProgress(0, plan.estimatedBytes, "fetching-video");
-  const videoBytes = await fetchTrack(plan.video, signal, bytes =>
+  const videoBytes = await fetchTrack(plan.video, signal, request, bytes =>
     onProgress(bytes, plan.estimatedBytes, "fetching-video"));
 
   if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
   onProgress(videoBytes.byteLength, plan.estimatedBytes, "fetching-audio");
-  const audioBytes = await fetchTrack(plan.audio, signal, bytes =>
+  const audioBytes = await fetchTrack(plan.audio, signal, request, bytes =>
     onProgress(videoBytes.byteLength + bytes, plan.estimatedBytes, "fetching-audio"));
 
   if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
@@ -46,6 +47,7 @@ export async function runAvMergeJob(
 async function fetchTrack(
   track: MergeTrack,
   signal: AbortSignal,
+  request: typeof fetchWithRetry,
   onBytes: (bytesSoFar: number) => void,
 ): Promise<Uint8Array> {
   const urls = track.initUrl ? [track.initUrl, ...track.segmentUrls] : [...track.segmentUrls];
@@ -58,7 +60,7 @@ async function fetchTrack(
   for (const url of urls) {
     if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
     try {
-      const resp = await fetchWithRetry(url, signal, "segment");
+      const resp = await request(url, signal, "segment");
       const body = new Uint8Array(await resp.arrayBuffer());
       parts.push(body);
       bytes += body.byteLength;

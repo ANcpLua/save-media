@@ -24,7 +24,7 @@ describe("DetectedItem — DRM/ClearKey cards", () => {
 
   it("does not render a download button on DRM cards", () => {
     render(<ul>{<DetectedItem descriptor={drmDescriptor("cdm_required")} />}</ul>);
-    expect(screen.queryByRole("button", { name: /download/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();
   });
 });
 
@@ -39,7 +39,7 @@ describe("DetectedItem — direct stream card", () => {
   it("sends a download message with sanitized filename when clicked", () => {
     const d = directDescriptor({ title: "My Clip / Bad!! Name" });
     render(<ul>{<DetectedItem descriptor={d} />}</ul>);
-    const dl = screen.getByRole("button", { name: /download/i });
+    const dl = screen.getByRole("button", { name: /^save$/i });
     fireEvent.click(dl);
     expect(globalThis.chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
     const arg = vi.mocked(globalThis.chrome.runtime.sendMessage).mock.calls[0]?.[0] as unknown as { choice: { filename: string } };
@@ -61,10 +61,10 @@ describe("DetectedItem — default quality", () => {
     const select = screen.getByRole("combobox") as HTMLSelectElement;
     expect(Array.from(select.options, o => o.text)).toEqual(["720p", "480p"]);
     expect(select.value).toBe("high");
-    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(chrome.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ streamId: "high" }));
     fireEvent.change(select, { target: { value: "low" } });
-    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(chrome.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ streamId: "low" }));
   });
   it("downloads the highest variant when none is chosen, whatever the playlist order", () => {
@@ -72,7 +72,7 @@ describe("DetectedItem — default quality", () => {
     const v1080 = base.variants[0]!;
     const v720 = { ...v1080, id: "v-720" as VariantId, width: 1280, height: 720, bitrate: 2_500_000 };
     render(<ul>{<DetectedItem descriptor={{ ...base, variants: [v720, v1080] }} />}</ul>);
-    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     const arg = vi.mocked(globalThis.chrome.runtime.sendMessage).mock.calls.at(-1)?.[0] as unknown as { choice: { variantId: string } };
     expect(arg.choice.variantId).toBe("v-1080");
   });
@@ -92,7 +92,7 @@ describe("DetectedItem — unsupported stream card", () => {
   it("renders DASH as an explicit refusal with no download button", () => {
     render(<ul>{<DetectedItem descriptor={dashDescriptor()} />}</ul>);
     expect(screen.getByTestId("unsupported-card").textContent).toMatch(/DASH detected/i);
-    expect(screen.queryByRole("button", { name: /download/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();
   });
 
   it("a demuxed audio+video pair gets a Download button, not the DASH refusal", () => {
@@ -111,7 +111,7 @@ describe("DetectedItem — unsupported stream card", () => {
     });
     render(<ul>{<DetectedItem descriptor={pair} />}</ul>);
     expect(screen.queryByTestId("unsupported-card")).toBeNull();
-    expect(screen.getByRole("button", { name: /download/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeTruthy();
   });
 });
 

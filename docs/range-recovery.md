@@ -19,11 +19,13 @@ for the page to supply a source. The popup shows the reason when discovery
 fails and **Check page again** probes the current sources. Navigation cancels
 probes from the previous page.
 
-When a page names a file and exposes one Download control near its heading,
-SaveMedia can use that control if the player supplies no usable source. The popup and
+A visible HTML download link can carry the original name even when the
+server address has no filename. A file collection keeps each named link
+separate. A named page with an explicit original link prefers that link to a
+player preview. When a page names a file and exposes one Download control near its heading,
+SaveMedia prefers the publisher’s original-file control to a player preview. The popup and
 Alt+S run the site's own handler at save time, when it can generate a fresh
-address. Chromium can read the same control on a linked download page in a
-sandboxed frame. The extension passes the resulting navigation address to
+address. A normal link is probed after its redirects. A media response goes to the verifier. On Chromium, an HTML response can lead to a download control in a sandboxed frame at the final document address. The extension passes the resulting navigation address to
 the direct-file verifier and keeps the original tab open. Chrome follows the
 HTTP redirects and applies its usual certificate checks.
 
@@ -39,19 +41,9 @@ previously redirected to the rejected host so the site can choose a new
 destination. A repeated failed route, an unrelated file, or three link
 renewals ends automatic recovery. A signed link returning HTTP 403 can also
 be renewed. Explicit login, payment and HTTP 451 responses end the attempt.
-On a relay-enabled Chrome build, **Use secure relay** appears after a
-certificate rejection. The confirmation names the relay and grants this site
-permission for the current browser session. Download and Alt+S share that
-permission. A packaged libcurl.js worker fetches the same named file over WSS
-using its bundled certificate authorities. It checks each HTTPS redirect before
-following it. The site still runs its own Download control. When that document
-uses a successful public GET with a single `path` parameter matching the file
-and returns signature fields already present in the generated link, the worker
-renews them on the transfer route. Other generated links are used as supplied.
-A site that declines the relay's address can still refuse a transfer.
 
 After a temporary range failure, the engine can keep the completed parts of
-one file in memory for up to ten minutes. This applies to direct and relay
+one file in memory for up to ten minutes. This applies to direct file
 transfers up to 256 MiB. Retry in the same tab. The engine probes again and
 reuses parts only when the resource, exact length and strong ETag match.
 A changed file starts from byte zero. The saved output still undergoes the
@@ -60,9 +52,7 @@ To reproduce a late HTTP 503 and a changed ETag with owned bytes, run
 `bun x vitest run tests/unit/engine/jobs/direct.test.ts -t 'late 503'`
 from `packages/extension`.
 
-Both transports use the same container, range and size checks. A scoped
-worker holds one transfer in memory. Chrome writes the verified blob under
-the original filename and reports completion before the popup shows **Saved**.
+Chrome writes the verified file under the original name and confirms the save.
 The popup shows connection, transfer, verification and disk-write stages.
 The transfer bar uses bytes held from the current attempts. Retried ranges
 discard their partial counts. An unknown total shows bytes received and an
@@ -74,16 +64,14 @@ read the stage. The original icon returns when the last save on that tab ends.
 
 SaveMedia records a hashed file identity in browser-session storage only
 after Chrome reports completion. The named file page identifies a file across
-link renewal and relay fallback. For other media, the source and rendition
+link renewal. For other media, the source and rendition
 identify the selection. Repeating Download or Alt+S asks for confirmation.
 The answer applies to one save. The existing Downloads file may have been
 moved or deleted since the first save.
 
-A build without a relay endpoint retains the direct **Retry secure download** retry.
-
-Both the popup and Alt+S use the same download job. A range response with a
+Both the popup and Alt+S use the same download job. If the server sends a whole file in response to the range probe, the job streams that response through verification and saves it. A server that declines range requests can serve the file with a regular GET. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
-chunks. Each chunk uses `If-Range` and checks its offsets, byte count, and
+chunks. After a 429 or 503, outstanding parts finish and one worker requests the remaining parts. Each chunk uses `If-Range` and checks its offsets, byte count, and
 validator. Network errors and truncated chunks get bounded retries.
 Transient HTTP responses use exponential backoff. A Retry-After of up to 30
 seconds sets the minimum wait. A longer wait ends the attempt and lets the
@@ -134,7 +122,7 @@ until a new save or page load. The named file row shows the reason and a
 retry button.
 
 Chrome uses its configured resolver for the page and direct requests.
-An approved relay resolves destination hosts for requests made through it. Chrome's Secure DNS setting can select an encrypted resolver on
+Chrome's Secure DNS setting can select an encrypted resolver on
 devices where the browser permits that choice. The media request still
 validates TLS for the original hostname. See [Chrome's Secure DNS documentation](https://support.google.com/chrome/answer/10468685).
 
@@ -145,7 +133,36 @@ compare the connected addresses and TLS verification results for the same
 hostname from the same machine. The host root is sufficient for that check.
 Keep signed links out of diagnostic reports.
 
+## Optional desktop connection
+
+On a Mac with the SaveMedia native host installed, **Use local connection**
+grants Chrome’s native messaging permission and checks the host’s file-reading
+capability. The setting applies to both **Save** and **Alt+S**. The extension
+continues to use normal Chrome networking during page observation. During an
+explicit save, a failed HTTPS connection may be retried through the installed
+host. The host resolves each public destination using verified DNS over HTTPS
+and opens a direct TLS connection for the original hostname, including on
+redirects. It supplies a bounded response stream to the same media verifier.
+HTTP access refusals and protected keys keep their original behavior. The helper
+requires system curl for this route. It does not require yt-dlp or ffmpeg.
+The local opt-in is independent of the yt-dlp download setting. See
+[the native host protocol](../packages/native-host/README.md).
+
 ## Verify locally
+
+To reproduce the movable Chrome preview, run
+`bun run --filter @savemedia/extension build:preview` after building core.
+Load `packages/extension/dist-preview` in Chrome. The public key in
+`manifest.preview.json` keeps the preview ID
+`bcccjfmdffhkejbogpedfpbgolgglnok` when the folder moves. The store build
+has its own identity and requests native messaging at first use. The dedicated
+desktop preview declares that permission at installation. Its local file
+connection stays off until the user chooses **Use local connection**.
+Register the preview ID with the native host for a desktop-connection check. Use a temporary Chrome profile for automation.
+On a connection that rejects the file host, click **Save**, then **Use local
+connection**. In the standard build, accept Chrome’s permission prompt. Run **Alt+S** on the same
+file, confirm the additional copy, and compare each on-disk file to a known
+original. The local connection setting starts off in each new profile.
 
 For a Chrome preview, run `bun run build` at the repository root and load
 `packages/extension/dist-chrome` using **Load unpacked**. Subsequent builds
@@ -153,27 +170,6 @@ use the same directory. Use **Reload** on that extension and refresh the file
 page to activate the new page scripts. Check a reported connection failure
 with the same Chrome profile and network settings as the original report.
 A save in a browser using a different resolver verifies that route only.
-
-For a relay-enabled preview, supply an operator-authorized Wisp endpoint
-at build time. Only `wss://` endpoints are accepted. The following builds a
-private preview with the library project's documented public demo. Chrome
-needs no companion or DNS configuration. Production needs a supported relay
-with an operator, traffic limits and an appropriate privacy disclosure.
-
-```sh
-SAVEMEDIA_RELAY_URL=wss://wisp.mercurywork.shop/ bun run build
-node packages/extension/scripts/smoke-relay.mjs packages/extension/dist-chrome
-```
-
-The focused check uses Playwright Chromium, OpenSSL and two project-owned
-MOV files. It gives the isolated browser profile an untrusted local TLS route
-to the fixture host. The relay resolves that host independently. The check
-drives Download and Alt+S, checks progress, reopens the page and popup, cancels
-a repeat save and explicitly confirms another. It compares files on disk with
-the originals. A local server also returns one HTTP 503 with Retry-After and
-then streams a MOV without a length. The popup must recover automatically and
-display bytes received while its progress bar remains indeterminate.
-Only the browser profile created for this check uses the simulated bad route.
 
 Install the workspace dependencies, Playwright Chromium and `ffprobe` to run
 the focused check.

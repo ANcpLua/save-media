@@ -1,4 +1,5 @@
 import type { DiscoveredMedia, MediaQuality } from "../types/messages";
+import { readVideoMetadata, resolution } from "./video-metadata";
 
 const LIMIT = 80;
 
@@ -10,10 +11,12 @@ interface Player {
 
 /** Read the main player's literal sources, not every media URL on the page. */
 export function discoverPageMedia(doc: Document, pageUrl: string): DiscoveredMedia[] {
+  const base = doc.baseURI === "about:blank" ? pageUrl : doc.baseURI;
   function add(player: Player, raw: string, height?: number): void {
     try {
-      const url = new URL(raw.replace(/&amp;/g, "&"), pageUrl);
-      if (!/^https?:$/.test(url.protocol) || isFragment(url.pathname)) return;
+      const url = new URL(raw.replace(/&amp;/g, "&"), base);
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password || isFragment(url.pathname)) return;
+      url.hash = "";
       if (!player.media.has(url.href) && player.media.size >= LIMIT) return;
       const previous = player.media.get(url.href);
       const quality: MediaQuality = { groupId: player.groupId,
@@ -27,21 +30,19 @@ export function discoverPageMedia(doc: Document, pageUrl: string): DiscoveredMed
     .filter(item => item.score >= 0).sort((a, b) => b.score - a.score)[0]?.media;
   const elementPlayer: Player = { groupId: `${pageUrl}#element:${main ? elements.indexOf(main) : 0}`, media: new Map(), priority: 0 };
   if (main) {
-    const media = main;
-    const src = media.getAttribute("src");
-    if (src) {
-      add(elementPlayer, src);
-    } else {
-      for (const source of media.querySelectorAll<HTMLSourceElement>("source[src]")) {
-        const height = resolution(source.getAttribute("label") ?? source.getAttribute("res") ?? source.getAttribute("size") ?? "");
-        add(elementPlayer, source.src, height);
-      }
-      if (elementPlayer.media.size === 0 && media.currentSrc) add(elementPlayer, media.currentSrc);
+    const src = main.getAttribute("src");
+    if (src) add(elementPlayer, src);
+    for (const source of main.querySelectorAll<HTMLSourceElement>("source[src]")) {
+      const height = ["height", "label", "res", "size", "data-height", "data-quality"]
+        .map(key => resolution(source.getAttribute(key))).find(value => value !== undefined);
+      add(elementPlayer, source.getAttribute("src")!, height);
     }
+    if (main.currentSrc) add(elementPlayer, main.currentSrc, resolution(main.videoHeight));
   }
 
   const players = new Map<string, Player>();
   Array.from(doc.scripts).forEach((script, index) => {
+    if (script.type.toLowerCase() === "application/ld+json") return;
     for (const object of literalObjects((script.textContent ?? "").slice(0, 2_000_000))) {
       if (object.path.some(key => /^(related|recommend|preview|thumb|advert|ads$)/i.test(key))) continue;
       const groupId = `${pageUrl}#config:${index}:${object.group}`;
@@ -88,9 +89,35 @@ export function discoverPageMedia(doc: Document, pageUrl: string): DiscoveredMed
       if (![...selected.media.keys()].some(url => sameMediaUrl(url, media.url))) add(selected, media.url, media.quality?.height);
     }
   }
-  const media = [...(selected ?? elementPlayer).media.values()];
+  let player = selected ?? elementPlayer;
+  const groups = readVideoMetadata(doc, pageUrl);
+  // Relate renditions by an actual shared source URL or a publisher's explicit
+  // WebPage.mainEntity. A nearby VideoObject can describe a different clip.
+  const overlaps = (url: string) => player.media.has(url.split("#")[0]!);
+  let related = groups.filter(group => group.sources.some(({ url }) => overlaps(url)));
+  if (!related.length) {
+    const primary = groups.filter(group => group.primary);
+    const choices = primary.length ? primary : player.media.size ? [] : groups;
+    const first = choices[0];
+    const firstUrls = new Set(first?.sources.map(source => source.url.split("#")[0]));
+    const standalone = choices.every(group => group.sources.some(({ url }) => firstUrls.has(url.split("#")[0]))) ? first : undefined;
+    if (standalone) {
+      player = { groupId: `${pageUrl}#metadata:${groups.indexOf(standalone)}`, media: new Map(), priority: 0 };
+      for (const source of standalone.sources) add(player, source.url, source.height);
+      related = groups.filter(group => group.sources.some(({ url }) => overlaps(url)));
+    }
+  }
+  for (const group of related) {
+    for (const source of group.sources) add(player, source.url, source.height);
+  }
+  const media = [...player.media.values()];
   // Some file pages show the filename while serving an opaque player URL.
   // Apply a literal filename only when the page offers one media candidate.
+  const published = publishedMediaLinks(doc, pageUrl);
+  // A named file page can play a preview while offering the original separately.
+  // Its explicit file links are authoritative. On a collection without a player,
+  // each link is a separate choice.
+  if (published.length && (!media.length || declaredMediaFilename(doc))) return published;
   if (media.length === 1) {
     const filenameHint = declaredMediaFilename(doc);
     if (filenameHint) return [{ ...media[0]!, filenameHint }];
@@ -98,10 +125,46 @@ export function discoverPageMedia(doc: Document, pageUrl: string): DiscoveredMed
   return media;
 }
 
+/** HTML's download attribute can name a file even when the URL has no suffix. */
+export function mediaFilename(value: string | null): string | undefined {
+  const name = value?.trim();
+  return name && name.length <= 240 && !/[/\\\u0000-\u001f]/.test(name)
+    && /\.(mp4|mov|qt|webm|mkv)$/i.test(name) ? name : undefined;
+}
+
+export function fileLinkName(link: HTMLAnchorElement, url: URL): string | undefined {
+  const promised = mediaFilename(link.getAttribute("download"));
+  if (promised) return promised;
+  try { return mediaFilename(decodeURIComponent(url.pathname.split("/").at(-1) ?? "")); }
+  catch { return undefined; }
+}
+
+export function publishedMediaLinks(doc: Document, pageUrl: string): DiscoveredMedia[] {
+  const declared = declaredMediaFilename(doc);
+  const files = new Map<string, DiscoveredMedia>();
+  for (const link of doc.querySelectorAll<HTMLAnchorElement>("a[download][href], a[type^='video/' i][href]")) {
+    if (link.closest('[hidden], [inert], [aria-hidden="true"], [aria-disabled="true"]')) continue;
+    const style = doc.defaultView?.getComputedStyle(link);
+    if (style?.display === "none" || style?.visibility === "hidden") continue;
+    try {
+      const url = new URL(link.getAttribute("href")!, doc.baseURI === "about:blank" ? pageUrl : doc.baseURI);
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.href === pageUrl || link.getAttribute("href")?.startsWith("#")) continue;
+      const name = fileLinkName(link, url);
+      if (name && declared && name !== declared) continue;
+      const filenameHint = name ?? declared;
+      if (filenameHint || link.type.toLowerCase().startsWith("video/")) {
+        files.set(url.href, { url: url.href, ...(filenameHint ? { filenameHint } : {}) });
+      }
+      if (files.size >= LIMIT) break;
+    } catch { /* Ignore invalid publisher links. */ }
+  }
+  return [...files.values()];
+}
+
 export function declaredMediaFilename(doc: Document): string | undefined {
   return [...doc.querySelectorAll('h1, meta[property="og:title"]')]
     .map(el => (el.getAttribute("content") ?? el.textContent ?? "").trim())
-    .find(name => name.length <= 240 && /\.(mp4|mov|qt|webm|mkv)$/i.test(name));
+    .map(mediaFilename).find(name => name !== undefined);
 }
 
 function sameMediaUrl(a: string, b: string): boolean {
@@ -123,12 +186,6 @@ function mediaScore(media: HTMLMediaElement): number {
   const visibleHeight = Math.max(0, Math.min(rect.bottom, view?.innerHeight ?? rect.bottom) - Math.max(0, rect.top));
   return visibleWidth * visibleHeight * 1000 + (media.controls ? 100 : 0)
     + (media.closest("main, [role=main]") ? 10 : 0);
-}
-
-function resolution(value: string): number | undefined {
-  const match = /^(\d{2,5})(?:p)?$/i.exec(value.trim());
-  const height = match ? Number(match[1]) : 0;
-  return height > 0 && height <= 16384 ? height : undefined;
 }
 
 function isMediaUrl(raw: string, pageUrl: string): boolean {

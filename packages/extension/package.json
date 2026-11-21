@@ -14,6 +14,7 @@
   "scripts": {
     "build": "node scripts/build-chrome.mjs",
     "build:chrome": "node scripts/build-chrome.mjs",
+    "build:preview": "node scripts/build-chrome.mjs --preview",
     "build:firefox": "node scripts/build-firefox.mjs",
     "build:all": "bun run build:chrome && bun run build:firefox",
     "zip": "bun run build:all && node scripts/package.mjs",
@@ -37,7 +38,6 @@
   },
   "dependencies": {
     "@savemedia/core": "workspace:*",
-    "libcurl.js": "0.7.5",
     "m3u8-parser": "^7.2.0",
     "mediabunny": "^1.61.3",
     "react": "^18.3.1",

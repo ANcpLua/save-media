@@ -1,15 +1,15 @@
 import { TransferProgress } from "./components/TransferProgress";
 import { RepeatSave, useRepeatPrompt } from "./components/RepeatSave";
-import { relayHost } from "../engine/relay-config";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { userMessage, type StreamDescriptor } from "@savemedia/core";
 import { isBackgroundToPopupMessage } from "../types/messages";
 import type { BackgroundToContentMessage, DiscoveryFailure, PageMediaSnapshot, PopupToBackgroundMessage } from "../types/messages";
 import { DetectedItem, type JobStatus } from "./components/DetectedItem";
 import { LocalDownloader } from "./components/LocalDownloader";
+import { canRecoverFile, LocalConnectionAction, useLocalConnection } from "./components/LocalConnection";
 import { TechnicalDetails } from "./components/TechnicalDetails";
-import { rankDescriptors } from "./preview-match";
-import { isDownloadableCandidate } from "../util/downloadable";
+import { rankDescriptors, type RankedDescriptor } from "./preview-match";
+import { compareDownloads, isDownloadableCandidate } from "../util/downloadable";
 import { downloadIssueText } from "./download-status";
 
 // `?tabId=` is set when the popup was opened as its own window (the button
@@ -29,14 +29,7 @@ function requestSnapshot(tabId: number, pageUrl: string | null, cb: (snap: PageM
     if (!pageUrl) { cb(snap); return; }
     chrome.runtime.sendMessage({type: "current-save-state", tabId, pageUrl, offer: snap?.fileDownload}, state => {
       void chrome.runtime.lastError;
-      if (state?.relay) cb({...(snap ?? {videos: [], pageTitle: ""}), relayStatus: state.relay, fileSaveProblem: null});
-      else if (snap?.relayStatus?.phase === "saving") {
-        const {relayStatus, ...rest} = snap;
-        cb({...rest, fileSaveProblem: {filename: relayStatus.filename, stage: "file connection",
-          code: "interrupted", title: "Download interrupted", body: "The transfer stopped before Chrome confirmed the save. Try again."}});
-      } else if (state?.saved && snap?.fileDownload && !snap.fileSaveProblem && !snap.relayStatus) {
-        cb({...snap, relayStatus: {filename: snap.fileDownload.filename, phase: "saved"}});
-      } else cb(snap);
+      cb(snap && state?.saved ? { ...snap, savedThisSession: true } : snap);
     });
   });
 }
@@ -113,8 +106,9 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   const [failures, setFailures] = useState<readonly DiscoveryFailure[]>(initialFailures);
   const [scanning, setScanning] = useState(false);
   const [snapshot, setSnapshot] = useState<PageMediaSnapshot | null>(null);
-  const [fileDownload, setFileDownload] = useState<"preparing" | "retrying" | "relay" | "dismissing" | "unavailable" | null>(null);
+  const [fileDownload, setFileDownload] = useState<"preparing" | "retrying" | "unavailable" | null>(null);
   const repeat = useRepeatPrompt(tabId, pageUrl);
+  const localConnection = useLocalConnection();
   const asWindow = windowTabId() !== null;
 
   useEffect(() => {
@@ -210,13 +204,17 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
     });
   }
 
-  const ranked = rankDescriptors(descriptors, snapshot);
-  const filename = ranked.length === 0 && tabId !== null && pageUrl
-    ? snapshot?.fileDownload?.filename ?? snapshot?.fileSaveProblem?.filename ?? snapshot?.relayStatus?.filename : undefined;
-  const relayStatus = snapshot?.relayStatus?.filename === filename ? snapshot?.relayStatus : undefined;
-  const startingDownload = fileDownload === "preparing" || fileDownload === "retrying" || fileDownload === "relay" || relayStatus?.phase === "saving";
-  const problem = !startingDownload && filename === snapshot?.fileSaveProblem?.filename
-    ? snapshot?.fileSaveProblem : null;
+  const ranked = useMemo(() => rankDescriptors(descriptors, snapshot), [descriptors, snapshot]);
+  const filename = tabId !== null && pageUrl ? snapshot?.fileDownload?.filename ?? snapshot?.fileSaveProblem?.filename : undefined;
+  const startingDownload = fileDownload === "preparing" || fileDownload === "retrying";
+  const problem = !startingDownload && filename === snapshot?.fileSaveProblem?.filename ? snapshot?.fileSaveProblem : null;
+  const best = useMemo(() => [...descriptors].sort(compareDownloads).find(isDownloadableCandidate), [descriptors]);
+  const namedJob = filename ? [...descriptors].reverse().find(d => d.pageUrl === pageUrl && statuses[d.id]?.fileName === filename) : undefined;
+  const primarySource = filename ? namedJob : best;
+  const primary = primarySource ? ranked.find(item => item.descriptor.id === primarySource.id
+    || item.alternatives?.some(d => d.id === primarySource.id)) : undefined;
+  const showFileCard = !!filename && (!primary || !!problem || (startingDownload && namedJob && statuses[namedJob.id]?.phase !== "active"));
+  const otherItems = filename ? [] : ranked.filter(item => item !== primary);
   const visibleFailures = failures.filter(failure => !descriptors.some(descriptor => {
     const phase = statuses[descriptor.id]?.phase;
     if (phase !== "active" && phase !== "complete") return false;
@@ -224,20 +222,18 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
     if (source.kind === "direct-url") return source.url === failure.url || source.finalUrl === failure.url;
     return (source.kind === "media-element" ? source.elementSrc : source.manifestUrl) === failure.url;
   }));
-  const confirmConnection = problem?.code === "tls_certificate_rejected" && !!problem.resourceFingerprint;
+  const canRetryDiscovery = !filename && !primary && tabId !== null && !!pageUrl
+    && visibleFailures.some(failure => canRecoverFile(failure.error) && failure.url.startsWith("https://"));
   const retryAvailable = !!problem || fileDownload === "unavailable";
-  let fileAction = relayStatus?.phase === "saved" ? "Save another copy…" : retryAvailable ? "Retry download" : "Download";
+  let fileAction = retryAvailable ? "Retry save" : snapshot?.savedThisSession ? "Save another copy…" : "Save";
   if (fileDownload === "preparing") fileAction = "Preparing download…";
   if (fileDownload === "retrying") fileAction = "Requesting a fresh download link";
-  if (fileDownload === "relay" || relayStatus?.phase === "saving") fileAction = "Connecting to secure relay";
   const version = manifestVersion();
 
-  function downloadFilePage(choice?: "retry" | "cancel"): void {
-    if (tabId === null || !pageUrl || (!choice && scanning) || startingDownload || fileDownload === "dismissing") return;
-    setFileDownload(choice === "cancel" ? "dismissing" : choice === "retry" ? (relayHost ? "relay" : "retrying") : "preparing");
-    const msg: PopupToBackgroundMessage = choice && filename
-      ? { type: "file-connection-choice", tabId, pageUrl, filename, retry: choice === "retry" }
-      : { type: "download-page", tabId, pageUrl };
+  function downloadFilePage(): void {
+    if (tabId === null || !pageUrl || startingDownload || tabIdRef.current !== tabId || pageUrlRef.current !== pageUrl) return;
+    setFileDownload("preparing");
+    const msg: PopupToBackgroundMessage = { type: "download-page", tabId, pageUrl };
     chrome.runtime.sendMessage(msg, (response: unknown) => {
       void chrome.runtime.lastError;
       if (tabIdRef.current !== tabId || pageUrlRef.current !== pageUrl) return;
@@ -252,7 +248,6 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
       requestSnapshot(tabId, pageUrl, snap => {
         if (snap && tabIdRef.current === tabId && pageUrlRef.current === pageUrl) {
           setSnapshot(snap);
-          if (snap.relayStatus) setFileDownload(null);
         }
       });
     });
@@ -265,6 +260,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         setStatuses(prev => ({
           ...prev,
           [msg.streamId]: {
+            ...prev[msg.streamId],
             phase: "active",
             bytesWritten: msg.bytesWritten,
             bytesTotal: msg.bytesTotal,
@@ -272,21 +268,13 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
           },
         }));
       } else if (msg.type === "job-complete") {
-        setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "complete" } }));
+        setStatuses(prev => ({ ...prev, [msg.streamId]: { ...prev[msg.streamId], phase: "complete", savedAs: msg.path } }));
       } else if (msg.type === "job-failed") {
-        setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "failed", error: msg.error } }));
+        setStatuses(prev => ({ ...prev, [msg.streamId]: { ...prev[msg.streamId], phase: "failed", error: msg.error } }));
       } else if (msg.type === "retrying-file-link" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
         setFileDownload(current => current === "preparing" ? "retrying" : current);
-      } else if (msg.type === "file-relay-status" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
-        setSnapshot(prev => ({...(prev ?? {videos: [], pageTitle: ""}), fileSaveProblem: null, relayStatus: msg.status}));
-        setFileDownload(null);
       } else if (msg.type === "file-save-problem" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
-        setSnapshot(prev => {
-          if (!prev) return prev;
-          if (!msg.problem) return {...prev, fileSaveProblem: null};
-          const { relayStatus: _old, ...rest } = prev;
-          return { ...rest, fileSaveProblem: msg.problem };
-        });
+        setSnapshot(prev => prev && { ...prev, fileSaveProblem: msg.problem });
       } else if (msg.type === "descriptors" && msg.tabId === tabIdRef.current) {
         setDescriptors(msg.descriptors);
         setFailures(msg.failures ?? []);
@@ -296,6 +284,25 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
+
+  function card(item: RankedDescriptor, primaryCard = false) {
+    const allowPageSave = primaryCard && tabId !== null && !!pageUrl;
+    return <DetectedItem
+      key={item.descriptor.id}
+      descriptor={item.descriptor}
+      status={statuses[item.descriptor.id]}
+      statuses={statuses}
+      alternatives={item.alternatives}
+      preview={item.preview}
+      isMain={item.isMain}
+      pageTitle={snapshot?.pageTitle ?? null}
+      originalName={primaryCard ? filename : undefined}
+      localConnection={localConnection}
+      onSaveBest={allowPageSave ? downloadFilePage : undefined}
+      preparingStage={primaryCard && startingDownload ? fileAction : undefined}
+      couldNotStart={primaryCard && fileDownload === "unavailable"}
+    />;
+  }
 
   return (
     <main className="flex flex-col h-full bg-ink" data-window={asWindow || undefined}>
@@ -335,62 +342,43 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
           )}
         </div>
         {repeat ? <RepeatSave prompt={repeat}/> : <>
-        {ranked.length === 0 && !filename && failures.length === 0 && !scanning && (
+        {ranked.length === 0 && !filename && failures.length === 0 && !scanning && !startingDownload && (
           <div className="px-3 py-8 text-center text-muted text-xs">
             {tabId === null && !skipFetch ? "No active tab." : "No media detected on this page."}
           </div>
         )}
-        {filename && (
+        {showFileCard && (
           <ul className="px-2 pb-1">
             <li className="rounded-lg bg-surface border border-line p-3 text-xs">
               <p className="break-words font-medium">{filename}</p>
-              {startingDownload ? <TransferProgress status={relayStatus?.phase === "saving" ? relayStatus : {stage: fileAction}}/> : confirmConnection ? (
-                <div className="mt-2 rounded-md border border-orange-400 bg-orange-950/60 p-2.5 text-orange-50" data-testid="file-save-problem">
-                  <p className="font-semibold text-red-300" role="alert">{problem.title}</p>
-                  <p className="mt-1">{problem.body}</p>
-                  <div className="mt-2 flex justify-end gap-2">
-                    <button type="button" onClick={() => downloadFilePage("cancel")} disabled={fileDownload === "dismissing"}
-                      className="rounded-md border border-orange-300/60 px-2.5 py-1">Cancel</button>
-                    <button type="button" onClick={() => downloadFilePage("retry")} disabled={fileDownload === "dismissing"}
-                      className="rounded-md border border-red-400 bg-red-950 px-2.5 py-1 font-semibold text-red-100">{relayHost ? "Use secure relay" : "Retry secure download"}</button>
-                  </div>
-                </div>
-              ) : problem ? (
+              {startingDownload ? <TransferProgress status={{stage: fileAction}}/> : problem ? (
                 <div className="mt-2" data-testid="file-save-problem">
                   <p className={`font-semibold ${downloadIssueText(problem)}`} role="status">{problem.title}</p>
                   <p className="mt-0.5 text-muted">{problem.body}</p>
+                  {canRecoverFile(problem) && <LocalConnectionAction key={pageUrl} connection={localConnection} retry={downloadFilePage} />}
                 </div>
-              ) : relayStatus?.phase === "saved" && !startingDownload ? (
-                <p className="mt-2 text-green-300" role="status">{relayStatus.savedAs ? `Saved to Downloads · ${relayStatus.savedAs}` : "Saved earlier this browser session"}</p>
+              ) : snapshot?.savedThisSession ? (
+                <p className="mt-2 text-green-300" role="status">Saved earlier this browser session</p>
               ) : fileDownload === "unavailable" && (
                 <p className="mt-2 text-orange-300" role="status">Couldn’t start the download. Try again.</p>
               )}
-              {!confirmConnection && !startingDownload && <div className="mt-2 flex justify-end">
-                <button type="button" onClick={() => downloadFilePage()} disabled={scanning || startingDownload}
-                  className={`hover:brightness-110 font-medium px-2.5 py-1 rounded-md ${retryAvailable ? "bg-orange-950 text-orange-200" : "bg-surface-2 text-white"}`}>
+              {!startingDownload && <div className="mt-2 flex justify-end">
+                <button type="button" onClick={downloadFilePage}
+                  className={`hover:brightness-110 font-medium px-2.5 py-1 rounded-md ${retryAvailable ? "bg-orange-950 text-orange-200" : "bg-emerald-400 text-ink"}`}>
                   {fileAction}
                 </button>
               </div>}
             </li>
           </ul>
         )}
-        {ranked.length > 0 && (
-          <ul className="px-2 pb-1 space-y-1.5">
-            {ranked.map(r => (
-              <DetectedItem
-                key={r.descriptor.id}
-                descriptor={r.descriptor}
-                status={statuses[r.descriptor.id]}
-                statuses={statuses}
-                alternatives={r.alternatives}
-                preview={r.preview}
-                isMain={r.isMain}
-                pageTitle={snapshot?.pageTitle ?? null}
-              />
-            ))}
-          </ul>
-        )}
-        {!filename && !problem && visibleFailures.length > 0 && (descriptors.some(isDownloadableCandidate) ? (
+        {!showFileCard && primary && <ul className="px-2 pb-1">{card(primary, true)}</ul>}
+        {otherItems.length > 0 && (primary ? (
+          <details className="px-2 pb-1 text-xs">
+            <summary className="cursor-pointer px-1 py-1 text-muted">Other media ({otherItems.length})</summary>
+            <ul className="space-y-1.5">{otherItems.map(item => card(item))}</ul>
+          </details>
+        ) : <ul className="px-2 pb-1 space-y-1.5">{otherItems.map(item => card(item))}</ul>)}
+        {!filename && !problem && !startingDownload && visibleFailures.length > 0 && (descriptors.some(isDownloadableCandidate) ? (
           <details className="px-3 py-1 text-xs text-muted">
             <summary className="cursor-pointer">Unavailable sources</summary>
             <DiscoveryFailures failures={visibleFailures} />
@@ -398,11 +386,21 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         ) : (
           <DiscoveryFailures failures={visibleFailures} />
         ))}
+        {!filename && !primary && startingDownload ? (
+          <div className="px-3 pb-2"><TransferProgress status={{ stage: fileAction }} /></div>
+        ) : canRetryDiscovery && (
+          <div className="px-3 pb-2">
+            {localConnection.enabled
+              ? <button type="button" onClick={downloadFilePage}
+                  className="rounded-md bg-emerald-400 px-2.5 py-1 text-xs font-medium text-ink hover:brightness-110">Save</button>
+              : <LocalConnectionAction key={pageUrl} connection={localConnection} retry={downloadFilePage} />}
+          </div>
+        )}
         </>}
       </section>
 
       <div className="border-t border-line">
-        <LocalDownloader tabId={tabId} pageUrl={pageUrl} skipFetch={skipFetch} />
+        <LocalDownloader tabId={tabId} pageUrl={pageUrl} skipFetch={skipFetch} localConnection={localConnection} />
       </div>
 
       <footer className="px-3 py-2 border-t border-line text-[10px] text-muted flex items-center justify-end">

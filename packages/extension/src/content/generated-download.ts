@@ -1,4 +1,4 @@
-import { declaredMediaFilename } from "./discovery";
+import { declaredMediaFilename, fileLinkName } from "./discovery";
 import type { DiscoveredMedia, FileDownloadOffer } from "../types/messages";
 
 declare const __BROWSER__: "chromium" | "firefox";
@@ -13,45 +13,53 @@ type FileNavigation = Event & {
 const browserNavigation = (window as Window & { readonly navigation?: EventTarget }).navigation;
 let pending: Promise<DiscoveredMedia | null> | undefined;
 
-function downloadControl(offscreen = false): { link: HTMLAnchorElement; offer: FileDownloadOffer } | null {
-  const filename = declaredMediaFilename(document);
-  if (!browserNavigation || !filename) return null;
-  // Chromium may skip layout inside its offscreen document.
-  const links = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")].filter(link =>
-    /^download(?: file| video)?$/i.test((link.getAttribute("aria-label") || link.textContent || "").trim())
-    && (offscreen || (link.getClientRects().length > 0 && getComputedStyle(link).visibility === "visible"))
-    && !link.closest('[hidden], [inert], [aria-hidden="true"], [aria-disabled="true"]'));
-  const candidates = links.flatMap(link => {
-    const offer = downloadOffer(link, filename);
-    return offer ? [{ link, offer }] : [];
-  });
+type DownloadControl = { element: HTMLAnchorElement | HTMLButtonElement; offer: FileDownloadOffer; directUrl?: string };
+
+function downloadControl(offscreen = false): DownloadControl | null {
+  const pageName = declaredMediaFilename(document);
+  const candidates: DownloadControl[] = [];
+  for (const element of document.querySelectorAll<HTMLAnchorElement | HTMLButtonElement>("a[href], button")) {
+    if (element.closest('[hidden], [inert], [aria-hidden="true"], [aria-disabled="true"]')
+      || (!offscreen && (!element.getClientRects().length || getComputedStyle(element).visibility === "hidden"))) continue;
+    const label = (element.getAttribute("aria-label") || element.textContent || "").trim();
+    const action = /^(?:download|save)(?: (?:the )?(?:original(?: file| video)?|file|video))?$/i.test(label);
+    if (element instanceof HTMLButtonElement) {
+      if (action && pageName && browserNavigation && !element.disabled && (!element.form || element.type === "button")) {
+        candidates.push({ element, offer: { filename: pageName } });
+      }
+      continue;
+    }
+    const href = element.getAttribute("href")?.trim();
+    if (href === "#") {
+      if (action && pageName && browserNavigation) candidates.push({ element, offer: { filename: pageName } });
+      continue;
+    }
+    if (!href || (!action && !element.hasAttribute("download") && !element.type.toLowerCase().startsWith("video/"))) continue;
+    try {
+      const url = new URL(href, document.baseURI);
+      if (!isWebDestination(url) || url.href === location.href || href.startsWith("#")) continue;
+      const name = fileLinkName(element, url);
+      const filename = pageName ?? name;
+      if (!filename || (pageName && element.download && element.download.trim() !== pageName)) continue;
+      if (element.hasAttribute("download") || name || element.type.toLowerCase().startsWith("video/")) {
+        candidates.push({ element, offer: { filename }, directUrl: url.href });
+      } else if (action) {
+        candidates.push({ element, offer: { filename, linkedPage: url.href } });
+      }
+    } catch { /* Ignore malformed addresses. */ }
+  }
   if (candidates.length <= 1) return candidates[0] ?? null;
-  // Related items can have their own Download links. Use the nearest
-  // section shared by the file's heading and a single eligible control.
-  const heading = [...document.querySelectorAll("h1")].find(item => item.textContent?.trim() === filename);
+  const heading = [...document.querySelectorAll("h1")].find(item => item.textContent?.trim() === pageName);
   for (let section = heading?.parentElement; section && section !== document.body; section = section.parentElement) {
-    const inSection = candidates.filter(({ link }) => section?.contains(link));
+    const inSection = candidates.filter(({ element }) => section.contains(element));
     if (inSection.length) return inSection.length === 1 ? inSection[0]! : null;
   }
   return null;
 }
 
-function downloadOffer(link: HTMLAnchorElement, filename: string): FileDownloadOffer | null {
-  if (link.getAttribute("href") === "#") return { filename };
-  try {
-    const url = new URL(link.getAttribute("href")!, document.baseURI);
-    // A linked download page has a normal browser address on the same site.
-    if (!isWebDestination(url) || url.hash || url.href === location.href || link.hasAttribute("download")
-      || (url.origin !== location.origin && !url.hostname.endsWith(`.${location.hostname}`))) return null;
-    return { filename, linkedPage: url.href };
-  } catch {
-    return null;
-  }
-}
-
 function isWebDestination(url: URL): boolean {
   return !url.username && !url.password
-    && (url.protocol === "https:" || (url.protocol === "http:" && url.origin === location.origin));
+    && (url.protocol === "https:" || (url.protocol === "http:" && location.protocol === "http:"));
 }
 
 export function fileDownloadOffer(): FileDownloadOffer | undefined {
@@ -64,7 +72,8 @@ export function fileDownloadOffer(): FileDownloadOffer | undefined {
 export function captureGeneratedDownload(expectedFilename: string, offscreen = false): Promise<DiscoveredMedia | null> {
   const control = downloadControl(offscreen);
   if (!control || control.offer.linkedPage || control.offer.filename !== expectedFilename) return Promise.resolve(null);
-  const { link } = control;
+  if (control.directUrl) return Promise.resolve({ url: control.directUrl, filenameHint: expectedFilename });
+  const link = control.element;
   if (pending) return pending;
   const navigation = browserNavigation!;
   const pageUrl = location.href;
@@ -91,18 +100,7 @@ export function captureGeneratedDownload(expectedFilename: string, offscreen = f
         finish(null);
         return;
       }
-      // Correlate a pathname-specific renewal with this document's own fetch,
-      // even when several sandboxed frames share a download origin.
-      const requests = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
-      const signers = new Set(requests.filter(request => {
-        if (request.initiatorType !== "fetch" && request.initiatorType !== "xmlhttprequest") return false;
-        const address = new URL(request.name, pageUrl);
-        return address.protocol === "https:" && address.searchParams.size === 1
-          && address.searchParams.get("path") === url.pathname;
-      }).map(request => request.name));
-      const [signatureRequest] = signers;
-      finish({ url: url.href, filenameHint: expectedFilename,
-        ...(signers.size === 1 && signatureRequest ? {signatureRequest} : {}) });
+      finish({ url: url.href, filenameHint: expectedFilename });
     }
     navigation.addEventListener("navigate", onNavigate);
     window.addEventListener("pagehide", onPageHide, { once: true });

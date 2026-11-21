@@ -39,6 +39,7 @@ export async function runHlsJob(
   onProgress: ProgressFn,
   signal: AbortSignal,
   externalSink?: JobSink,
+  request: typeof fetchWithRetry = fetchWithRetry,
 ): Promise<JobResult> {
   const variant = findVariant(descriptor, plan.variantId);
   if (!variant) {
@@ -61,7 +62,7 @@ export async function runHlsJob(
   }
 
   onProgress(0, null, "fetching-playlist");
-  const playlistResp = await fetchWithRetry(playlistUrl, signal, "manifest").catch(err => {
+  const playlistResp = await request(playlistUrl, signal, "manifest").catch(err => {
     throw classifyNetworkFailure(err, "manifest", playlistUrl) ?? err;
   });
   const playlistText = await playlistResp.text();
@@ -81,7 +82,7 @@ export async function runHlsJob(
     ? new HlsKeyring(keyUri => fetchKeyBytes(keyUri, signal))
     : null;
 
-  return fetchSegments(media, plan, onProgress, signal, externalSink, keyring);
+  return fetchSegments(media, plan, onProgress, signal, externalSink, keyring, request);
 }
 
 /**
@@ -202,10 +203,11 @@ async function fetchSegments(
   signal: AbortSignal,
   externalSink: JobSink | undefined,
   keyring: HlsKeyring | null,
+  request: typeof fetchWithRetry,
 ): Promise<JobResult> {
   const { initSegmentUrl, segments } = media;
   if (initSegmentUrl) {
-    return fetchFmp4Segments(initSegmentUrl, segments, plan, onProgress, signal, externalSink, keyring);
+    return fetchFmp4Segments(initSegmentUrl, segments, plan, onProgress, signal, externalSink, keyring, request);
   }
 
   const failed: number[] = [];
@@ -224,7 +226,7 @@ async function fetchSegments(
     }
     const seg = segments[i]!;
     try {
-      const resp = await fetchWithRetry(seg.uri, signal, "segment");
+      const resp = await request(seg.uri, signal, "segment");
       let body: Uint8Array = await plainSegmentBytes(
         new Uint8Array(await resp.arrayBuffer()),
         seg,
@@ -309,6 +311,7 @@ async function fetchFmp4Segments(
   signal: AbortSignal,
   externalSink: JobSink | undefined,
   keyring: HlsKeyring | null,
+  request: typeof fetchWithRetry,
 ): Promise<JobResult> {
   const failed: number[] = [];
   let bytesWritten = 0;
@@ -321,7 +324,7 @@ async function fetchFmp4Segments(
     if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
 
     onProgress(0, null, "fetching-init-segment");
-    const initResp = await fetchWithRetry(initSegmentUrl, signal, "segment");
+    const initResp = await request(initSegmentUrl, signal, "segment");
     const initBytes = new Uint8Array(await initResp.arrayBuffer());
     assertFmp4InitSegment(initBytes, initSegmentUrl);
 
@@ -338,7 +341,7 @@ async function fetchFmp4Segments(
       const seg = segments[i]!;
       currentUrl = seg.uri;
       currentIndex = i;
-      const resp = await fetchWithRetry(seg.uri, signal, "segment");
+      const resp = await request(seg.uri, signal, "segment");
       const body = await plainSegmentBytes(
         new Uint8Array(await resp.arrayBuffer()),
         seg,

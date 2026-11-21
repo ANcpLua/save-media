@@ -1,3 +1,4 @@
+import { withDesktopRecovery } from "../native/file-connection";
 import { classify, type JobError } from "@savemedia/core";
 import type { AudioRenditionId, StreamDescriptor, Variant, VariantId } from "@savemedia/core";
 import type { BridgeToBackgroundMessage, DiscoveryFailure } from "../types/messages";
@@ -18,6 +19,7 @@ export interface CaptureDeps {
     url: string,
     init: ProbeInit,
   ) => Promise<CaptureFetchResponse>;
+  readonly desktopConnectionEnabled?: () => Promise<boolean>;
   /** Receives every descriptor that passed the surfacing gate. */
   readonly onDescriptor: (tabId: number, descriptor: StreamDescriptor) => void;
   readonly onFailure?: (tabId: number, failure: DiscoveryFailure) => void;
@@ -27,29 +29,33 @@ export interface CaptureDeps {
   readonly logger?: Logger;
 }
 
-export type CaptureHandler = ((tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>) & {
+// Only a selected site download control may act on this navigation result.
+// Ordinary observation still treats a document as a failed media probe.
+export type CaptureResult = { readonly documentUrl: string } | void;
+
+export type CaptureHandler = ((tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string, userSave?: boolean) => Promise<CaptureResult>) & {
   clearTab(tabId: number): void;
 };
 
 export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
-  const tabs = new Map<number, { controller: AbortController; pending: Map<string, Promise<void>> }>();
+  const tabs = new Map<number, { controller: AbortController; pending: Map<string, Promise<CaptureResult>> }>();
   function clearTab(tabId: number): void {
     const state = tabs.get(tabId);
     state?.controller.abort();
     tabs.delete(tabId);
   }
-  function handleCapture(tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string): Promise<void> {
+  function handleCapture(tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string, userSave = false): Promise<CaptureResult> {
     let state = tabs.get(tabId);
     if (!state) { state = { controller: new AbortController(), pending: new Map() }; tabs.set(tabId, state); }
-    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem, msg.payload.quality, msg.payload.filenameHint, observedUrl, referrerPage]);
+    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem, msg.payload.quality, msg.payload.filenameHint, observedUrl, referrerPage, userSave]);
     const existing = state.pending.get(key);
     if (existing) return existing;
     const current = state;
-    const pending = capture(tabId, msg, current.controller.signal, observedUrl, referrerPage).finally(() => current.pending.delete(key));
+    const pending = capture(tabId, msg, current.controller.signal, observedUrl, referrerPage, userSave).finally(() => current.pending.delete(key));
     current.pending.set(key, pending);
     return pending;
   }
-  async function capture(tabId: number, msg: CaptureMessage, signal: AbortSignal, observedUrl?: string, referrerPage?: string): Promise<void> {
+  async function capture(tabId: number, msg: CaptureMessage, signal: AbortSignal, observedUrl?: string, referrerPage?: string, userSave = false): Promise<CaptureResult> {
     const cap = msg.payload;
     if (cap.elementTag === "audio" || (!cap.url && cap.kind !== "eme")) return;
     if (cap.url && !/^https?:\/\//i.test(cap.url)) return;
@@ -69,11 +75,14 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
           if (observedUrl && observedUrl !== cap.url) await deps.mirrorReferer(observedUrl, cap.pageUrl);
         }
         const url = cap.url;
+        const fetchFile = userSave && cap.kind !== "eme" && await deps.desktopConnectionEnabled?.()
+          ? withDesktopRecovery((address, init) => deps.fetchFn(address, init as ProbeInit) as Promise<Response>, referrerPage ?? cap.pageUrl)
+          : deps.fetchFn;
         let manifest = /\.(m3u8|mpd)([?#]|$)/i.test(url);
         if (!manifest) {
           // Video Rescue probes the observed URL independently of its filename.
           // Extensionless media needs the same bounded range request as .mp4.
-          const probe = await probeMedia(deps.fetchFn, url, signal);
+          const probe = await probeMedia(fetchFile, url, signal);
           finalUrl = probe.url;
           headers = probe.headers;
           bodyBytes = probe.bytes;
@@ -88,7 +97,7 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
           // A prefix cannot parse a full playlist. Re-fetch extensionless
           // manifests without Range after identifying their MIME or signature.
           const probe = await recoverRequest(async signal => {
-            const r = await deps.fetchFn(url, { credentials: "include", cache: "no-store", signal });
+            const r = await fetchFile(url, { credentials: "include", cache: "no-store", signal });
             try {
               checkResponseStatus(r, url);
               const h = responseHeaders(r);
@@ -111,6 +120,9 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
           const error: JobError = isUnexpectedResponse(err) ? err : rangeFailure(err, cap.url,
             /\.(m3u8|mpd)([?#]|$)/i.test(cap.url) ? "manifest" : "direct");
           deps.onFailure?.(tabId, { url: cap.url, error });
+          if (error.code === "unexpected_media_response" && error.response === "page" && finalUrl) {
+            return { documentUrl: finalUrl };
+          }
           return;
         }
       }

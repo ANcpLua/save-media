@@ -217,30 +217,44 @@ function validateRange(headers: Record<string, string>, start: number, end: numb
   }
 }
 
+/** An origin can serve a complete file while declining byte-range requests. */
+export async function requestMedia<T extends ProbeResponse>(
+  fetchFn: (url: string, init: ProbeInit) => Promise<T>, url: string, signal: AbortSignal,
+): Promise<T> {
+  const init = { credentials: "include", cache: "no-store", signal } as const;
+  const response = await fetchFn(url, { ...init, headers: { range: "bytes=0-4095" } });
+  if (response.status !== 400 && response.status !== 416 && response.status !== 501) return response;
+  try { await response.body?.cancel(); } catch { /* The server may already have closed it. */ }
+  signal.throwIfAborted();
+  return fetchFn(url, init);
+}
+
+export async function readMediaProbe(response: ProbeResponse, url: string) {
+  checkResponseStatus(response, url);
+  const headers = responseHeaders(response);
+  if (response.status === 206) {
+    const range = parseContentRange(headers["content-range"]);
+    if (!range) throw new RangeRecoveryError("Invalid probe Content-Range");
+    const end = Math.min(4095, range.total - 1);
+    validateRange(headers, 0, end, range.total);
+    return { url: response.url || url, headers, bytes: await readBytes(response, end + 1, true) };
+  }
+  if (response.status !== 200) throw new RangeRecoveryError("No media body in probe response");
+  delete headers["content-range"];
+  return { url: response.url || url, headers, bytes: await readBytes(response, 4096, false) };
+}
+
 export async function probeMedia(
   fetchFn: ProbeFetch,
   url: string,
   signal: AbortSignal = new AbortController().signal,
   onRetry?: RetryProgress,
-): Promise<{ url: string; headers: Record<string, string>; bytes: Uint8Array }> {
+) {
   return recoverRequest(async attemptSignal => {
-    const response = await fetchFn(url, { credentials: "include", cache: "no-store", headers: { range: "bytes=0-4095" }, signal: attemptSignal });
-    try {
-      checkResponseStatus(response, url);
-      const headers = responseHeaders(response);
-      if (response.status === 206) {
-        const range = parseContentRange(headers["content-range"]);
-        if (!range) throw new RangeRecoveryError("Invalid probe Content-Range");
-        const end = Math.min(4095, range.total - 1);
-        validateRange(headers, 0, end, range.total);
-        return { url: response.url || url, headers, bytes: await readBytes(response, end + 1, true) };
-      }
-      if (response.status !== 200) throw new RangeRecoveryError("No media body in probe response");
-      // Do not advertise recovery based on a stray Content-Range on a 200.
-      delete headers["content-range"];
-      return { url: response.url || url, headers, bytes: await readBytes(response, 4096, false) };
-    } finally {
-      try { await response.body?.cancel(); } catch { /* already consumed */ }
+    const response = await requestMedia(fetchFn, url, attemptSignal);
+    try { return await readMediaProbe(response, url); }
+    finally {
+      try { await response.body?.cancel(); } catch { /* Already consumed or interrupted. */ }
     }
   }, signal, 3, onRetry);
 }

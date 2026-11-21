@@ -1,4 +1,3 @@
-import { relayHost } from "../engine/relay-config";
 import { userMessage, type JobError } from "@savemedia/core";
 import type { FileSaveProblem } from "../types/messages";
 
@@ -17,8 +16,8 @@ export function describeFileSaveProblem(
 
   if (stage === "file connection" && error.code === "tls_certificate_rejected") {
     return { filename, stage, code: error.code,
-      title: "Couldn’t verify the last connection",
-      body: relayHost ? `Try the secure relay for this site until Chrome closes. ${relayHost} sees your IP and server names. The link and video stay encrypted, and SaveMedia checks the file server’s certificate.` : "The browser couldn’t verify the file server on that attempt. Retry to request the site’s download link again. Chrome will check the new connection." };
+      title: "File server unavailable",
+      body: "Chrome couldn’t establish a verified connection to the file server. Try again when the connection is available." };
   }
 
   const { title, body } = userMessage(error);

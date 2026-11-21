@@ -95,7 +95,7 @@ chromium_manifest() {
   cat <<JSON
 {
   "name": "$HOST_NAME",
-  "description": "savemedia local downloader host (runs the user's own yt-dlp and ffmpeg)",
+  "description": "savemedia local file connection and page downloader",
   "path": "$(json_escape "$HOST_PATH")",
   "type": "stdio",
   "allowed_origins": [$origins
@@ -108,7 +108,7 @@ firefox_manifest() {
   cat <<JSON
 {
   "name": "$HOST_NAME",
-  "description": "savemedia local downloader host (runs the user's own yt-dlp and ffmpeg)",
+  "description": "savemedia local file connection and page downloader",
   "path": "$(json_escape "$HOST_PATH")",
   "type": "stdio",
   "allowed_extensions": [
