@@ -140,7 +140,11 @@ grants Chrome’s native messaging permission and checks the host’s file-readi
 capability. The setting applies to both **Save** and **Alt+S**. The extension
 continues to use normal Chrome networking during page observation. During an
 explicit save, a failed HTTPS connection may be retried through the installed
-host. The host resolves each public destination using verified DNS over HTTPS
+host. Chrome can also return a successful response whose final URL is HTTP.
+SaveMedia discards that body and asks the enabled host for the original HTTPS
+URL with the same range and validator. If the host also receives a redirect to
+HTTP, it stops before requesting that destination. The host resolves each
+public destination using verified DNS over HTTPS
 and opens a direct TLS connection for the original hostname, including on
 redirects. It supplies a bounded response stream to the same media verifier.
 HTTP access refusals and protected keys keep their original behavior. The helper

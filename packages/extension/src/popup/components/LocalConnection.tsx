@@ -6,9 +6,7 @@ declare const __BROWSER__: "chromium" | "firefox";
 const setting = "desktopFileConnection";
 const permission = { permissions: ["nativeMessaging" as const] };
 
-export function canRecoverFile(error?: { code: string } | null): boolean {
-  return !!error && (error.code === "tls_certificate_rejected" || error.code === "network_unreachable");
-}
+export { canRecoverFile } from "../../native/file-connection";
 
 /** Only the extra connection is enabled. The yt-dlp downloader keeps its own opt-in. */
 export function useLocalConnection() {

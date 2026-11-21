@@ -1,9 +1,14 @@
 import { NATIVE_HOST_NAME } from "../types/native";
-import { RangeRecoveryError } from "../engine/net/range-recovery";
+import { InsecureMediaRedirect, isHttpDowngrade, RangeRecoveryError } from "../engine/net/range-recovery";
 
 export const FILE_CONNECTION_PORT = "savemedia-desktop-file";
 
 export type FileFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+export function canRecoverFile(error?: { code: string } | null): boolean {
+  return error?.code === "tls_certificate_rejected" || error?.code === "network_unreachable"
+    || error?.code === "insecure_media_redirect";
+}
 
 /** Use Chrome first. A local connection is eligible only for a user-initiated HTTPS read. */
 export function withDesktopRecovery(direct: FileFetch, pageUrl: string): FileFetch {
@@ -19,8 +24,13 @@ export function withDesktopRecovery(direct: FileFetch, pageUrl: string): FileFet
       return direct(url, init);
     }
     if (!recovered.has(target.origin)) {
-      try { return await direct(url, init); }
-      catch (error) {
+      try {
+        const response = await direct(url, init);
+        if (!response.ok || !isHttpDowngrade(target.href, response.url)) return response;
+        // Chrome followed a redirect and resolved fetch. Discard its body and
+        // restart the original HTTPS request with the same range and validator.
+        await response.body?.cancel().catch(() => undefined);
+      } catch (error) {
         init.signal?.throwIfAborted();
         if (!(error instanceof TypeError)) throw error;
       }
@@ -67,7 +77,8 @@ function readDesktopFile(url: string, referrer: string | undefined, init: Reques
     port.onMessage.addListener(msg => {
       if (closed || msg?.id !== id) return;
       if (msg.type === "failed") {
-        fail(new RangeRecoveryError("The local downloader could not complete the secure file request."));
+        fail(msg.code === "insecure_media_redirect" ? new InsecureMediaRedirect()
+          : new RangeRecoveryError("The local downloader could not complete the secure file request."));
         return;
       }
       try {

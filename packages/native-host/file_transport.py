@@ -20,6 +20,11 @@ MEDIA_HEADERS = {"content-type", "content-length", "content-range", "content-dis
 
 class FileError(Exception):
     """Safe user-facing messages only."""
+    code = "network"
+
+
+class InsecureMediaRedirect(FileError):
+    code = "insecure_media_redirect"
 
 
 def public_address(value):
@@ -167,7 +172,7 @@ class FileRead(threading.Thread):
         try:
             self.transfer()
         except FileError as e:
-            self.emit("failed", code="network", message=str(e))
+            self.emit("failed", code=e.code, message=str(e))
         except (OSError, ValueError, TypeError, AttributeError):
             self.emit("failed", code="network", message="The local connection could not read the response.")
         finally:
@@ -212,6 +217,8 @@ class FileRead(threading.Thread):
             if status in (301, 302, 303, 307, 308) and location:
                 self.close_process()
                 url = urljoin(url, location)
+                if urlsplit(url).scheme == "http":
+                    raise InsecureMediaRedirect("The HTTPS file link redirected to HTTP.")
                 continue
             self.emit("file-headers", url=url, status=status, headers=fields)
             total = 0

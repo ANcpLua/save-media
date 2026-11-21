@@ -49,7 +49,13 @@ export class RangeRecoveryError extends Error {
   }
 }
 
-class InsecureMediaRedirect extends RangeRecoveryError {}
+export class InsecureMediaRedirect extends RangeRecoveryError {
+  constructor() { super("The HTTPS file link redirected to HTTP"); }
+}
+
+export function isHttpDowngrade(requestedUrl: string, finalUrl: string | undefined): boolean {
+  return requestedUrl.startsWith("https:") && finalUrl?.startsWith("http:") === true;
+}
 
 /** Translate transport failures without exposing signed URLs or raw fetch errors. */
 export function rangeFailure(error: unknown, url: string, phase: NetworkPhase): JobError {
@@ -103,10 +109,10 @@ export function responseHeaders(response: ProbeResponse): Record<string, string>
 }
 
 export function checkResponseStatus(response: ProbeResponse, requestedUrl: string): void {
-  if (requestedUrl.startsWith("https:") && response.url?.startsWith("http:")) {
-    throw new InsecureMediaRedirect("The HTTPS file link redirected to HTTP");
+  if (response.status >= 200 && response.status < 300) {
+    if (isHttpDowngrade(requestedUrl, response.url)) throw new InsecureMediaRedirect();
+    return;
   }
-  if (response.status >= 200 && response.status < 300) return;
   const header = responseHeaders(response)["retry-after"];
   const retryAfter = header && /^\d+$/.test(header) ? Number(header) * 1000 : header ? Date.parse(header) - Date.now() : NaN;
   throw new RangeRecoveryError(`HTTP ${response.status}`, response.status === 408 || response.status === 429 || response.status >= 500,

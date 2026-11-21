@@ -78,7 +78,12 @@ export async function verifiedDirectFile(
     await validateDirectBlob(blob, container, signal);
     signal.throwIfAborted();
     onProgress(blob.size, blob.size, "finalizing");
-    return { blob, filename: originalMediaFilename(plan.filename, container) ?? plan.filename };
+    const filename = originalMediaFilename(plan.filename, container) ?? plan.filename;
+    // Chrome derives the final extension from the blob's MIME, even with
+    // an explicit filename. Label compatible ISO-BMFF bytes for that name.
+    if (container === "mp4" && /\.mov$/i.test(filename)) blob = blob.slice(0, blob.size, DIRECT_MEDIA_TYPES.mov);
+    if (container === "mov" && /\.mp4$/i.test(filename)) blob = blob.slice(0, blob.size, DIRECT_MEDIA_TYPES.mp4);
+    return { blob, filename };
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof RangeRecoveryError || error instanceof TypeError

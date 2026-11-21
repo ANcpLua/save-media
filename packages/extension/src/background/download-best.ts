@@ -16,6 +16,7 @@ import { hotkeyErrorDetail } from "./hotkey-jobs";
 import { describeFileSaveProblem } from "./file-save-problem";
 import { renewableResource, stableAddress } from "../util/media-address";
 import { isDelegableError } from "../native/local-downloader";
+import { canRecoverFile } from "../native/file-connection";
 
 type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
 
@@ -160,7 +161,7 @@ export async function downloadBestForTab(
   } else {
     if (!discovery?.media.length && deps.handleSaveCapture) {
       const state = deps.router.snapshot?.(tabId);
-      const failures = state?.failures?.filter(f => f.error.code === "tls_certificate_rejected" || f.error.code === "network_unreachable");
+      const failures = state?.failures?.filter(f => canRecoverFile(f.error));
       if (state && !state.descriptors.length && failures?.length === 1
         && (!deps.tabs.isOnPage || await deps.tabs.isOnPage(tabId, fallbackPageUrl))) {
         await probeSource(saveDeps, tabId, fallbackPageUrl, { url: failures[0]!.url });

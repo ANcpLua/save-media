@@ -49,7 +49,11 @@ export function originalMediaFilename(
     const stem = basename.slice(0, extension ? -extension.length : undefined).slice(0, 180)
       .replace(TRAILING_DOTS_OR_SPACES, "");
     if (!HAS_WORD_CHAR.test(stem)) continue;
-    const compatible = suffix === `.${container}` || (container === "mov" && suffix === ".qt");
+    // Direct saves keep the original bytes. QuickTime and MP4 share a box
+    // format, so the detected brand may differ from the publisher's suffix.
+    const compatible = suffix === `.${container}`
+      || ((container === "mp4" || container === "mov") && (suffix === ".mov" || suffix === ".mp4"))
+      || (container === "mov" && suffix === ".qt");
     return stem + (compatible ? extension : `.${container}`);
   }
   return null;
