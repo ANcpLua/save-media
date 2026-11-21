@@ -57,7 +57,10 @@ The popup shows connection, transfer, verification and disk-write stages.
 The transfer bar uses bytes held from the current attempts. Retried ranges
 discard their partial counts. An unknown total shows bytes received and an
 indeterminate bar. Closing the popup leaves the job running. Reopening it
-reads the background job state.
+reads the background job state. The pinned icon on the file tab shows a
+small filled bar for measured progress and a dotted strip for an unknown
+total or a preparation step. Retrying uses amber. Hover over the icon to
+read the stage. The original icon returns when the last save on that tab ends.
 
 SaveMedia records a hashed file identity in browser-session storage only
 after Chrome reports completion. The named file page identifies a file across

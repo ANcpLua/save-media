@@ -49,6 +49,7 @@ export interface RouterDeps {
   readonly downloads: {
     download: (opts: { url: string; filename: string; conflictAction?: string }) => Promise<number>;
   };
+  readonly onJobStatus?: (tabId: number, id: string, status: JobStatus) => void;
   readonly reserveSave?: (descriptor: StreamDescriptor, choice: UserChoice, file?: NamedFile) => Promise<SavePermit | null>;
   readonly ensureEngineHost: () => Promise<void>;
   readonly refreshDirectSource?: (descriptor: StreamDescriptor, signal: AbortSignal) => Promise<StreamDescriptor | null>;
@@ -99,6 +100,12 @@ export function createRouter(deps: RouterDeps): Router {
   const tabs = new Map<number, TabState>();
   const jobs = new Map<StreamDescriptor["id"], ActiveJob>();
   const statuses = new Map<string, JobStatus>();
+
+  function setStatus(id: StreamDescriptor["id"], status: JobStatus): void {
+    statuses.set(id, status);
+    const job = jobs.get(id);
+    if (job) deps.onJobStatus?.(job.descriptor.tabId, id, status);
+  }
 
   function getTab(tabId: number): TabState {
     let s = tabs.get(tabId);
@@ -444,14 +451,14 @@ export function createRouter(deps: RouterDeps): Router {
     const permit = await deps.reserveSave?.(descriptor, choice, file);
     if (permit === null) return "skipped";
     jobs.set(id, { descriptor, choice, ...(permit ? {permit} : {}), plan: plan.kind === "refuse" ? null : plan });
-    statuses.set(id, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: "Starting" });
+    setStatus(id, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: "Starting" });
     try {
       await deps.ensureEngineHost();
     } catch (err) {
-      jobs.delete(id);
       await permit?.finish(false);
       const error: JobError = { code: "engine_job_failed", severity: "terminal", at: "init", detail: err instanceof Error ? err.message : String(err) };
-      statuses.set(id, { phase: "failed", error });
+      setStatus(id, { phase: "failed", error });
+      jobs.delete(id);
       return error;
     }
     const engineMsg: BackgroundToEngineMessage = { type: "start-job", streamId: id, descriptor, choice };
@@ -461,7 +468,7 @@ export function createRouter(deps: RouterDeps): Router {
 
   async function handleEngineMessage(msg: EngineToBackgroundMessage): Promise<BackgroundToPopupMessage | null> {
     if (msg.type === "progress") {
-      statuses.set(msg.streamId, { phase: "active", bytesWritten: msg.bytesWritten, bytesTotal: msg.bytesTotal, stage: msg.phase });
+      setStatus(msg.streamId, { phase: "active", bytesWritten: msg.bytesWritten, bytesTotal: msg.bytesTotal, stage: msg.phase });
       return {
         type: "job-progress",
         streamId: msg.streamId,
@@ -475,7 +482,7 @@ export function createRouter(deps: RouterDeps): Router {
       const filename = job && job.plan?.kind !== "direct" ? timestampedPath(msg.filename) : msg.filename;
       try {
         const writing = {type: "job-progress" as const, streamId: msg.streamId, bytesWritten: 0, bytesTotal: null, phase: "Writing to Downloads"};
-        statuses.set(msg.streamId, {phase: "active", bytesWritten: 0, bytesTotal: null, stage: writing.phase});
+        setStatus(msg.streamId, {phase: "active", bytesWritten: 0, bytesTotal: null, stage: writing.phase});
         deps.runtime.sendMessage(writing);
         await deps.downloads.download({
           url: msg.blobUrl,
@@ -483,12 +490,12 @@ export function createRouter(deps: RouterDeps): Router {
           conflictAction: "uniquify",
         });
         await job?.permit?.finish(true);
-        statuses.set(msg.streamId, { phase: "complete" });
+        setStatus(msg.streamId, { phase: "complete" });
         return { type: "job-complete", streamId: msg.streamId, path: filename };
       } catch (err) {
         await job?.permit?.finish(false);
         const error = saveFailure(err, filename);
-        statuses.set(msg.streamId, { phase: "failed", error });
+        setStatus(msg.streamId, { phase: "failed", error });
         return {
           type: "job-failed",
           streamId: msg.streamId,
@@ -507,7 +514,7 @@ export function createRouter(deps: RouterDeps): Router {
         const controller = new AbortController();
         job.refresh = controller;
         const phase = REFRESHING_VIDEO_SOURCE;
-        statuses.set(msg.streamId, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: phase });
+        setStatus(msg.streamId, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: phase });
         const progress: BackgroundToPopupMessage = {
           type: "job-progress", streamId: msg.streamId, bytesWritten: 0, bytesTotal: null, phase,
         };
@@ -524,9 +531,9 @@ export function createRouter(deps: RouterDeps): Router {
           return null;
         }
       }
-      jobs.delete(msg.streamId);
       await job?.permit?.finish(false);
-      statuses.set(msg.streamId, { phase: "failed", error });
+      setStatus(msg.streamId, { phase: "failed", error });
+      jobs.delete(msg.streamId);
       return { type: "job-failed", streamId: msg.streamId, error };
     }
     return null;
@@ -541,7 +548,7 @@ export function createRouter(deps: RouterDeps): Router {
     if (msg.type === "download") {
       const err = await startDownload(msg.streamId, msg.choice);
       if (err && err !== "skipped") {
-        statuses.set(msg.streamId, { phase: "failed", error: err });
+        setStatus(msg.streamId, { phase: "failed", error: err });
         const failMsg: BackgroundToPopupMessage = { type: "job-failed", streamId: msg.streamId, error: err };
         deps.runtime.sendMessage(failMsg);
       }

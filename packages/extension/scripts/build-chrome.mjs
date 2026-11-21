@@ -22,7 +22,7 @@ if (existsSync(buildDir)) await cp(buildDir, out, { recursive: true });
 
 const manifest = JSON.parse(await readFile(resolve(root, "manifest.json"), "utf-8"));
 if (process.env.SAVEMEDIA_RELAY_URL) {
-  manifest.version_name = manifest.version + " download progress preview";
+  manifest.version_name = manifest.version + " toolbar progress preview";
   manifest.content_security_policy = { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" };
   const vendor = resolve(out, "vendor/libcurl");
   await mkdir(vendor, { recursive: true });

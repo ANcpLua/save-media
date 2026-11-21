@@ -33,12 +33,13 @@ try {
   const busyFile = await readFile(join(root, "tests/e2e/media-fixtures/direct", files[0]));
   const fullRequests = [];
   pages = http((req, res) => {
-    if (req.url === "/busy-page") {
+    if (req.url === "/busy-page" || req.url === "/sized-page") {
+      const name = req.url === "/busy-page" ? "busy-server.mov" : "sized-file.mov";
       res.writeHead(200, {"Content-Type": "text/html"}).end(
-        '<h1>busy-server.mov</h1><video preload="none" controls src="/busy-server.mov"></video>');
+        `<h1>${name}</h1><video preload="none" controls src="/${name}"></video>`);
       return;
     }
-    if (req.url === "/busy-server.mov") {
+    if (req.url === "/busy-server.mov" || req.url === "/sized-file.mov") {
       const headers = {"Content-Type": "video/quicktime", "Cache-Control": "no-store"};
       const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
       if (range) {
@@ -46,8 +47,9 @@ try {
         res.writeHead(206, {...headers, "Content-Range": `bytes ${start}-${end}/${busyFile.length}`,
           "Content-Length": end - start + 1}).end(busyFile.subarray(start, end + 1));
       } else {
-        fullRequests.push(Date.now());
-        if (fullRequests.length === 1) res.writeHead(503, {"Retry-After": "2"}).end();
+        if (req.url === "/sized-file.mov") headers["Content-Length"] = busyFile.length;
+        else fullRequests.push(Date.now());
+        if (req.url === "/busy-server.mov" && fullRequests.length === 1) res.writeHead(503, {"Retry-After": "2"}).end();
         else {
           res.writeHead(200, headers);
           res.write(busyFile.subarray(0, 4096));
@@ -75,6 +77,17 @@ try {
     "--host-resolver-rules=MAP " + origin + " 127.0.0.1:" + bad.address().port,
   ]});
   const worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent("serviceworker", {timeout: 10000});
+  // Observe the actual toolbar API after Chrome accepts each submitted bitmap.
+  await worker.evaluate(() => {
+    self.pinUpdates = [];
+    const setIcon = chrome.action.setIcon.bind(chrome.action);
+    chrome.action.setIcon = async details => {
+      await setIcon(details);
+      const row = details.imageData?.[16]?.data.slice(13 * 16 * 4, 14 * 16 * 4);
+      const pixels = row ? Array.from({length: 16}, (_, x) => row.slice(x * 4, x * 4 + 3).join(",")) : null;
+      self.pinUpdates.push({tabId: details.tabId, pixels, restored: !!details.path});
+    };
+  });
   const popupUrl = new URL("src/popup/index.html", worker.url()).href;
   const page = await browser.newPage();
   await (await browser.newCDPSession(page)).send("Browser.setDownloadBehavior", {behavior: "default"});
@@ -125,6 +138,8 @@ try {
     assert(progress.stages.some(([stage, value]) => stage === "Downloading" && value !== null), "Missing measured progress");
     assert(progress.stages.some(([stage]) => stage === "Writing to Downloads"), "Missing browser save stage");
     console.log("Visible progress:", ...new Set(progress.stages.map(([stage]) => stage)));
+    assert(await worker.evaluate(tabId => self.pinUpdates.some(u => u.tabId === tabId && u.pixels), tabId),
+      "Chrome never received a relay progress icon");
     if (index === 0) {
       await page.reload();
       await popup.reload();
@@ -151,6 +166,7 @@ try {
   await direct.goto(popupUrl + "?tabId=" + tabId);
   await direct.getByRole("button", {name: /^Download$/}).click();
   await direct.getByRole("progressbar", {name: /Retrying.*503/}).waitFor();
+  assert.match(await worker.evaluate(tabId => chrome.action.getTitle({tabId}), tabId), /Retrying.*503/);
   await direct.reload();
   await direct.getByRole("progressbar", {name: "Downloading", exact: true}).waitFor();
   await direct.getByText(/4.0 KB received/).waitFor();
@@ -168,6 +184,27 @@ try {
   assert.equal(fullRequests.length, 2, "Cancel fetched the file again");
   console.log("HTTP 503 retried automatically after Retry-After. Reopened popup showed measured bytes with unknown total.",
     busyFile.length, "saved bytes match. Alt+S repeat canceled.");
+  await direct.close();
+  await page.goto("http://127.0.0.1:" + pages.address().port + "/sized-page");
+  await page.keyboard.press("Alt+KeyS");
+  await page.waitForFunction(() => document.querySelector('[data-savemedia="feedback"]') !== null);
+  const stop = Date.now() + 10000;
+  let title, badge;
+  do {
+    [title, badge] = await worker.evaluate(tabId => Promise.all([
+      chrome.action.getTitle({tabId}), chrome.action.getBadgeText({tabId}),
+    ]), tabId);
+    if (title === "SaveMedia · Downloading · 32%") break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  } while (Date.now() < stop);
+  assert.equal(title, "SaveMedia · Downloading · 32%");
+  assert.equal(badge, "", "Badge covers the progress bar");
+  await page.waitForFunction(() => document.querySelector('[data-savemedia="feedback"]')?.shadowRoot?.querySelector(".k")?.textContent === "Saved");
+  assert.equal(await worker.evaluate(tabId => chrome.action.getTitle({tabId}), tabId), "savemedia");
+  const icons = await worker.evaluate(tabId => self.pinUpdates.filter(u => u.tabId === tabId), tabId);
+  assert(icons.some(u => u.pixels?.filter(rgb => rgb === "73,216,255").length === 4), "Missing partial bar");
+  assert(icons.at(-1).restored, "Normal icon was not restored");
+  console.log("Alt+S with popup closed: Chrome accepted the partial toolbar bitmap, reported 32% and restored the default icon and title after saving.");
   assert.equal(unverifiedRequests, 0);
   console.log("The untrusted direct endpoint received zero HTTP requests.");
 } finally {

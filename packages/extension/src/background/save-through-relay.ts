@@ -18,14 +18,16 @@ export function clearRelayStatus(tabId: number, pageUrl?: string): void {
 }
 
 export function saveThroughRelay(tabId: number, pageUrl: string, offer: FileDownloadOffer, source: DiscoveredMedia,
-  stillEligible: () => Promise<boolean>): Promise<SaveResult> {
+  stillEligible: () => Promise<boolean>, onProgress: (id: string, state: FileRelayStatus | null) => void): Promise<SaveResult> {
   const key = JSON.stringify([tabId, pageUrl, offer.filename, offer.linkedPage]);
   const existing = pending.get(key);
   if (existing) return existing;
 
+  const requestId = crypto.randomUUID();
   function report(status: FileRelayStatus) {
     const msg: FileRelayStatusMessage = {type: "file-relay-status", tabId, pageUrl, status};
     latest.set(tabId, msg);
+    onProgress(requestId, status.phase === "saving" ? status : null);
     chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError);
     chrome.tabs.sendMessage(tabId, msg, {frameId: 0}, () => void chrome.runtime.lastError);
   }
@@ -34,15 +36,14 @@ export function saveThroughRelay(tabId: number, pageUrl: string, offer: FileDown
     const permit = await reserveSave(namedFileIdentity(pageUrl, offer), tabId, pageUrl, offer.filename);
     if (!permit) return null;
     let saved = false;
-    const requestId = crypto.randomUUID();
     const engineUrl = chrome.runtime.getURL("src/engine/offscreen.html");
-    const onProgress = (msg: {type?: string; requestId?: string; stage?: string; bytesWritten?: number; bytesTotal?: number | null} | null, sender: chrome.runtime.MessageSender) => {
+    const receiveProgress = (msg: {type?: string; requestId?: string; stage?: string; bytesWritten?: number; bytesTotal?: number | null} | null, sender: chrome.runtime.MessageSender) => {
       if (sender.url !== engineUrl || msg?.type !== "relay-progress" || msg.requestId !== requestId || typeof msg.stage !== "string"
         || typeof msg.bytesWritten !== "number" || !(typeof msg.bytesTotal === "number" || msg.bytesTotal === null)) return;
       report({filename: offer.filename, phase: "saving", stage: msg.stage,
         bytesWritten: msg.bytesWritten, bytesTotal: msg.bytesTotal});
     };
-    chrome.runtime.onMessage.addListener(onProgress);
+    chrome.runtime.onMessage.addListener(receiveProgress);
     try {
       chrome.tabs.sendMessage(tabId, {type: "hotkey-feedback", outcome: "preparing", detail: "Connecting to secure relay"},
         {frameId: 0}, () => void chrome.runtime.lastError);
@@ -68,8 +69,11 @@ export function saveThroughRelay(tabId: number, pageUrl: string, offer: FileDown
         chrome.runtime.sendMessage({type: "release-output", blobUrl: file.blobUrl}, () => void chrome.runtime.lastError);
       }
     } finally {
-      chrome.runtime.onMessage.removeListener(onProgress);
-      if (!saved) clearRelayStatus(tabId, pageUrl);
+      chrome.runtime.onMessage.removeListener(receiveProgress);
+      if (!saved) {
+        clearRelayStatus(tabId, pageUrl);
+        onProgress(requestId, null);
+      }
       await permit.finish(saved);
     }
   }

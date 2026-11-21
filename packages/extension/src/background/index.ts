@@ -28,6 +28,8 @@ import { saveVerifiedDownload } from "./browser-download";
 import { createCaptureHandler } from "./capture";
 import { createDiagnosticFetch } from "./diagnostic-fetch";
 import { discoverPageMediaForTab, downloadBestForTab, handleFileConnectionChoice, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
+import { forgetToolbarTab, toolbarBusy, updateToolbarProgress } from "./toolbar-progress";
+import type { TransferState } from "../util/transfer-progress";
 import { createHotkeyJobs } from "./hotkey-jobs";
 import { createRefererMirror, registerNetworkCapture } from "./network-capture";
 import { handleInstalled } from "./installed";
@@ -70,6 +72,7 @@ router = createRouter({
     download: opts => saveVerifiedDownload(chrome.downloads, opts as chrome.downloads.DownloadOptions),
   },
   ensureEngineHost,
+  onJobStatus: (tabId, id, status) => showTransfer(tabId, id, status.phase === "active" ? status : null),
   reserveSave: async (descriptor, choice, named) => {
     const {tabId, pageUrl, source} = descriptor;
     if (source.kind === "direct-url") {
@@ -137,6 +140,11 @@ function broadcastLocalJob(job: LocalJobView): void {
   const msg: BackgroundToPopupMessage = { type: "local-job", job };
   chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError);
   if (job.tabId === null) return;
+  const terminal = job.phase === "complete" || job.phase === "failed";
+  showTransfer(job.tabId, job.id, terminal ? null : {
+    stage: job.phase, percent: job.percent,
+    bytesWritten: job.downloadedBytes ?? 0, bytesTotal: job.totalBytes,
+  });
   if (job.phase === "complete") {
     notifyTab(job.tabId, "complete", job.filename ?? "Download finished");
   } else if (job.phase === "failed" && job.failure) {
@@ -194,7 +202,8 @@ const downloadBestDeps: DownloadBestDeps = {
     },
     allowRelayForSite: (pageUrl: string) => chrome.storage.session.set({["relay:" + new URL(pageUrl).origin]: true}),
     relayFile: (tabId, pageUrl, offer, source) => saveThroughRelay(tabId, pageUrl, offer, source,
-      async () => await isOnPage(tabId, pageUrl) && !router.listDescriptors(tabId).some(d => d.drm)),
+      async () => await isOnPage(tabId, pageUrl) && !router.listDescriptors(tabId).some(d => d.drm),
+      (id, status) => showTransfer(tabId, id, status)),
   } : {}),
   rememberFileSaveProblem: async (tabId, pageUrl, problem) => {
     if (problem) clearRelayStatus(tabId, pageUrl);
@@ -218,11 +227,12 @@ const FEEDBACK_BADGES: Record<HotkeyFeedbackOutcome, { text: string; color: stri
 };
 
 function showHotkeyFeedback(tabId: number, outcome: HotkeyFeedbackOutcome, detail: string): void {
+  notifyTab(tabId, outcome, detail);
+  if (toolbarBusy(tabId)) return;
   const badge = FEEDBACK_BADGES[outcome];
   chrome.action.setBadgeBackgroundColor({ tabId, color: badge.color }).catch(() => undefined);
   chrome.action.setBadgeText({ tabId, text: badge.text }).catch(() => undefined);
   setTimeout(() => updateBadge(tabId), 2_000);
-  notifyTab(tabId, outcome, detail);
 }
 
 function isEngineControlMessage(msg: unknown): msg is BackgroundToEngineMessage {
@@ -251,6 +261,7 @@ function clearTab(tabId: number): void {
 chrome.tabs.onRemoved.addListener(tabId => {
   clearTab(tabId);
   dismissRepeats(tabId);
+  forgetToolbarTab(tabId);
   clearRelayStatus(tabId);
 });
 chrome.tabs.onUpdated.addListener((tabId, info) => {
@@ -265,7 +276,13 @@ registerNetworkCapture(handleCapture);
 
 registerDownloadBestCommand(chrome.commands, downloadBestDeps);
 
+function showTransfer(tabId: number, id: string, status: TransferState | null): void {
+  updateToolbarProgress(tabId, id, status);
+  if (!status) updateBadge(tabId);
+}
+
 function updateBadge(tabId: number): void {
+  if (toolbarBusy(tabId)) return;
   const count = router.listDescriptors(tabId).length;
   const text = count > 0 ? String(count) : "";
   // Tab can vanish between an in-flight async classify and this badge
