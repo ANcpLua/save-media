@@ -2,7 +2,7 @@
 // message guards local so the bridge does not pull in the zod runtime.
 import { declaredMediaFilename, discoverPageMedia } from "./discovery";
 import { captureGeneratedDownload, fileDownloadOffer } from "./generated-download";
-import type { DiscoveredMedia, PageMediaSnapshot } from "../types/messages";
+import type { DiscoveredMedia, FileSaveProblem, HotkeyFeedbackOutcome, PageMediaSnapshot } from "../types/messages";
 
 export {};
 const BRIDGE_TAG = "__savemedia" as const;
@@ -24,9 +24,12 @@ interface DiscoverPageMediaMessage {
 
 interface HotkeyFeedbackMessage {
   type: "hotkey-feedback";
-  outcome: "started" | "delegated" | "complete" | "no-media" | "failed";
+  outcome: HotkeyFeedbackOutcome;
   detail: string;
 }
+
+// The page keeps the last attempt across popup closure and service worker sleep.
+let lastFileSave: { pageUrl: string; problem: FileSaveProblem } | null = null;
 
 window.addEventListener("message", event => {
   if (event.source !== window) return;
@@ -40,7 +43,7 @@ window.addEventListener("message", event => {
 
 // Keep the trusted keyboard gesture in the isolated bridge. A page's own
 // postMessage cannot request a save or run its download control.
-document.addEventListener("keydown", event => {
+window.addEventListener("keydown", event => {
   if (!event.isTrusted || event.repeat || event.metaKey || event.shiftKey) return;
   if (event.altKey === event.ctrlKey || (event.code !== "KeyS" && event.key.toLowerCase() !== "s")) return;
   if (event.target instanceof HTMLElement && (event.target.isContentEditable
@@ -58,6 +61,11 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   }
   if (isRecord(msg) && msg.type === "page-media-snapshot") {
     sendResponse(pageMediaSnapshot());
+    return false;
+  }
+  if (isRecord(msg) && msg.type === "file-save-problem" && msg.pageUrl === location.href && window.top === window) {
+    lastFileSave = msg.problem ? { pageUrl: location.href, problem: msg.problem as FileSaveProblem } : null;
+    sendResponse({ ok: true });
     return false;
   }
   if (isRecord(msg) && msg.type === "generate-download-url" && typeof msg.filename === "string"
@@ -131,7 +139,9 @@ function pageMediaSnapshot(): PageMediaSnapshot {
     playing: !v.paused && !v.ended && v.readyState >= 2,
   })).filter(v => v.src || v.thumbnail);
   const generated = fileDownloadOffer()?.filename;
-  return { pageTitle: title, videos, ...(generated ? { generatedDownloadFilename: generated } : {}) };
+  const problem = lastFileSave?.pageUrl === location.href ? lastFileSave.problem : null;
+  return { pageTitle: title, videos, ...(generated ? { generatedDownloadFilename: generated } : {}),
+    ...(problem ? { fileSaveProblem: problem } : {}) };
 }
 
 function captureFrame(v: HTMLVideoElement): string | null {
@@ -167,6 +177,7 @@ function absolute(url: string): string {
 // The host element is kept as a module-level reference (never looked up by
 // id) so the page cannot substitute its own element.
 const TOAST_COLORS: Record<HotkeyFeedbackMessage["outcome"], string> = {
+  "preparing": "#2563eb",
   "started": "#16a34a",
   "delegated": "#2563eb",
   "complete": "#16a34a",
@@ -174,6 +185,7 @@ const TOAST_COLORS: Record<HotkeyFeedbackMessage["outcome"], string> = {
   "failed": "#dc2626",
 };
 const TOAST_LABELS: Record<HotkeyFeedbackMessage["outcome"], string> = {
+  "preparing": "Preparing",
   "started": "Saving",
   "delegated": "Local downloader",
   "complete": "Saved",
@@ -217,6 +229,7 @@ function showToast(outcome: HotkeyFeedbackMessage["outcome"], detail: string): v
   `;
   const el = document.createElement("div");
   el.className = "t";
+  el.setAttribute("role", outcome === "failed" ? "alert" : "status");
   const dot = document.createElement("span");
   dot.className = "dot";
   dot.style.background = TOAST_COLORS[outcome];
@@ -233,13 +246,14 @@ function showToast(outcome: HotkeyFeedbackMessage["outcome"], detail: string): v
   toastTimer = setTimeout(() => {
     el.classList.remove("show");
     setTimeout(() => {
+      if (el.parentNode !== root) return;
       host.remove();
       if (toastHost === host) {
         toastHost = null;
         toastRoot = null;
       }
     }, 250);
-  }, outcome === "failed" ? 4_000 : 2_400);
+  }, outcome === "failed" ? 8_000 : outcome === "preparing" ? 12_000 : 2_400);
 }
 
 chrome.runtime.sendMessage(
@@ -268,7 +282,7 @@ function isDiscoverPageMediaMessage(value: unknown): value is DiscoverPageMediaM
 function isHotkeyFeedbackMessage(value: unknown): value is HotkeyFeedbackMessage {
   return isRecord(value)
     && value.type === "hotkey-feedback"
-    && (value.outcome === "started" || value.outcome === "delegated" || value.outcome === "complete" || value.outcome === "no-media" || value.outcome === "failed")
+    && (value.outcome === "preparing" || value.outcome === "started" || value.outcome === "delegated" || value.outcome === "complete" || value.outcome === "no-media" || value.outcome === "failed")
     && typeof value.detail === "string";
 }
 

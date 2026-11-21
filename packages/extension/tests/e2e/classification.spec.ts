@@ -477,8 +477,9 @@ test.describe("extension classifies real fixture pages", () => {
     return popup;
   }
 
-  test("follows the site-generated download redirect from the popup and Alt+S", async () => {
+  test("renews and follows site-generated download links from the popup and Alt+S", async ({ request }) => {
     await clearDownloadHistory();
+    expect((await request.post("/generated-file-link/31")).status()).toBe(204);
     const page = await context!.newPage();
     const cdp = await context!.newCDPSession(page);
     await cdp.send("Browser.setDownloadBehavior", { behavior: "default" });
@@ -603,7 +604,7 @@ test.describe("extension classifies real fixture pages", () => {
     });
   }
 
-  test("reports untrusted and restricted video sources without offering a download", async () => {
+  test("reports untrusted and restricted video sources with certificate checks on", async () => {
     await clearDownloadHistory();
     const temporary = mkdtempSync(resolve(tmpdir(), "savemedia-cert-"));
     const key = resolve(temporary, "test.key");
@@ -620,6 +621,17 @@ test.describe("extension classifies real fixture pages", () => {
       } else if (req.url === "/restricted.mov") {
         res.writeHead(451, { "content-type": "text/html" });
         res.end("<p>Unavailable for legal reasons</p>");
+      } else if (req.url === "/named-file.html") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end('<!doctype html><h1>Certificate fixture.mov</h1><a href="/generated-link.html">Download</a>');
+      } else if (req.url === "/generated-link.html") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><h1>Certificate fixture.mov</h1><a href="#">Download</a><script>
+          document.querySelector("a").addEventListener("click", event => {
+            event.preventDefault();
+            location.href = "/redirect.mov";
+          });
+        </script>`);
       } else {
         const source = req.url === "/certificate.html" ? "/redirect.mov" : "/restricted.mov";
         res.writeHead(200, { "content-type": "text/html" });
@@ -666,6 +678,36 @@ test.describe("extension classifies real fixture pages", () => {
         await expect(toast).toHaveText("Not saved" + title);
         expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
       }
+
+      await page.goto(origin + "/named-file.html");
+      popup = await openPopupFor(page);
+      await popup.getByRole("button", { name: "Download", exact: true }).click();
+      await expect(popup.getByTestId("file-save-problem")).toContainText("could not verify the media server's certificate");
+      await expect(popup.getByRole("button", { name: "Retry download" })).toBeVisible();
+      await popup.close();
+      popup = await openPopupFor(page);
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Couldn’t open the video file");
+      await popup.getByTestId("file-save-problem").getByText("Technical details").click();
+      await expect(popup.getByTestId("file-save-problem")).toContainText(mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID");
+      // Capture the report without changing the machine's clipboard.
+      await popup.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+        async writeText(text: string) { document.body.dataset["copiedReport"] = text; },
+      } }));
+      await popup.getByRole("button", { name: "Copy details" }).click();
+      const report = await popup.locator("body").getAttribute("data-copied-report");
+      expect(report).toContain("Stage · file connection");
+      expect(report).toContain(mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID");
+      expect(report).not.toContain("not-for-display");
+      await popup.close();
+      popup = undefined;
+
+      await page.reload();
+      await page.bringToFront();
+      await page.keyboard.press("Alt+KeyS");
+      await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText("Not savedCouldn’t open the video file");
+      popup = await openPopupFor(page);
+      await expect(popup.getByTestId("file-save-problem")).toContainText("Couldn’t open the video file");
+      expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
       expect(mediaRequests).toBe(0);
     } finally {
       await popup?.close();

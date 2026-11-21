@@ -60,12 +60,13 @@ export type BridgeToBackgroundMessage =
   | { readonly type: "download-best-hotkey"; readonly pageUrl: string }
   | { readonly type: "ready" };
 
-export type HotkeyFeedbackOutcome = "started" | "delegated" | "complete" | "no-media" | "failed";
+export type HotkeyFeedbackOutcome = "preparing" | "started" | "delegated" | "complete" | "no-media" | "failed";
 
 export type BackgroundToContentMessage =
   | { readonly type: "discover-page-media" }
   | { readonly type: "page-media-snapshot" }
   | { readonly type: "generate-download-url"; readonly pageUrl: string; readonly filename: string }
+  | FileSaveProblemMessage
   | { readonly type: "hotkey-feedback"; readonly outcome: HotkeyFeedbackOutcome; readonly detail: string };
 
 /** One <video> element on the page, as seen by the bridge when the popup opens. */
@@ -85,11 +86,28 @@ export interface PageMediaSnapshot {
   readonly pageTitle: string;
   readonly videos: readonly PageVideo[];
   readonly generatedDownloadFilename?: string;
+  readonly fileSaveProblem?: FileSaveProblem | null;
 }
 
 export interface FileDownloadOffer {
   readonly filename: string;
   readonly linkedPage?: string;
+}
+
+export interface FileSaveProblem {
+  readonly filename: string;
+  readonly stage: "download link" | "file connection" | "start download";
+  readonly title: string;
+  readonly body: string;
+  readonly code: string;
+  readonly technicalDetails?: string;
+}
+
+export interface FileSaveProblemMessage {
+  readonly type: "file-save-problem";
+  readonly tabId: number;
+  readonly pageUrl: string;
+  readonly problem: FileSaveProblem | null;
 }
 
 export type CookieSourceValue = CookieSource;
@@ -132,6 +150,7 @@ export interface JobStatus {
 export type BackgroundToPopupMessage =
   | { readonly type: "descriptors"; readonly tabId: number; readonly descriptors: readonly StreamDescriptor[];
       readonly failures?: readonly DiscoveryFailure[]; readonly statuses?: Readonly<Record<string, JobStatus>> }
+  | FileSaveProblemMessage
   | { readonly type: "local-status"; readonly settings: LocalSettingsValue; readonly host: HostPong | null; readonly permissionGranted: boolean; readonly jobs: readonly LocalJobView[] }
   | { readonly type: "local-job"; readonly job: LocalJobView }
   | { readonly type: "job-progress"; readonly streamId: StreamDescriptor["id"]; readonly bytesWritten: number; readonly bytesTotal: number | null; readonly phase: string }
@@ -252,6 +271,10 @@ const backgroundToPopupSchema = z.discriminatedUnion("type", [
     failures: z.array(z.object({ url: z.string(), error: record })).optional(),
     statuses: z.record(z.string(), z.object({ phase: z.enum(["queued", "active", "complete", "failed"]),
       bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional(), stage: z.string().optional(), error: record.optional() })).optional() }),
+  z.object({ type: z.literal("file-save-problem"), tabId: z.number(), pageUrl: z.string(), problem: z.object({
+    filename: z.string(), stage: z.enum(["download link", "file connection", "start download"]),
+    title: z.string(), body: z.string(), code: z.string(), technicalDetails: z.string().optional(),
+  }).nullable() }),
   z.object({ type: z.literal("local-status"), settings: record, permissionGranted: z.boolean(), jobs: z.array(z.unknown()) }),
   z.object({ type: z.literal("local-job"), job: localJobViewSchema }),
   z.object({ type: z.literal("job-progress"), ...progressFields }),

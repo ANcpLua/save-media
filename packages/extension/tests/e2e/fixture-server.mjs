@@ -231,12 +231,19 @@ const quickTimeFiles = new Map([
   ["31", { body: fixture("direct/test-pattern.mov"), name: "Test pattern 31.mov", generation: 0 }],
   ["32", { body: fixture("direct/color-bars.mov"), name: "Färbige Balken 32.mov", generation: 0 }],
 ]);
+let generatedFileLinks = 0;
 
 function serveFilePageMedia(req, res, path) {
-  if (path === "/file-info/31") {
+  if (path === "/generated-file-link/31" && req.method === "POST") {
+    generatedFileLinks = 0;
+    res.writeHead(204).end();
+    return true;
+  }
+  if (path === "/file-info/31" || path === "/generated-file-link/31") {
     const { generation } = quickTimeFiles.get("31");
+    const version = path === "/generated-file-link/31" && generatedFileLinks++ === 0 ? -1 : generation;
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      .end(JSON.stringify({ url: `/signed-movie.mov?file=31&token=${generation}` }));
+      .end(JSON.stringify({ url: `/signed-movie.mov?file=31&token=${version}` }));
     return true;
   }
   const entry = /^\/file\/(31|32)$/.exec(path)?.[1];
@@ -296,7 +303,9 @@ const pages = {
     `<h1>${name}</h1><a href="#">Download</a><script>
       document.querySelector("a").addEventListener("click", event => {
         event.preventDefault();
-        setTimeout(() => { location.href = "/file/${id}"; }, 20);
+        ${id === "31"
+          ? 'fetch("/generated-file-link/31").then(response => response.json()).then(({ url }) => { location.href = url; });'
+          : 'setTimeout(() => { location.href = "/file/32"; }, 20);'}
       });
     </script>`)])),
   "file-31": html("Test pattern", `<h1>Test pattern 31.mov</h1><script>

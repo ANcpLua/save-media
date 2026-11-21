@@ -36,8 +36,11 @@ A server that serves a full response can instead be read as one stream.
 Both paths enforce the browser's 2 GiB output limit, including when the server
 omits a length. Cancellation discards the in-memory result.
 
+If a freshly generated link with an expiring signature already returns HTTP
+403 during its first probe, SaveMedia asks the same Download control for a
+fresh link once. It requires the same resource path and file parameters.
 If a previously verified direct URL returns HTTP 403 during a save,
-SaveMedia can retry once. A stable entry URL follows the site's redirect
+SaveMedia can also retry once. A stable entry URL follows the site's redirect
 again. For a single named file with an expiring URL, the extension lets
 Chrome open the same file page in a temporary background tab. It retries
 only when that page exposes one fresh address for the same resource path
@@ -68,6 +71,12 @@ details**. Alt+S shows the short reason if no save can start. Available
 downloads appear above the collapsed **Unavailable sources** section.
 The browser's error event is used for display only.
 
+A failed save on a named file page stays visible next to the file when the
+popup reopens, including after an Alt+S attempt. The tab holds the result
+until a new save or page load. **Technical details** can copy the build,
+save stage, and available browser error for a report. The report omits the
+file URL, request parameters, and filename.
+
 Chrome uses its configured resolver for both the page and the extension's
 requests. Chrome's Secure DNS setting can select an encrypted resolver on
 devices where the browser permits that choice. The media request still
@@ -88,13 +97,16 @@ the focused check.
 bun install --frozen-lockfile
 (cd packages/extension && bunx playwright install chromium)
 bun run build
-bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'site-generated download redirect'
+bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'site-generated download links|reports untrusted and restricted'
 bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'after source rotation'
 ```
 
 The redirect check opens a named file page with an unavailable player source.
-It uses the popup to resolve the linked download page, then Alt+S on a second
-download page. The check compares both output filenames and every byte.
+It uses the popup to resolve the linked download page and renew its first
+expired address, then Alt+S on a second page. The check compares both output
+filenames and every byte. The certificate fixture checks that a named file's
+save failure remains visible when the popup reopens and that its report
+contains the browser error without the request parameters.
 
 The source-rotation check saves two distinct local movies in one tab using the popup
 and then Alt+S. The first source appears after the popup opens and expires

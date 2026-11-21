@@ -7,10 +7,13 @@ import {
   type ContentDiscoveryResponse,
   type DiscoveredMedia,
   type FileDownloadOffer,
+  type FileSaveProblem,
   type HotkeyFeedbackOutcome,
   type LocalJobView,
 } from "../types/messages";
 import { hotkeyErrorDetail } from "./hotkey-jobs";
+import { describeFileSaveProblem } from "./file-save-problem";
+import { renewableResource } from "./refresh-direct";
 import { isDelegableError } from "../native/local-downloader";
 
 type CaptureMessage = Extract<BridgeToBackgroundMessage, { type: "capture" }>;
@@ -28,6 +31,7 @@ export interface DownloadBestDeps {
       msg: BackgroundToContentMessage,
       cb: (response: ContentDiscoveryResponse | undefined) => void,
     ) => void;
+    readonly isOnPage?: (tabId: number, pageUrl: string) => Promise<boolean>;
   };
   readonly runtime: {
     readonly lastError: () => unknown;
@@ -39,6 +43,7 @@ export interface DownloadBestDeps {
   };
   readonly handleCapture: (tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>;
   readonly generateDownload?: (tabId: number, pageUrl: string, offer: FileDownloadOffer) => Promise<DiscoveredMedia | null>;
+  readonly rememberFileSaveProblem?: (tabId: number, pageUrl: string, problem: FileSaveProblem | null) => Promise<void>;
   /**
    * Visible per-tab feedback for the hotkey path. The popup is usually
    * closed when Alt+S fires, so job-failed messages alone leave the user
@@ -116,9 +121,12 @@ function probeSource(
 
 export async function downloadBestForActiveTab(deps: DownloadBestDeps): Promise<void> {
   const [tab] = await deps.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
+  const tabId = tab?.id;
+  if (!tabId) return;
 
-  await downloadBestForTab(deps, tab.id, tab.url ?? "");
+  await downloadBestForTab(deps, tabId, tab.url ?? "").catch(() => {
+    deps.showHotkeyFeedback(tabId, "failed", "Couldn’t start the download. Try again.");
+  });
 }
 
 export async function downloadBestForTab(
@@ -132,12 +140,19 @@ export async function downloadBestForTab(
   let outcome = await deps.router.startBestDownload(tabId);
   const offer = discovery?.fileDownload;
   if (offer && (outcome.kind === "no-media" || (outcome.kind === "failed" && outcome.duringDiscovery))) {
-    const source = await deps.generateDownload?.(tabId, discovery.pageUrl, offer);
-    if (source) {
-      deps.router.setDiscoveryScope(tabId, discovery.pageUrl, [source.url]);
-      await probeSource(deps, tabId, discovery.pageUrl, source, offer.linkedPage);
-      outcome = await deps.router.startBestDownload(tabId);
+    if (!fromPopup) deps.showHotkeyFeedback(tabId, "preparing", "Checking the file link");
+    await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, null);
+    const result = await startFilePageDownload(deps, tabId, discovery.pageUrl, offer);
+    if (!result) return;
+    if ("problem" in result) {
+      if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, discovery.pageUrl)) return;
+      await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, result.problem);
+      deps.showHotkeyFeedback(tabId, "failed", `${result.problem.title}. Open SaveMedia for details.`);
+      return;
     }
+    outcome = result;
+  } else if (offer && outcome.kind === "started") {
+    await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, null);
   }
   if (fromPopup) return;
 
@@ -157,11 +172,7 @@ export async function downloadBestForTab(
   }
 
   if (outcome.kind === "no-media") {
-    if (offer) {
-      deps.showHotkeyFeedback(tabId, "failed", "The site did not provide a usable download link");
-    } else {
-      deps.showHotkeyFeedback(tabId, "no-media", "No supported media on this page");
-    }
+    deps.showHotkeyFeedback(tabId, "no-media", "No supported media on this page");
     return;
   }
 
@@ -172,6 +183,35 @@ export async function downloadBestForTab(
     error: outcome.error,
   };
   deps.runtime.sendMessage(msg, () => undefined);
+}
+
+async function startFilePageDownload(
+  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer,
+): Promise<Extract<BestDownloadOutcome, { kind: "started" }> | { problem: FileSaveProblem } | null> {
+  let source = await deps.generateDownload?.(tabId, pageUrl, offer);
+  if (!source) return { problem: describeFileSaveProblem(offer.filename, "download link") };
+
+  for (let attempt = 0; ; attempt++) {
+    await probeSource(deps, tabId, pageUrl, source, offer.linkedPage);
+    if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return null;
+    // A passive scan may have changed scope while the probe was in flight.
+    // Select the address actually issued by the site's download control.
+    deps.router.setDiscoveryScope(tabId, pageUrl, [source.url]);
+    const outcome = await deps.router.startBestDownload(tabId);
+    if (outcome.kind === "started") return outcome;
+
+    const error = outcome.kind === "failed" ? outcome.error : undefined;
+    const stage = outcome.kind === "failed" && !outcome.duringDiscovery ? "start download" : "file connection";
+    const problem = describeFileSaveProblem(offer.filename, stage, error);
+    // A new signature can expire before verification starts. Give the site
+    // one chance to renew that address before there's a verified engine job.
+    const resource = attempt === 0 && error?.code === "access_denied" && error.httpStatus === 403
+      ? renewableResource(source.url) : null;
+    if (!resource) return { problem };
+    const refreshed = await deps.generateDownload?.(tabId, pageUrl, offer);
+    if (!refreshed || refreshed.url === source.url || renewableResource(refreshed.url) !== resource) return { problem };
+    source = refreshed;
+  }
 }
 
 export function registerDownloadBestCommand(commands: CommandsLike | undefined, deps: DownloadBestDeps): void {

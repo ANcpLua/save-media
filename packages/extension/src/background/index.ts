@@ -131,10 +131,15 @@ function notifyTab(tabId: number, outcome: HotkeyFeedbackOutcome, detail: string
 
 const hotkeyJobs = createHotkeyJobs();
 
+async function isOnPage(tabId: number, pageUrl: string): Promise<boolean> {
+  return chrome.tabs.get(tabId).then(tab => tab.url === pageUrl, () => false);
+}
+
 const downloadBestDeps: DownloadBestDeps = {
   tabs: {
     query: queryInfo => chrome.tabs.query(queryInfo),
     sendMessage: (tabId, msg, cb) => chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }, cb),
+    isOnPage,
   },
   runtime: {
     lastError: () => chrome.runtime.lastError,
@@ -147,7 +152,7 @@ const downloadBestDeps: DownloadBestDeps = {
   handleCapture,
   generateDownload: async (tabId, pageUrl, { filename, linkedPage }) => {
     try {
-      if ((await chrome.tabs.get(tabId)).url !== pageUrl) return null;
+      if (!await isOnPage(tabId, pageUrl)) return null;
       const message: BackgroundToContentMessage = { type: "generate-download-url", pageUrl, filename };
       let source: DiscoveredMedia | null;
       if (linkedPage && __BROWSER__ === "chromium") {
@@ -157,8 +162,13 @@ const downloadBestDeps: DownloadBestDeps = {
         source = await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
       }
       return source?.filenameHint === filename && typeof source.url === "string"
-        && (await chrome.tabs.get(tabId)).url === pageUrl ? source : null;
+        && await isOnPage(tabId, pageUrl) ? source : null;
     } catch { return null; }
+  },
+  rememberFileSaveProblem: async (tabId, pageUrl, problem) => {
+    const msg = { type: "file-save-problem", tabId, pageUrl, problem } satisfies BackgroundToPopupMessage;
+    await chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }).catch(() => undefined);
+    chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError);
   },
   showHotkeyFeedback,
   localFallback: (pageUrl, tabId) => localDownloader.startFallback(pageUrl, tabId),
@@ -166,6 +176,7 @@ const downloadBestDeps: DownloadBestDeps = {
 };
 
 const FEEDBACK_BADGES: Record<HotkeyFeedbackOutcome, { text: string; color: string }> = {
+  "preparing": { text: "…", color: "#2563eb" },
   "started": { text: "↓", color: "#16a34a" },
   "delegated": { text: "⇣", color: "#2563eb" },
   "complete": { text: "✓", color: "#16a34a" },
@@ -238,7 +249,9 @@ chrome.runtime.onMessage.addListener((
   if (isBridgeToBackgroundMessage(msg)) {
     if (msg.type === "download-best-hotkey") {
       const tabId = sender.tab?.id;
-      if (tabId !== undefined) void downloadBestForTab(downloadBestDeps, tabId, msg.pageUrl);
+      if (tabId !== undefined) void downloadBestForTab(downloadBestDeps, tabId, msg.pageUrl).catch(() => {
+        showHotkeyFeedback(tabId, "failed", "Couldn’t start the download. Try again.");
+      });
       return false;
     }
 

@@ -193,7 +193,13 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   }
 
   const ranked = rankDescriptors(descriptors, snapshot);
-  const filename = ranked.length === 0 && tabId !== null && pageUrl ? snapshot?.generatedDownloadFilename : undefined;
+  const filename = ranked.length === 0 && tabId !== null && pageUrl
+    ? snapshot?.generatedDownloadFilename ?? snapshot?.fileSaveProblem?.filename : undefined;
+  const problem = filename && fileDownload !== "preparing" ? snapshot?.fileSaveProblem : null;
+  const version = manifestVersion();
+  const details = problem
+    ? [`Stage · ${problem.stage}`, `Code · ${problem.code}`, problem.technicalDetails].filter(Boolean).join("\n")
+    : "";
 
   function downloadFilePage(): void {
     if (tabId === null || !pageUrl || scanning || fileDownload === "preparing") return;
@@ -210,6 +216,9 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
       } else {
         setFileDownload("unavailable");
       }
+      requestSnapshot(tabId, snap => {
+        if (snap && tabIdRef.current === tabId && pageUrlRef.current === pageUrl) setSnapshot(snap);
+      });
     });
   }
 
@@ -230,6 +239,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "complete" } }));
       } else if (msg.type === "job-failed") {
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "failed", error: msg.error } }));
+      } else if (msg.type === "file-save-problem" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
+        setSnapshot(prev => prev && { ...prev, fileSaveProblem: msg.problem });
       } else if (msg.type === "descriptors" && msg.tabId === tabIdRef.current) {
         setDescriptors(msg.descriptors);
         setFailures(msg.failures ?? []);
@@ -239,8 +250,6 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
-
-  const version = manifestVersion();
 
   return (
     <main className="flex flex-col h-full bg-ink" data-window={asWindow || undefined}>
@@ -288,13 +297,19 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
           <ul className="px-2 pb-1">
             <li className="rounded-lg bg-surface border border-accent/60 p-3 text-xs">
               <p className="break-words font-medium">{filename}</p>
-              {fileDownload === "unavailable" && failures.length === 0 && (
-                <p className="mt-2 text-muted" role="status">The site did not provide a usable download link.</p>
+              {problem ? (
+                <div className="mt-2" data-testid="file-save-problem">
+                  <p className="font-medium" role="status">{problem.title}</p>
+                  <p className="mt-0.5 text-muted">{problem.body}</p>
+                  <TechnicalDetails details={details} copyText={`SaveMedia ${version}\n${details}`} />
+                </div>
+              ) : fileDownload === "unavailable" && (
+                <p className="mt-2 text-muted" role="status">Couldn’t start the download. Try again.</p>
               )}
               <div className="mt-2 flex justify-end">
                 <button type="button" onClick={downloadFilePage} disabled={scanning || fileDownload === "preparing"}
                   className="bg-accent hover:brightness-110 disabled:opacity-50 text-ink font-medium px-2.5 py-1 rounded-md">
-                  {fileDownload === "preparing" ? "Preparing download…" : fileDownload === "unavailable" ? "Retry download" : "Download"}
+                  {fileDownload === "preparing" ? "Preparing download…" : problem || fileDownload === "unavailable" ? "Retry download" : "Download"}
                 </button>
               </div>
             </li>
@@ -316,7 +331,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
             ))}
           </ul>
         )}
-        {failures.length > 0 && (descriptors.some(isDownloadableCandidate) || (filename && fileDownload !== "unavailable") ? (
+        {!problem && failures.length > 0 && (descriptors.some(isDownloadableCandidate) || filename ? (
           <details className="px-3 py-1 text-xs text-muted">
             <summary className="cursor-pointer">Unavailable sources</summary>
             <DiscoveryFailures failures={failures} />

@@ -11,7 +11,7 @@ interface RefreshDeps {
 type DirectDescriptor = StreamDescriptor & { readonly source: Extract<StreamDescriptor["source"], { kind: "direct-url" }> };
 const EXPIRING_PARAMETER = /^(token|sig|signature|exp|ex|expires?|expiry|expiration|x-amz-signature|x-amz-date|x-amz-expires|x-goog-signature|x-goog-date|x-goog-expires)$/i;
 
-function renewableResource(url: string): string | null {
+export function renewableResource(url: string): string | null {
   const parsed = new URL(url);
   parsed.hash = "";
   const renewalKeys = [...parsed.searchParams.keys()].filter(key => EXPIRING_PARAMETER.test(key));
