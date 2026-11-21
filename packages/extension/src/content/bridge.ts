@@ -1,6 +1,7 @@
 // Vite inlines discovery into this classic content-script entry. Keep the
 // message guards local so the bridge does not pull in the zod runtime.
-import { discoverPageMedia } from "./discovery";
+import { declaredMediaFilename, discoverPageMedia } from "./discovery";
+import type { DiscoveredMedia } from "../types/messages";
 
 export {};
 const BRIDGE_TAG = "__savemedia" as const;
@@ -46,7 +47,7 @@ window.addEventListener("message", event => {
     return;
   }
   chrome.runtime.sendMessage(
-    { type: "capture", payload: data },
+    { type: "capture", payload: withFilePageMetadata(data) },
     () => void chrome.runtime.lastError,
   );
 });
@@ -61,10 +62,46 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
     return false;
   }
   if (!isDiscoverPageMediaMessage(msg)) return false;
-  const media = discoverPageMedia(document, location.href);
-  sendResponse({ pageUrl: location.href, urls: media.map(item => item.url), media });
-  return false;
+  const pageUrl = location.href;
+  const media = discoverPageMedia(document, pageUrl);
+  const reply = (items: readonly DiscoveredMedia[]) => {
+    sendResponse(location.href === pageUrl ? { pageUrl, urls: items.map(item => item.url), media: items } : null);
+  };
+  if (media.length || !declaredMediaFilename(document)) {
+    reply(media);
+    return false;
+  }
+  // A single-file page can add its player after an asynchronous request.
+  // Allow that normal page work to finish before an early popup or hotkey
+  // concludes there is no media. Other pages keep the immediate response.
+  void waitForFilePageMedia(pageUrl).then(reply);
+  return true;
 });
+
+function withFilePageMetadata(payload: PageCapturePayload): PageCapturePayload {
+  if (payload.kind !== "media-element" || payload.elementTag !== "video" || !declaredMediaFilename(document)) return payload;
+  const [media] = discoverPageMedia(document, location.href);
+  if (!media?.filenameHint || media.url !== payload.url) return payload;
+  return { ...payload, filenameHint: media.filenameHint, quality: media.quality };
+}
+
+function waitForFilePageMedia(pageUrl: string): Promise<readonly DiscoveredMedia[]> {
+  return new Promise(resolve => {
+    function finish(media: readonly DiscoveredMedia[]): void {
+      observer.disconnect();
+      clearTimeout(deadline);
+      resolve(media);
+    }
+    const observer = new MutationObserver(() => {
+      if (location.href !== pageUrl) { finish([]); return; }
+      if (!document.querySelector("video[src], video source[src]")) return;
+      const media = discoverPageMedia(document, pageUrl);
+      if (media.length) finish(media);
+    });
+    const deadline = setTimeout(() => finish(location.href === pageUrl ? discoverPageMedia(document, pageUrl) : []), 4_000);
+    observer.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
+  });
+}
 
 // Snapshot of the page's <video> elements for the popup: which one is
 // playing, how big it is, and a small frame so the user can tell entries

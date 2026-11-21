@@ -233,6 +233,11 @@ const quickTimeFiles = new Map([
 ]);
 
 function serveFilePageMedia(req, res, path) {
+  if (path === "/file-info/31") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      .end(JSON.stringify({ url: "/file/31" }));
+    return true;
+  }
   const entry = /^\/file\/(31|32)$/.exec(path)?.[1];
   if (entry) {
     const item = quickTimeFiles.get(entry);
@@ -256,7 +261,9 @@ function serveFilePageMedia(req, res, path) {
       // Full response with no range validator. The URL has no file suffix.
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
-        ...(match[1] === "32" ? { "Content-Disposition": `attachment; filename*=UTF-8'en'${encodeURIComponent(item.name)}` } : {}),
+        "Content-Disposition": match[1] === "32"
+          ? `attachment; filename*=UTF-8'en'${encodeURIComponent(item.name)}`
+          : "attachment; filename=\"\"; filename*=UTF-8''",
         "Content-Length": item.body.length,
         "Cache-Control": "no-store",
       }).end(item.body);
@@ -277,7 +284,14 @@ function serveFilePageMedia(req, res, path) {
 }
 
 const pages = {
-  "file-31": html("Test pattern", '<h1>Test pattern 31.mov</h1><video controls preload="metadata" src="/file/31"></video>'),
+  "file-31": html("Test pattern", `<h1>Test pattern 31.mov</h1><script>
+    fetch("/file-info/31").then(response => response.json()).then(({ url }) => {
+      const player = document.createElement("video");
+      player.controls = true;
+      player.src = url;
+      document.body.append(player);
+    });
+  </script>`),
   "file-32": html("Color bars", `<video controls></video><script>
     fetch("/file/32").then(response => response.blob())
       .then(blob => document.querySelector("video").src = URL.createObjectURL(blob))

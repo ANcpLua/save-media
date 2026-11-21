@@ -117,7 +117,7 @@ function installGenericDiscovery(): void {
 function looksLikeMediaEntry(url: string): boolean {
   if (/\.(m3u8|mpd)(\?|#|$)/i.test(url)) return true;
   if (looksLikeFragmentUrl(url)) return false;
-  return /\.(mp4|mov|qt|webm|mkv)\/?(\?|#|$)/i.test(url);
+  return /\.(mp4|mov|qt|webm|mkv)\/?$/i.test(url.split(/[?#]/, 1)[0] ?? "");
 }
 
 function looksLikeFragmentUrl(url: string): boolean {

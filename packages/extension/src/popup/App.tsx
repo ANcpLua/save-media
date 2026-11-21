@@ -255,7 +255,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
             </button>
           )}
         </div>
-        {ranked.length === 0 && failures.length === 0 && (
+        {ranked.length === 0 && failures.length === 0 && !scanning && (
           <div className="px-3 py-8 text-center text-muted text-xs">
             {tabId === null && !skipFetch ? "No active tab." : "No media detected on this page."}
           </div>

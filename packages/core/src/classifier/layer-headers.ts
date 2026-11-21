@@ -24,11 +24,13 @@ function lowerHeaders(h: Record<string, string>): Record<string, string> {
 function extractFilename(contentDisposition: string): string | null {
   const star = /(?:^|;)\s*filename\*\s*=\s*UTF-8'[^']*'([^;]+)/i.exec(contentDisposition);
   if (star) {
-    try { return decodeURIComponent(star[1]!.trim()); } catch { /* fall through */ }
+    try {
+      const name = decodeURIComponent(star[1]!.trim()).trim();
+      if (name) return name;
+    } catch { /* fall through */ }
   }
-  const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(contentDisposition);
-  if (plain) return (plain[1] ?? plain[2] ?? "").trim();
-  return null;
+  const plain = /(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(contentDisposition);
+  return (plain?.[1] ?? plain?.[2] ?? "").trim() || null;
 }
 
 export function classifyByHeaders(headers: Record<string, string>): HeaderClassification {

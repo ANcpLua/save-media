@@ -67,7 +67,7 @@ export function looksLikeMediaEntryUrl(url: string, requestType?: string): boole
   if (/\.(m3u8|mpd)(\?|#|$)/i.test(url)) return true;
   if (looksLikeFragmentUrl(url)) return false;
   if (requestType === "xmlhttprequest") return false;
-  return /\.(mp4|mov|qt|webm|mkv)\/?(\?|#|$)/i.test(url);
+  return /\.(mp4|mov|qt|webm|mkv)\/?$/i.test(url.split(/[?#]/, 1)[0] ?? "");
 }
 
 // Hosts where a dedicated MAIN-world site resolver (content/sites/*) is the

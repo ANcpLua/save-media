@@ -92,12 +92,16 @@ export function discoverPageMedia(doc: Document, pageUrl: string): DiscoveredMed
   // Some file pages show the filename while serving an opaque player URL.
   // Apply a literal filename only when the page offers one media candidate.
   if (media.length === 1) {
-    const filenameHint = [...doc.querySelectorAll('h1, meta[property="og:title"]')]
-      .map(el => (el.getAttribute("content") ?? el.textContent ?? "").trim())
-      .find(name => name.length <= 240 && /\.(mp4|mov|qt|webm|mkv)$/i.test(name));
+    const filenameHint = declaredMediaFilename(doc);
     if (filenameHint) return [{ ...media[0]!, filenameHint }];
   }
   return media;
+}
+
+export function declaredMediaFilename(doc: Document): string | undefined {
+  return [...doc.querySelectorAll('h1, meta[property="og:title"]')]
+    .map(el => (el.getAttribute("content") ?? el.textContent ?? "").trim())
+    .find(name => name.length <= 240 && /\.(mp4|mov|qt|webm|mkv)$/i.test(name));
 }
 
 function sameMediaUrl(a: string, b: string): boolean {

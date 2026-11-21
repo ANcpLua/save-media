@@ -23,6 +23,11 @@ describe("layer-headers", () => {
     expect(r.titleHint).toBe("my video.mp4");
   });
 
+  it("allows a fallback when the attachment omits both filenames", () => {
+    const r = classifyByHeaders({ "content-disposition": "attachment; filename=\"\"; filename*=UTF-8''" });
+    expect(r.titleHint).toBeNull();
+  });
+
   it("missing headers → all unknown", () => {
     const r = classifyByHeaders({});
     expect(r.protocol).toBe("unknown");

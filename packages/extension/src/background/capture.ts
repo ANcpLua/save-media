@@ -142,7 +142,8 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     if (directContainer && classified.source.kind === "direct-url" && cap.url && finalUrl) {
       directOrStream = {
         ...directOrStream,
-        title: originalMediaFilename(classified.title ?? cap.filenameHint ?? null, directContainer, finalUrl, cap.url),
+        title: originalMediaFilename(classified.title, directContainer)
+          ?? originalMediaFilename(cap.filenameHint ?? null, directContainer, finalUrl, cap.url),
         source: { ...classified.source, ...(finalUrl !== cap.url ? { finalUrl } : {}) },
       };
     }

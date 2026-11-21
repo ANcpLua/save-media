@@ -13,9 +13,12 @@ Discovery reads at most the first 4 KiB of a candidate and looks for a
 supported container or playlist. Successful status codes, filenames, and
 MIME types alone can also come from warning pages and status responses.
 A direct-file row uses the filename from the verified response's
-`Content-Disposition`, a file heading on a single-video page, or the media path. The popup shows the
-reason when discovery fails and **Check page again** probes the current
-sources. Navigation cancels probes from the previous page.
+`Content-Disposition`, a file heading on a single-video page, or the media path.
+An empty attachment filename counts as missing. When a page names a file
+and its player is still initializing, discovery allows up to four seconds
+for the page to supply a source. The popup shows the reason when discovery
+fails and **Check page again** probes the current sources. Navigation cancels
+probes from the previous page.
 
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
@@ -47,6 +50,11 @@ a diagnostic during discovery, the popup shows a short reason such as
 details**. Alt+S shows the short reason if no save can start. Available
 downloads appear above the collapsed **Unavailable sources** section.
 The browser's error event is used for display only.
+
+Chrome uses its configured resolver for both the page and the extension's
+requests. Chrome's Secure DNS setting can select an encrypted resolver on
+devices where the browser permits that choice. The media request still
+validates TLS for the original hostname. See [Chrome's Secure DNS documentation](https://support.google.com/chrome/answer/10468685).
 
 Support can diagnose the media host on the same network with TLS verification
 enabled. A certificate issued by a DNS filter's block-page service means the

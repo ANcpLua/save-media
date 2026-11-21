@@ -483,6 +483,12 @@ test.describe("extension classifies real fixture pages", () => {
     const cdp = await context!.newCDPSession(page);
     // Keep Chromium's real output names instead of Playwright's usual UUIDs.
     await cdp.send("Browser.setDownloadBehavior", { behavior: "default" });
+    let releaseFileInfo!: () => void;
+    const fileInfo = new Promise<void>(resolve => { releaseFileInfo = resolve; });
+    await page.route("**/file-info/31", async route => {
+      await fileInfo;
+      await route.continue();
+    });
     let popup: Page | undefined;
     try {
       for (const [id, name, fixture] of [
@@ -491,6 +497,11 @@ test.describe("extension classifies real fixture pages", () => {
       ]) {
         await page.goto(`/page/file-${id}.html`);
         popup = await openPopupFor(page);
+        if (id === "31") {
+          await expect(popup.getByRole("button", { name: "Checking..." })).toBeDisabled();
+          await expect(popup.getByText("No media detected on this page.")).toHaveCount(0);
+          releaseFileInfo();
+        }
         await expect(popup.getByText(name!, { exact: true })).toBeVisible();
         await expect(popup.getByRole("button", { name: "Download", exact: true })).toHaveCount(1);
         expect((await request.post(`/file/${id}`)).status()).toBe(204);
@@ -514,6 +525,7 @@ test.describe("extension classifies real fixture pages", () => {
       }
       expect(await probe!.evaluate(() => chrome.downloads.search({ state: "complete" }))).toHaveLength(2);
     } finally {
+      releaseFileInfo();
       await popup?.close();
       await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: downloadDir! });
       await page.close();
