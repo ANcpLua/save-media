@@ -115,6 +115,35 @@ Select `stores=chrome`, `edge`, or `firefox` when only that store needs an
 upload. `chrome=update` and `edge=update` upload without submitting, allowing
 dashboard edits first. `release` uploads and submits for review.
 
+### Packed Chrome updates
+
+Regular Chrome on macOS receives signed updates through the Chrome Web Store.
+After a version is approved and published, Chrome updates the installed
+extension automatically. Self-hosted packages on macOS require a managed
+browser. See [Chrome extension distribution](https://developer.chrome.com/docs/extensions/how-to/distribute).
+
+The existing workflow handles an authorized production update using
+`stores=chrome` and `chrome=release`. It uses the publisher's configured
+OAuth credentials. Check the `chrome` job in `credential-health.yml` before
+a release and confirm the published version after store review.
+
+For recurring signed tests, use a separate **private beta** with trusted
+testers. Create the item and publish its first version through the developer
+dashboard. Give the extension a `BETA` suffix and identify it as a test build
+in the listing. Once testers install that item, later approved versions
+update in place. Private items also go through review.
+[Chrome beta distribution](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution)
+and [API setup](https://developer.chrome.com/docs/webstore/api).
+
+The same publisher OAuth credentials can target the beta item under that
+publisher. Build the beta ZIP with an increased manifest version, verify
+the target with `store-publish chrome status --item "$SAVEMEDIA_BETA_ITEM_ID"`,
+and use the explicit beta ID and ZIP for an authorized submission.
+
+```sh
+bunx store-publish chrome release --item "$SAVEMEDIA_BETA_ITEM_ID" --zip "$SAVEMEDIA_BETA_ZIP"
+```
+
 ### Retrying a partial release
 
 Let the run finish: later store steps still run when an earlier store fails.

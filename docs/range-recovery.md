@@ -39,6 +39,15 @@ original filename and use the browser's normal conflict handling. Different
 movies can have the same duration and similar thumbnail frames, so the
 extension leaves existing downloads on disk.
 
+## When the file page loads and the media request fails
+
+The page and the video can use different hosts. Diagnose the media host on
+the same network with TLS verification enabled. A certificate issued by a
+DNS filter's block-page service means the request reached that service.
+The network operator can confirm the policy and review a suspected false
+positive. SaveMedia needs a verified response from the media host before
+it can offer the file. See [Whalebone's resolver troubleshooting](https://docs.whalebone.io/en/immunity/domain_resolution_analysis.html).
+
 ## Verify locally
 
 Install the workspace dependencies, Playwright Chromium, and `ffprobe`, then run:
