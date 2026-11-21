@@ -477,7 +477,7 @@ test.describe("extension classifies real fixture pages", () => {
     return popup;
   }
 
-  test("saves two different original MOV files back to back through the popup and Alt+S", async ({ request }) => {
+  test("saves original MOV files through the popup and Alt+S after source rotation", async ({ request }) => {
     await clearDownloadHistory();
     const page = await context!.newPage();
     const cdp = await context!.newCDPSession(page);
@@ -504,10 +504,15 @@ test.describe("extension classifies real fixture pages", () => {
         }
         await expect(popup.getByText(name!, { exact: true })).toBeVisible();
         await expect(popup.getByRole("button", { name: "Download", exact: true })).toHaveCount(1);
+        const oldSource = id === "31" ? await page.locator("video").getAttribute("src") : null;
         expect((await request.post(`/file/${id}`)).status()).toBe(204);
         if (id === "31") {
+          expect(oldSource).toBeTruthy();
+          expect((await request.get(oldSource!)).status()).toBe(403);
           await popup.getByRole("button", { name: "Download", exact: true }).click();
           await expect(popup.getByTestId("job-complete")).toBeVisible();
+          expect(await page.locator("video").getAttribute("src")).toBe(oldSource);
+          expect(context!.pages().filter(tab => tab.url() === page.url())).toEqual([page]);
         } else {
           await popup.close();
           popup = undefined;

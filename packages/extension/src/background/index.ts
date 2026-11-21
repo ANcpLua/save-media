@@ -16,6 +16,7 @@ import type {
   PopupToBackgroundMessage,
 } from "../types/messages";
 import { createRouter } from "./router";
+import { refreshDirectSource } from "./refresh-direct";
 import { saveVerifiedDownload } from "./browser-download";
 import { createCaptureHandler } from "./capture";
 import { createDiagnosticFetch } from "./diagnostic-fetch";
@@ -62,6 +63,11 @@ router = createRouter({
     download: opts => saveVerifiedDownload(chrome.downloads, opts as chrome.downloads.DownloadOptions),
   },
   ensureEngineHost,
+  refreshDirectSource: (descriptor, signal) => refreshDirectSource({
+    tabs: chrome.tabs,
+    discover: (tabId, pageUrl) => discoverPageMediaForTab(downloadBestDeps, tabId, pageUrl, pageUrl),
+    list: tabId => router.listDescriptors(tabId),
+  }, descriptor, signal),
   releaseBlob: blobUrl => {
     if (firefoxEngineHost) URL.revokeObjectURL(blobUrl);
     else chrome.runtime.sendMessage({ type: "release-output", blobUrl } satisfies BackgroundToEngineMessage,

@@ -222,7 +222,7 @@ async function probeDeclaredBytes(deps: CaptureDeps, url: string, signal: AbortS
  * `content-length`. An unknown (`*`) or unparsable total yields null —
  * the size stays unknown rather than wrong.
  */
-function declaredTotalBytes(headers: Readonly<Record<string, string>>): number | null {
+export function declaredTotalBytes(headers: Readonly<Record<string, string>>): number | null {
   const contentRange = headers["content-range"];
   const raw = contentRange === undefined
     ? headers["content-length"]

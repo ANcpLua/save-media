@@ -28,6 +28,15 @@ A server that serves a full response can instead be read as one stream.
 Both paths enforce the browser's 2 GiB output limit, including when the server
 omits a length. Cancellation discards the in-memory result.
 
+If a previously verified direct URL returns HTTP 403 during a save,
+SaveMedia can retry once. A stable entry URL follows the site's redirect
+again. For a single named file with an expiring URL, the extension lets
+Chrome open the same file page in a temporary background tab. It retries
+only when that page exposes one fresh address for the same resource path
+and file parameters, with the same filename, container and byte count.
+The original tab carries on and Chrome closes the temporary tab. The
+extension relies on Chrome's ordinary session, resolver and TLS checks.
+
 MP4 and QuickTime verification walks the top-level boxes and requires movie
 metadata and media data. Modern QuickTime uses the `qt  ` file type. Legacy
 QuickTime can use the same atom structure without a file-type box. WebM and
@@ -64,19 +73,20 @@ before it can offer the file. See [Whalebone's resolver troubleshooting](https:/
 
 ## Verify locally
 
-Install the workspace dependencies, Playwright Chromium, `ffprobe` and
-`openssl` to run the focused checks.
+Install the workspace dependencies, Playwright Chromium and `ffprobe` to run
+the focused check.
 
 ```sh
 bun install --frozen-lockfile
 (cd packages/extension && bunx playwright install chromium)
 bun run build
-bun run --filter @savemedia/extension test:e2e:chromium -g 'original MOV files|during a MOV save|range-only|untrusted and restricted'
+bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'after source rotation'
 ```
 
 The Chromium test saves two distinct local movies in one tab using the popup
-and then Alt+S. It changes each media destination after discovery and checks
-the original filename, bytes, and video track on disk. The separate failure
+and then Alt+S. The first source appears after the popup opens and expires
+after discovery. The second source changes its redirect destination. The
+test checks the original filename, bytes and video track on disk. Separate failure
 cases return HTML or a 69-byte JSON response during saving and check for
 visible feedback and an empty download list. The movies come from FFmpeg's
 test pattern and color bars with a generated tone. The color bars fixture's

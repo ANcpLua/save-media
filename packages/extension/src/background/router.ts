@@ -48,8 +48,16 @@ export interface RouterDeps {
     download: (opts: { url: string; filename: string; conflictAction?: string }) => Promise<number>;
   };
   readonly ensureEngineHost: () => Promise<void>;
+  readonly refreshDirectSource?: (descriptor: StreamDescriptor, signal: AbortSignal) => Promise<StreamDescriptor | null>;
   readonly releaseBlob?: (url: string) => void;
   readonly logger?: Logger;
+}
+
+interface ActiveJob {
+  readonly descriptor: StreamDescriptor;
+  readonly choice: UserChoice;
+  readonly plan: JobPlan | null;
+  refresh?: AbortController;
 }
 
 export type BestDownloadOutcome =
@@ -59,7 +67,7 @@ export type BestDownloadOutcome =
 
 export interface Router {
   readonly tabs: Map<number, TabState>;
-  readonly jobs: Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>;
+  readonly jobs: Map<StreamDescriptor["id"], ActiveJob>;
   readonly addDescriptor: (tabId: number, descriptor: StreamDescriptor) => boolean;
   readonly listDescriptors: (tabId: number) => readonly StreamDescriptor[];
   readonly setDiscoveryScope: (tabId: number, pageUrl: string, urls: readonly string[]) => void;
@@ -78,7 +86,7 @@ export interface Router {
 
 export function createRouter(deps: RouterDeps): Router {
   const tabs = new Map<number, TabState>();
-  const jobs = new Map<StreamDescriptor["id"], { descriptor: StreamDescriptor; choice: UserChoice; plan: JobPlan | null }>();
+  const jobs = new Map<StreamDescriptor["id"], ActiveJob>();
   const statuses = new Map<string, JobStatus>();
 
   function getTab(tabId: number): TabState {
@@ -464,9 +472,33 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
     if (msg.type === "failed") {
+      let { error } = msg;
+      const job = jobs.get(msg.streamId);
+      if (job?.plan?.kind === "direct" && !job.refresh && deps.refreshDirectSource
+        && error.code === "access_denied" && error.phase === "direct" && error.httpStatus === 403) {
+        const controller = new AbortController();
+        job.refresh = controller;
+        const phase = "Refreshing video source";
+        statuses.set(msg.streamId, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: phase });
+        const progress: BackgroundToPopupMessage = {
+          type: "job-progress", streamId: msg.streamId, bytesWritten: 0, bytesTotal: null, phase,
+        };
+        deps.runtime.sendMessage(progress);
+        const source = await deps.refreshDirectSource(job.descriptor, controller.signal).catch(() => null);
+        if (controller.signal.aborted) {
+          error = { code: "user_cancelled", severity: "terminal", bytesDiscarded: 0 };
+        } else if (source) {
+          const descriptor = { ...source, id: msg.streamId, tabId: job.descriptor.tabId };
+          const engineMsg: BackgroundToEngineMessage = {
+            type: "start-job", streamId: msg.streamId, descriptor, choice: job.choice,
+          };
+          deps.runtime.sendMessage(engineMsg);
+          return null;
+        }
+      }
       jobs.delete(msg.streamId);
-      statuses.set(msg.streamId, { phase: "failed", error: msg.error });
-      return { type: "job-failed", streamId: msg.streamId, error: msg.error };
+      statuses.set(msg.streamId, { phase: "failed", error });
+      return { type: "job-failed", streamId: msg.streamId, error };
     }
     return null;
   }
@@ -487,7 +519,9 @@ export function createRouter(deps: RouterDeps): Router {
       return { ok: true };
     }
     if (msg.type === "cancel") {
-      if (jobs.has(msg.streamId)) {
+      const job = jobs.get(msg.streamId);
+      if (job) {
+        job.refresh?.abort();
         const engineMsg: BackgroundToEngineMessage = { type: "cancel-job", streamId: msg.streamId };
         deps.runtime.sendMessage(engineMsg);
       }

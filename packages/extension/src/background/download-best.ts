@@ -5,6 +5,7 @@ import {
   type BackgroundToPopupMessage,
   type BridgeToBackgroundMessage,
   type ContentDiscoveryResponse,
+  type DiscoveredMedia,
   type HotkeyFeedbackOutcome,
   type LocalJobView,
 } from "../types/messages";
@@ -67,7 +68,8 @@ export async function discoverPageMediaForTab(
   deps: Pick<DownloadBestDeps, "tabs" | "runtime" | "handleCapture" | "router">,
   tabId: number,
   fallbackPageUrl: string,
-): Promise<void> {
+  expectedPageUrl?: string,
+): Promise<readonly DiscoveredMedia[] | null> {
   const request: BackgroundToContentMessage = { type: "discover-page-media" };
   const response = await new Promise<ContentDiscoveryResponse | null>(resolve => {
     deps.tabs.sendMessage(tabId, request, resp => {
@@ -79,8 +81,9 @@ export async function discoverPageMediaForTab(
     });
   });
 
-  if (!response) return;
+  if (!response) return null;
   const pageUrl = response.pageUrl || fallbackPageUrl;
+  if (expectedPageUrl !== undefined && response.pageUrl !== expectedPageUrl) return null;
   const discovered = response.media ?? response.urls.map(url => ({ url }));
   // New bridges return only the main player's sources. Scope both the popup
   // and the hotkey to them, including when previews were captured earlier.
@@ -99,6 +102,7 @@ export async function discoverPageMediaForTab(
       },
     });
   }
+  return discovered;
 }
 
 export async function downloadBestForActiveTab(deps: DownloadBestDeps): Promise<void> {

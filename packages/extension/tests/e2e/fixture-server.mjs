@@ -234,8 +234,9 @@ const quickTimeFiles = new Map([
 
 function serveFilePageMedia(req, res, path) {
   if (path === "/file-info/31") {
+    const { generation } = quickTimeFiles.get("31");
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      .end(JSON.stringify({ url: "/file/31" }));
+      .end(JSON.stringify({ url: `/signed-movie.mov?file=31&token=${generation}` }));
     return true;
   }
   const entry = /^\/file\/(31|32)$/.exec(path)?.[1];
@@ -252,16 +253,19 @@ function serveFilePageMedia(req, res, path) {
     }
     return true;
   }
-  const match = /^\/file-media\/(31|32)\/(\d+)$/.exec(path);
-  if (match) {
-    const item = quickTimeFiles.get(match[1]);
-    if (item.generation !== Number(match[2])) {
+  const redirectTarget = /^\/file-media\/(31|32)\/(\d+)$/.exec(path);
+  const signed = path === "/signed-movie.mov" ? new URL(req.url, "http://localhost").searchParams : null;
+  const id = redirectTarget?.[1] ?? signed?.get("file");
+  const version = redirectTarget?.[2] ?? signed?.get("token");
+  const item = quickTimeFiles.get(id);
+  if (item) {
+    if (String(item.generation) !== version) {
       res.writeHead(403).end();
     } else {
       // Full response with no range validator. The URL has no file suffix.
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
-        "Content-Disposition": match[1] === "32"
+        "Content-Disposition": id === "32"
           ? `attachment; filename*=UTF-8'en'${encodeURIComponent(item.name)}`
           : "attachment; filename=\"\"; filename*=UTF-8''",
         "Content-Length": item.body.length,
