@@ -1,4 +1,4 @@
-import type { BestDownloadOutcome } from "./router";
+import type { BestDownloadOutcome, NamedFile } from "./router";
 import {
   MAIN_BRIDGE_TAG,
   type BackgroundToContentMessage,
@@ -38,7 +38,7 @@ export interface DownloadBestDeps {
     readonly sendMessage: (msg: BackgroundToPopupMessage, cb?: () => void) => void;
   };
   readonly router: {
-    readonly startBestDownload: (tabId: number) => Promise<BestDownloadOutcome>;
+    readonly startBestDownload: (tabId: number, file?: NamedFile) => Promise<BestDownloadOutcome>;
     readonly setDiscoveryScope: (tabId: number, pageUrl: string, urls: readonly string[]) => void;
   };
   readonly handleCapture: (tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>;
@@ -137,8 +137,10 @@ export async function downloadBestForTab(
 ): Promise<void> {
   const discovery = await discoverPageMediaForTab(deps, tabId, fallbackPageUrl, fromPopup ? fallbackPageUrl : undefined);
   if (fromPopup && !discovery) return;
-  let outcome = await deps.router.startBestDownload(tabId);
   const offer = discovery?.fileDownload;
+  let outcome = offer
+    ? await deps.router.startBestDownload(tabId, { pageUrl: discovery.pageUrl, filename: offer.filename })
+    : await deps.router.startBestDownload(tabId);
   if (offer && (outcome.kind === "no-media" || (outcome.kind === "failed" && outcome.duringDiscovery))) {
     if (!fromPopup) deps.showHotkeyFeedback(tabId, "preparing", "Checking the file link");
     await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, null);
@@ -185,9 +187,24 @@ export async function downloadBestForTab(
   deps.runtime.sendMessage(msg, () => undefined);
 }
 
-async function startFilePageDownload(
+type FilePageResult = Extract<BestDownloadOutcome, { kind: "started" }> | { problem: FileSaveProblem } | null;
+const pendingFileLinks = new Map<string, Promise<FilePageResult>>();
+
+function startFilePageDownload(
   deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer,
-): Promise<Extract<BestDownloadOutcome, { kind: "started" }> | { problem: FileSaveProblem } | null> {
+): Promise<FilePageResult> {
+  // A popup click and a shortcut can overlap before either has a stream ID.
+  const key = JSON.stringify([tabId, pageUrl, offer.filename, offer.linkedPage]);
+  const pending = pendingFileLinks.get(key);
+  if (pending) return pending;
+  const starting = resolveAndStartFileDownload(deps, tabId, pageUrl, offer).finally(() => pendingFileLinks.delete(key));
+  pendingFileLinks.set(key, starting);
+  return starting;
+}
+
+async function resolveAndStartFileDownload(
+  deps: DownloadBestDeps, tabId: number, pageUrl: string, offer: FileDownloadOffer,
+): Promise<FilePageResult> {
   let source = await deps.generateDownload?.(tabId, pageUrl, offer);
   if (!source) return { problem: describeFileSaveProblem(offer.filename, "download link") };
 
@@ -197,7 +214,7 @@ async function startFilePageDownload(
     // A passive scan may have changed scope while the probe was in flight.
     // Select the address actually issued by the site's download control.
     deps.router.setDiscoveryScope(tabId, pageUrl, [source.url]);
-    const outcome = await deps.router.startBestDownload(tabId);
+    const outcome = await deps.router.startBestDownload(tabId, { pageUrl, filename: offer.filename });
     if (outcome.kind === "started") return outcome;
 
     const error = outcome.kind === "failed" ? outcome.error : undefined;

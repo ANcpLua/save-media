@@ -28,6 +28,11 @@ sandboxed frame. The extension passes the resulting navigation address to
 the direct-file verifier and keeps the original tab open. Chrome follows the
 HTTP redirects and applies its usual certificate checks.
 
+Overlapping saves of a named file in the same tab share its link lookup.
+Once the transfer starts, another click or shortcut on that file joins the
+active job even if the site rotates its URL. After completion the user can
+explicitly save another copy.
+
 If Chrome reports a certificate rejection while probing a generated link,
 SaveMedia asks the same named file's Download control for another link once.
 It can probe an HTTPS destination with a different host and the same file
@@ -78,9 +83,8 @@ downloads appear above the collapsed **Unavailable sources** section.
 
 A failed save on a named file page stays visible next to the file when the
 popup reopens, including after an Alt+S attempt. The tab holds the result
-until a new save or page load. **Technical details** can copy the build,
-save stage, and available browser error for a report. The report omits the
-file URL, request parameters, and filename.
+until a new save or page load. The named file row shows the reason and a
+retry button.
 
 Chrome uses its configured resolver for both the page and the extension's
 requests. Chrome's Secure DNS setting can select an encrypted resolver on
@@ -111,8 +115,7 @@ The redirect check opens a named file page with an unavailable player source.
 It uses the popup to resolve the linked download page and renew its first
 expired address, then Alt+S on a second page. The check compares both output
 filenames and every byte. The certificate fixture checks that a named file's
-save failure remains visible when the popup reopens and that its report
-contains the browser error without the request parameters.
+save failure remains visible when the popup reopens.
 
 The source-rotation check saves two distinct local movies in one tab using the popup
 and then Alt+S. The first source appears after the popup opens and expires

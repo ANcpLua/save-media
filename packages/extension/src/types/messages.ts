@@ -100,7 +100,6 @@ export interface FileSaveProblem {
   readonly title: string;
   readonly body: string;
   readonly code: string;
-  readonly technicalDetails?: string;
 }
 
 export interface FileSaveProblemMessage {
@@ -273,7 +272,7 @@ const backgroundToPopupSchema = z.discriminatedUnion("type", [
       bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional(), stage: z.string().optional(), error: record.optional() })).optional() }),
   z.object({ type: z.literal("file-save-problem"), tabId: z.number(), pageUrl: z.string(), problem: z.object({
     filename: z.string(), stage: z.enum(["download link", "file connection", "start download"]),
-    title: z.string(), body: z.string(), code: z.string(), technicalDetails: z.string().optional(),
+    title: z.string(), body: z.string(), code: z.string(),
   }).nullable() }),
   z.object({ type: z.literal("local-status"), settings: record, permissionGranted: z.boolean(), jobs: z.array(z.unknown()) }),
   z.object({ type: z.literal("local-job"), job: localJobViewSchema }),

@@ -14,9 +14,6 @@ export function describeFileSaveProblem(
     };
   }
 
-  const { title, body, technicalDetails } = userMessage(error);
-  return {
-    filename, stage, code: error.code, title, body,
-    ...(technicalDetails ? { technicalDetails } : {}),
-  };
+  const { title, body } = userMessage(error);
+  return { filename, stage, code: error.code, title, body };
 }

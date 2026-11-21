@@ -687,18 +687,7 @@ test.describe("extension classifies real fixture pages", () => {
       await popup.close();
       popup = await openPopupFor(page);
       await expect(popup.getByTestId("file-save-problem")).toContainText("Secure connection failed");
-      await popup.getByTestId("file-save-problem").getByText("Technical details").click();
-      await expect(popup.getByTestId("file-save-problem")).toContainText(mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID");
-      // Capture the report without changing the machine's clipboard.
-      await popup.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
-        async writeText(text: string) { document.body.dataset["copiedReport"] = text; },
-      } }));
-      await popup.getByRole("button", { name: "Copy details" }).click();
-      const report = await popup.locator("body").getAttribute("data-copied-report");
-      expect(report).toContain("Stage · file connection");
-      expect(report).toContain("Code · tls_certificate_rejected");
-      expect(report).toContain(mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID");
-      expect(report).not.toContain("not-for-display");
+      await expect(popup.getByTestId("file-save-problem")).not.toContainText("not-for-display");
       await popup.close();
       popup = undefined;
 

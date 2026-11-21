@@ -197,9 +197,6 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
     ? snapshot?.generatedDownloadFilename ?? snapshot?.fileSaveProblem?.filename : undefined;
   const problem = filename && fileDownload !== "preparing" ? snapshot?.fileSaveProblem : null;
   const version = manifestVersion();
-  const details = problem
-    ? [`Stage · ${problem.stage}`, `Code · ${problem.code}`, problem.technicalDetails].filter(Boolean).join("\n")
-    : "";
 
   function downloadFilePage(): void {
     if (tabId === null || !pageUrl || scanning || fileDownload === "preparing") return;
@@ -301,7 +298,6 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
                 <div className="mt-2" data-testid="file-save-problem">
                   <p className="font-medium" role="status">{problem.title}</p>
                   <p className="mt-0.5 text-muted">{problem.body}</p>
-                  <TechnicalDetails details={details} copyText={`SaveMedia ${version}\n${details}`} />
                 </div>
               ) : fileDownload === "unavailable" && (
                 <p className="mt-2 text-muted" role="status">Couldn’t start the download. Try again.</p>

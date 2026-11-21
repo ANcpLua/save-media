@@ -65,6 +65,11 @@ export type BestDownloadOutcome =
   | { readonly kind: "no-media" }
   | { readonly kind: "failed"; readonly streamId: StreamDescriptor["id"]; readonly error: JobError; readonly duringDiscovery?: true };
 
+export interface NamedFile {
+  readonly pageUrl: string;
+  readonly filename: string;
+}
+
 export interface Router {
   readonly tabs: Map<number, TabState>;
   readonly jobs: Map<StreamDescriptor["id"], ActiveJob>;
@@ -77,7 +82,7 @@ export interface Router {
   readonly findDescriptor: (id: StreamDescriptor["id"]) => StreamDescriptor | null;
   readonly clearTab: (tabId: number) => void;
   readonly startDownload: (id: StreamDescriptor["id"], choice: UserChoice) => Promise<JobError | null>;
-  readonly startBestDownload: (tabId: number) => Promise<BestDownloadOutcome>;
+  readonly startBestDownload: (tabId: number, file?: NamedFile) => Promise<BestDownloadOutcome>;
   readonly handleEngineMessage: (msg: EngineToBackgroundMessage) => Promise<BackgroundToPopupMessage | null>;
   readonly handlePopupMessage: (
     msg: PopupToBackgroundMessage,
@@ -348,7 +353,15 @@ export function createRouter(deps: RouterDeps): Router {
     };
   }
 
-  async function startBestDownload(tabId: number): Promise<BestDownloadOutcome> {
+  async function startBestDownload(tabId: number, file?: NamedFile): Promise<BestDownloadOutcome> {
+    if (file) {
+      for (const [streamId, { descriptor }] of jobs) {
+        if (descriptor.tabId === tabId && descriptor.pageUrl === file.pageUrl
+          && descriptor.title === file.filename && descriptor.source.kind === "direct-url") {
+          return { kind: "started", streamId };
+        }
+      }
+    }
     const descriptors = [...listDescriptors(tabId)];
     const descriptor = descriptors
       .filter(isDownloadableCandidate)
