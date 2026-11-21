@@ -80,7 +80,7 @@ async function transfer(input: { endpoint: string; source: DiscoveredMedia; file
     }
   }
   const result = await verifiedDirectFile({kind: "direct", url: file.href, filename: input.filename},
-    () => self.postMessage({progress: true}), new AbortController().signal, fetchFile);
+    (bytesWritten, bytesTotal, stage) => self.postMessage({progress: {bytesWritten, bytesTotal, stage}}), new AbortController().signal, fetchFile);
   self.postMessage(result);
 }
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { StreamDescriptor } from "@savemedia/core";
 import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
 import type { PopupToBackgroundMessage, JobStatus } from "../../types/messages";
-import { REFRESHING_VIDEO_SOURCE } from "../../types/messages";
+import { formatBytes, TransferProgress } from "./TransferProgress";
 import { suggestFilename } from "../../util/filename";
 import { hasDownloadableDemuxedPair, isDownloadableCandidate } from "../../util/downloadable";
 import { formatDuration, type Preview } from "../preview-match";
@@ -48,8 +48,6 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
   const isDownloadable = isDownloadableCandidate(descriptor);
   const error = status?.phase === "failed" ? status.error : undefined;
   const failure = error ? userMessage(error) : null;
-  const activeProgressWidth = status?.phase === "active" ? progressWidth(status) : "30%";
-  const refreshingSource = status?.phase === "active" && status.stage === REFRESHING_VIDEO_SOURCE;
   const readyDirectFile = !status && isDownloadable && descriptor.source.kind === "direct-url" && descriptor.capabilities.directDownload;
   const downloadColor = readyDirectFile || status?.phase === "complete" ? "bg-emerald-400 text-ink"
     : status?.phase === "failed" ? "bg-orange-950 text-orange-200" : "bg-surface-2 text-white";
@@ -182,20 +180,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
         </div>
       )}
 
-      {status && status.phase === "active" && (
-        <div className="mt-2 ml-5" data-testid="progress">
-          <div className="flex items-center justify-between text-muted">
-            <span className={refreshingSource ? "text-orange-300" : undefined}>{status.stage ?? "downloading"}</span>
-            <span>{formatBytes(status.bytesWritten ?? 0)}{status.bytesTotal ? ` / ${formatBytes(status.bytesTotal)}` : ""}</span>
-          </div>
-          <div className="mt-1 h-1 rounded bg-surface-2 overflow-hidden">
-            <div
-              className={`h-full transition-all ${refreshingSource ? "bg-orange-400" : "bg-blue-600"}`}
-              style={{ width: activeProgressWidth }}
-            />
-          </div>
-        </div>
-      )}
+      {status?.phase === "active" && <div className="ml-5"><TransferProgress status={status}/></div>}
 
       {error && failure && (
         <div className="mt-2 ml-5" data-testid="job-error">
@@ -220,7 +205,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
 
       <div className="mt-2 ml-5 flex items-center gap-2">
         {readyDirectFile && <span className="font-medium text-emerald-400" role="status">Ready to save</span>}
-        {status?.phase === "active" ? status.stage !== "finalizing" && (
+        {status?.phase === "active" ? status.stage !== "finalizing" && status.stage !== "Writing to Downloads" && (
           <button
             onClick={cancel}
             className="ml-auto bg-surface-2 hover:bg-neutral-600 text-white px-2.5 py-1 rounded-md text-xs"
@@ -232,7 +217,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
             onClick={download}
             className={`ml-auto inline-flex items-center gap-1 hover:brightness-110 font-medium px-2.5 py-1 rounded-md text-xs ${downloadColor}`}
           >
-            <span aria-hidden="true">⬇</span> {status?.phase === "failed" ? "Retry download" : "Download"}
+            <span aria-hidden="true">⬇</span> {status?.phase === "failed" ? "Retry download" : status?.phase === "complete" ? "Save another copy…" : "Download"}
           </button>
         ) : null}
       </div>
@@ -249,41 +234,6 @@ function outputActionLabel(d: StreamDescriptor): string {
   if (d.protocol === "hls") return "hls";
   if (hasDownloadableDemuxedPair(d)) return "av-merge";
   return "unsupported";
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-function progressWidth(status: JobStatus): string {
-  if (status.bytesTotal && status.bytesTotal > 0) {
-    return `${clampPercent(((status.bytesWritten ?? 0) / status.bytesTotal) * 100)}%`;
-  }
-
-  const stage = status.stage ?? "";
-  const segment = /^segment\s+(\d+)\/(\d+)/i.exec(stage);
-  if (segment) {
-    const current = Number(segment[1]);
-    const total = Number(segment[2]);
-    if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
-      return `${clampPercent((current / total) * 100)}%`;
-    }
-  }
-
-  const percent = /(\d+(?:\.\d+)?)%/.exec(stage);
-  if (percent) {
-    const value = Number(percent[1]);
-    if (Number.isFinite(value)) return `${clampPercent(value)}%`;
-  }
-
-  return "30%";
-}
-
-function clampPercent(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function Row({ label, value }: { readonly label: string; readonly value: string }) {

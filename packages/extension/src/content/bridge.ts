@@ -75,7 +75,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
     return false;
   }
   if (isRecord(msg) && msg.type === "file-save-problem" && msg.pageUrl === location.href && window.top === window) {
-    lastRelay = null;
+    if (msg.problem) lastRelay = null;
     lastFileSave = msg.problem ? { pageUrl: location.href, problem: msg.problem as FileSaveProblem } : null;
     sendResponse({ ok: true });
     return false;

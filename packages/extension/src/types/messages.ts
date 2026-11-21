@@ -96,6 +96,9 @@ export interface PageMediaSnapshot extends FileSaveState {
 export interface FileRelayStatus {
   readonly filename: string;
   readonly phase: "saving" | "saved";
+  readonly stage?: string;
+  readonly bytesWritten?: number;
+  readonly bytesTotal?: number | null;
   readonly savedAs?: string;
 }
 export interface FileRelayStatusMessage {
@@ -298,7 +301,7 @@ const backgroundToPopupSchema = z.discriminatedUnion("type", [
       bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional(), stage: z.string().optional(), error: record.optional() })).optional() }),
   z.object({ type: z.literal("retrying-file-link"), tabId: z.number(), pageUrl: z.string() }),
   z.object({ type: z.literal("file-relay-status"), tabId: z.number(), pageUrl: z.string(),
-    status: z.object({filename: z.string(), phase: z.enum(["saving", "saved"]), savedAs: z.string().optional()}) }),
+    status: z.object({filename: z.string(), phase: z.enum(["saving", "saved"]), savedAs: z.string().optional(), stage: z.string().optional(), bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional()}) }),
   z.object({ type: z.literal("file-save-problem"), tabId: z.number(), pageUrl: z.string(), problem: z.object({
     filename: z.string(), stage: z.enum(["download link", "file connection", "start download"]),
     title: z.string(), body: z.string(), code: z.string(), resourceFingerprint: z.string().optional(),

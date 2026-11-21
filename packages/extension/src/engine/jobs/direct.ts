@@ -10,6 +10,11 @@ import { DIRECT_MEDIA_TYPES, requireDirectVideo, validateDirectBlob } from "../v
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const WORKERS = 4;
 
+function retryStage(retry: Parameters<RetryProgress>[0], subject: string): string {
+  const wait = retry.httpStatus ? ` in ${Math.ceil(retry.delayMs / 1000)}s · HTTP ${retry.httpStatus}` : "";
+  return `Retrying ${subject}${wait} (attempt ${retry.attempt} of ${retry.maxAttempts})`;
+}
+
 export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal): Promise<JobResult> {
   const {blob, filename} = await verifiedDirectFile(plan, onProgress, signal, fetch);
   return {blobUrl: URL.createObjectURL(blob), filename, checksum: ""};
@@ -18,7 +23,7 @@ export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, sig
 export async function verifiedDirectFile(
   plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal, fetchFile: MediaFetch,
 ): Promise<{blob: Blob; filename: string}> {
-  const connecting: RetryProgress = retry => onProgress(0, null, `Retrying connection (${retry.attempt}/${retry.maxAttempts})`);
+  const connecting: RetryProgress = retry => onProgress(0, null, retryStage(retry, "connection"));
   try {
     onProgress(0, null, "probing");
     const probe = await probeMedia(fetchFile, plan.url, signal, connecting);
@@ -58,6 +63,13 @@ async function downloadRanges(url: string, metadata: RangeMetadata, mime: string
   const parts: BlobPart[] = new Array(count);
   let next = 0;
   let received = 0;
+  let lastUpdate = 0;
+  const partial = new Map<number, number>();
+  function bytesInHand(): number {
+    let bytes = received;
+    for (const count of partial.values()) bytes += count;
+    return bytes;
+  }
   onProgress(0, metadata.total, "downloading");
 
   async function worker(): Promise<void> {
@@ -67,11 +79,19 @@ async function downloadRanges(url: string, metadata: RangeMetadata, mime: string
       const start = index * CHUNK_BYTES;
       const end = Math.min(start + CHUNK_BYTES, metadata.total) - 1;
       const bytes = await fetchMediaRange(url, start, end, metadata, rangeSignal, retry => {
-        onProgress(received, metadata.total, `Retrying part ${index + 1}/${count} (${retry.attempt}/${retry.maxAttempts})`);
-      }, fetchFile);
+        partial.delete(index);
+        onProgress(bytesInHand(), metadata.total, retryStage(retry, `part ${index + 1} of ${count}`));
+      }, fetchFile, bytes => {
+        partial.set(index, bytes);
+        if (performance.now() - lastUpdate >= 250) {
+          lastUpdate = performance.now();
+          onProgress(bytesInHand(), metadata.total, "downloading");
+        }
+      });
+      partial.delete(index);
       parts[index] = new Blob([bytes as BlobPart]);
       received += bytes.byteLength;
-      onProgress(received, metadata.total, "downloading");
+      onProgress(bytesInHand(), metadata.total, "downloading");
     }
   }
 
@@ -106,6 +126,7 @@ function downloadFull(url: string, container: OutputContainer, onProgress: Progr
       const head = new Uint8Array(4096);
       let received = 0;
       let lastProgress = 0;
+      let lastUpdate = 0;
       onProgress(0, total, "downloading");
       while (true) {
         attemptSignal.throwIfAborted();
@@ -119,13 +140,15 @@ function downloadFull(url: string, container: OutputContainer, onProgress: Progr
         received += value.byteLength;
         checkSize(received);
         parts.push(value as BlobPart);
-        if (received - lastProgress >= 1024 * 1024) {
+        if (performance.now() - lastUpdate >= 250) {
+          lastUpdate = performance.now();
           lastProgress = received;
           onProgress(received, total, "downloading");
         }
       }
       if (received < head.length) checkContainer(head.subarray(0, received), headers, container);
       if (total !== null && total !== received) throw new RangeRecoveryError("Completed file has the wrong byte count", received < total);
+      if (received !== lastProgress) onProgress(received, total, "downloading");
       return new Blob(parts, { type: DIRECT_MEDIA_TYPES[container] });
     } finally {
       try { await reader?.cancel(); } catch { /* Already consumed or interrupted. */ }

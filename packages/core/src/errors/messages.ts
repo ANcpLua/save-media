@@ -175,7 +175,7 @@ export function userMessage(err: JobError): UserMessage {
     case "server_busy":
       return {
         title: "Server is busy or unstable",
-        body: `The server returned HTTP ${err.httpStatus} during ${err.phase} download after retries. This is not DRM; retry later or try a lower-quality variant if one exists.`,
+        body: `The server is temporarily unavailable (HTTP ${err.httpStatus}). Try again later.`,
         action: { label: "Retry full download", kind: "retry-job" },
       };
 

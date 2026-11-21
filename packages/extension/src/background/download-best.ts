@@ -46,7 +46,7 @@ export interface DownloadBestDeps {
   };
   readonly handleCapture: (tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>;
   readonly generateDownload?: (tabId: number, pageUrl: string, offer: FileDownloadOffer) => Promise<DiscoveredMedia | null>;
-  readonly relayFile?: (tabId: number, pageUrl: string, offer: FileDownloadOffer, source: DiscoveredMedia) => Promise<{saved: string} | {error: string}>;
+  readonly relayFile?: (tabId: number, pageUrl: string, offer: FileDownloadOffer, source: DiscoveredMedia) => Promise<{saved: string} | {error: string} | null>;
   readonly allowRelayForSite?: (pageUrl: string) => Promise<void>;
   readonly relayAllowedForSite?: (pageUrl: string) => Promise<boolean>;
   readonly rememberFileSaveProblem?: (tabId: number, pageUrl: string, problem: FileSaveProblem | null) => Promise<void>;
@@ -145,8 +145,9 @@ export async function downloadBestForTab(
   if (fromPopup && !discovery) return;
   const offer = discovery?.fileDownload;
   let outcome = offer
-    ? await deps.router.startBestDownload(tabId, { pageUrl: discovery.pageUrl, filename: offer.filename })
+    ? await deps.router.startBestDownload(tabId, { pageUrl: discovery.pageUrl, ...offer })
     : await deps.router.startBestDownload(tabId);
+  if (outcome.kind === "skipped") return;
   if (offer && outcome.kind === "failed" && outcome.error.code === "access_denied" && outcome.error.httpStatus !== 403) {
     const problem = describeFileSaveProblem(offer.filename, "file connection", outcome.error);
     await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, problem);
@@ -276,9 +277,8 @@ async function resolveAndStartFileDownload(
   }
   async function saveByRelay(media: DiscoveredMedia): Promise<FilePageResult> {
     if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return null;
-    deps.showHotkeyFeedback(tabId, "retrying", "Saving through the secure relay");
     const result = await deps.relayFile!(tabId, pageUrl, offer, media);
-    if ("saved" in result) return result;
+    if (!result || "saved" in result) return result;
     return {problem: {filename: offer.filename, stage: "file connection", code: "secure_retry_failed",
       title: "File wasn’t saved", body: result.error}};
   }
@@ -293,7 +293,8 @@ async function resolveAndStartFileDownload(
     // A passive scan may have changed scope while the probe was in flight.
     // Select the address actually issued by the site's download control.
     deps.router.setDiscoveryScope(tabId, pageUrl, [source.url]);
-    const outcome = await deps.router.startBestDownload(tabId, { pageUrl, filename: offer.filename });
+    const outcome = await deps.router.startBestDownload(tabId, { pageUrl, ...offer });
+    if (outcome.kind === "skipped") return null;
     if (outcome.kind === "started") return outcome;
 
     const error = outcome.kind === "failed" ? outcome.error : undefined;

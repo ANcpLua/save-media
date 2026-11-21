@@ -138,8 +138,7 @@ describe("DetectedItem — progress + error + complete states", () => {
         />
       </ul>,
     );
-    const bar = screen.getByTestId("progress").querySelector(".bg-blue-600") as HTMLElement | null;
-    expect(bar?.style.width).toBe("75%");
+    expect(screen.getByRole("progressbar", {name: "segment 75/100"}).getAttribute("value")).toBe("75");
   });
 
   it("renders failure with userMessage when failed", () => {

@@ -53,12 +53,28 @@ A site that declines the relay's address can still refuse a transfer.
 Both transports use the same container, range and size checks. A scoped
 worker holds one transfer in memory. Chrome writes the verified blob under
 the original filename and reports completion before the popup shows **Saved**.
+The popup shows connection, transfer, verification and disk-write stages.
+The transfer bar uses bytes held from the current attempts. Retried ranges
+discard their partial counts. An unknown total shows bytes received and an
+indeterminate bar. Closing the popup leaves the job running. Reopening it
+reads the background job state.
+
+SaveMedia records a hashed file identity in browser-session storage only
+after Chrome reports completion. The named file page identifies a file across
+link renewal and relay fallback. For other media, the source and rendition
+identify the selection. Repeating Download or Alt+S asks for confirmation.
+The answer applies to one save. The existing Downloads file may have been
+moved or deleted since the first save.
+
 A build without a relay endpoint retains the direct **Download anyway** retry.
 
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
 chunks. Each chunk uses `If-Range` and checks its offsets, byte count, and
 validator. Network errors and truncated chunks get bounded retries.
+Transient HTTP responses use exponential backoff. A Retry-After of up to 30
+seconds sets the minimum wait. A longer wait ends the attempt and lets the
+user come back later.
 A server that serves a full response can instead be read as one stream.
 Both paths enforce the browser's 2 GiB output limit, including when the server
 omits a length. Cancellation discards the in-memory result.
@@ -95,7 +111,9 @@ The page and the video can use different hosts. When the browser supplies
 a diagnostic during discovery, the popup shows a short reason such as
 **Secure connection failed** and puts the host and browser error under **Technical
 details**. Alt+S shows the short reason if no save can start. Available
-downloads appear above the collapsed **Unavailable sources** section.
+downloads on multi-source pages appear above the collapsed **Unavailable
+sources** section. A named file page shows the current save state in its
+own row. A rejected discovery route disappears when the transfer starts.
 
 A failed save on a named file page stays visible next to the file when the
 popup reopens, including after an Alt+S attempt. The tab holds the result
@@ -137,7 +155,11 @@ node packages/extension/scripts/smoke-relay.mjs packages/extension/dist-chrome
 The focused check uses Playwright Chromium, OpenSSL and two project-owned
 MOV files. It gives the isolated browser profile an untrusted local TLS route
 to the fixture host. The relay resolves that host independently. The check
-drives Download and Alt+S and compares both saved files with the originals.
+drives Download and Alt+S, checks progress, reopens the page and popup, cancels
+a repeat save and explicitly confirms another. It compares files on disk with
+the originals. A local server also returns one HTTP 503 with Retry-After and
+then streams a MOV without a length. The popup must recover automatically and
+display bytes received while its progress bar remains indeterminate.
 Only the browser profile created for this check uses the simulated bad route.
 
 Install the workspace dependencies, Playwright Chromium and `ffprobe` to run

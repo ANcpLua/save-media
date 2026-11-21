@@ -8,6 +8,7 @@ export interface RangeRetry {
   readonly attempt: number;
   readonly maxAttempts: number;
   readonly delayMs: number;
+  readonly httpStatus?: number;
 }
 export type RetryProgress = (retry: RangeRetry) => void;
 
@@ -42,7 +43,7 @@ export interface RangeMetadata {
 }
 
 export class RangeRecoveryError extends Error {
-  constructor(message: string, readonly retryable = false, readonly status?: number) {
+  constructor(message: string, readonly retryable = false, readonly status?: number, readonly retryAfterMs?: number) {
     super(message);
     this.name = "RangeRecoveryError";
   }
@@ -106,7 +107,10 @@ export function checkResponseStatus(response: ProbeResponse, requestedUrl: strin
     throw new InsecureMediaRedirect("The HTTPS file link redirected to HTTP");
   }
   if (response.status >= 200 && response.status < 300) return;
-  throw new RangeRecoveryError(`HTTP ${response.status}`, response.status === 408 || response.status === 429 || response.status >= 500, response.status);
+  const header = responseHeaders(response)["retry-after"];
+  const retryAfter = header && /^\d+$/.test(header) ? Number(header) * 1000 : header ? Date.parse(header) - Date.now() : NaN;
+  throw new RangeRecoveryError(`HTTP ${response.status}`, response.status === 408 || response.status === 429 || response.status >= 500,
+    response.status, Number.isFinite(retryAfter) ? Math.max(0, retryAfter) : undefined);
 }
 
 /** Retry the whole operation, including body reads, not just response headers. */
@@ -127,6 +131,8 @@ export async function recoverRequest<T>(
       timer = setTimeout(() => controller.abort(new DOMException("Media request timed out", "TimeoutError")), 45_000);
     };
     receivedBytes();
+    let delayMs = Math.min(attempt * 150, 1_000);
+    let httpStatus: number | undefined;
     try {
       return await operation(controller.signal, receivedBytes);
     } catch (error) {
@@ -138,12 +144,18 @@ export async function recoverRequest<T>(
       const retryable = error instanceof RangeRecoveryError || error instanceof TypeError
         || (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name));
       if (!retryable || attempt === attempts) throw error;
+      if (error instanceof RangeRecoveryError && error.status) {
+        httpStatus = error.status;
+        // Honor a busy server's wait. If it exceeds our automatic retry window,
+        // end the attempt instead of making an early request.
+        if ((error.retryAfterMs ?? 0) > 30_000) throw error;
+        delayMs = Math.max(error.retryAfterMs ?? 0, Math.min(1000 * 2 ** (attempt - 1), 8_000));
+      }
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
     }
-    const delayMs = Math.min(attempt * 150, 1_000);
-    onRetry?.({ attempt: attempt + 1, maxAttempts: attempts, delayMs });
+    onRetry?.({ attempt: attempt + 1, maxAttempts: attempts, delayMs, ...(httpStatus ? {httpStatus} : {}) });
     await delay(delayMs, signal);
   }
 }
@@ -158,7 +170,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /** Prefix reads stop at the limit even when a server ignores Range. */
-export async function readBytes(response: ProbeResponse, limit: number, exact: boolean): Promise<Uint8Array> {
+export async function readBytes(response: ProbeResponse, limit: number, exact: boolean, onBytes?: (bytes: number) => void): Promise<Uint8Array> {
   let bytes: Uint8Array;
   if (!response.body) {
     // Only for body-less adapters/test doubles. Browser fetch streams bodies.
@@ -176,6 +188,7 @@ export async function readBytes(response: ProbeResponse, limit: number, exact: b
         const chunk = value.subarray(0, limit - total);
         chunks.push(chunk);
         total += chunk.byteLength;
+        onBytes?.(total);
         if (!exact && total === limit) break;
       }
     } finally {
@@ -234,9 +247,9 @@ export async function probeMedia(
 
 export async function fetchMediaRange(
   url: string, start: number, end: number, metadata: RangeMetadata, signal: AbortSignal,
-  onRetry?: RetryProgress, fetchFile: MediaFetch = fetch,
+  onRetry?: RetryProgress, fetchFile: MediaFetch = fetch, onBytes?: (bytes: number) => void,
 ): Promise<Uint8Array> {
-  return recoverRequest(async attemptSignal => {
+  return recoverRequest(async (attemptSignal, receivedBytes) => {
     const response = await fetchFile(url, {
       credentials: "include", cache: "no-store", signal: attemptSignal,
       headers: { range: `bytes=${start}-${end}`, "if-range": metadata.validator },
@@ -248,7 +261,10 @@ export async function fetchMediaRange(
       validateRange(headers, start, end, metadata.total);
       const validator = headers[metadata.validatorHeader];
       if (validator !== undefined && validator !== metadata.validator) throw new RangeRecoveryError("File validator changed during download");
-      return await readBytes(response, end - start + 1, true);
+      return await readBytes(response, end - start + 1, true, bytes => {
+        receivedBytes();
+        onBytes?.(bytes);
+      });
     } finally {
       try { await response.body?.cancel(); } catch { /* already consumed */ }
     }

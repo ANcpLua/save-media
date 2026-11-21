@@ -18,7 +18,9 @@ import type {
   PopupToBackgroundMessage,
 } from "../types/messages";
 import { relayUrl } from "../engine/relay-config";
-import { saveThroughRelay } from "./save-through-relay";
+import type { FileDownloadOffer } from "../types/messages";
+import { answerRepeat, dismissRepeats, namedFileIdentity, repeatPrompt, reserveSave, savedThisSession, stableAddress } from "./session-saves";
+import { clearRelayStatus, relaySnapshot, saveThroughRelay } from "./save-through-relay";
 import { observeFileLink } from "./observe-file-link";
 import { createRouter } from "./router";
 import { refreshDirectSource } from "./refresh-direct";
@@ -68,6 +70,20 @@ router = createRouter({
     download: opts => saveVerifiedDownload(chrome.downloads, opts as chrome.downloads.DownloadOptions),
   },
   ensureEngineHost,
+  reserveSave: async (descriptor, choice, named) => {
+    const {tabId, pageUrl, source} = descriptor;
+    if (source.kind === "direct-url") {
+      const offer = named ?? (await chrome.tabs.sendMessage(tabId,
+        {type: "file-save-state", pageUrl}, {frameId: 0}).catch(() => null))?.fileDownload;
+      if (offer && (offer.filename === descriptor.title || offer.filename === choice.filename)) {
+        return reserveSave(namedFileIdentity(pageUrl, offer), tabId, pageUrl, offer.filename);
+      }
+    }
+    const url = source.kind === "direct-url" ? source.url :
+      source.kind === "hls-manifest" || source.kind === "dash-manifest" ? source.manifestUrl : source.elementSrc;
+    return reserveSave([source.kind, stableAddress(url ?? pageUrl),
+      stableAddress(choice.variantId ?? ""), stableAddress(choice.audioRenditionId ?? "")], tabId, pageUrl, choice.filename);
+  },
   refreshDirectSource: (descriptor, signal) => refreshDirectSource({
     tabs: chrome.tabs,
     discover: async (tabId, pageUrl) => (await discoverPageMediaForTab(downloadBestDeps, tabId, pageUrl, pageUrl, true))?.media ?? null,
@@ -181,6 +197,7 @@ const downloadBestDeps: DownloadBestDeps = {
       async () => await isOnPage(tabId, pageUrl) && !router.listDescriptors(tabId).some(d => d.drm)),
   } : {}),
   rememberFileSaveProblem: async (tabId, pageUrl, problem) => {
+    if (problem) clearRelayStatus(tabId, pageUrl);
     const msg = { type: "file-save-problem", tabId, pageUrl, problem } satisfies BackgroundToPopupMessage;
     await chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }).catch(() => undefined);
     chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError);
@@ -231,9 +248,17 @@ function clearTab(tabId: number): void {
   handleCapture.clearTab(tabId);
   router.clearTab(tabId);
 }
-chrome.tabs.onRemoved.addListener(clearTab);
+chrome.tabs.onRemoved.addListener(tabId => {
+  clearTab(tabId);
+  dismissRepeats(tabId);
+  clearRelayStatus(tabId);
+});
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === "loading") clearTab(tabId);
+  if (info.url) {
+    dismissRepeats(tabId);
+    if (!relaySnapshot(tabId, info.url)) clearRelayStatus(tabId);
+  }
 });
 
 registerNetworkCapture(handleCapture);
@@ -262,6 +287,22 @@ chrome.runtime.onMessage.addListener((
   sender,
   sendResponse,
 ) => {
+  if (msg && typeof msg === "object" && "type" in msg) {
+    const request = msg as {type: unknown; tabId?: number; pageUrl?: string; id?: string; allow?: boolean; offer?: FileDownloadOffer};
+    const popup = sender.id === chrome.runtime.id && sender.url?.split(/[?#]/, 1)[0] === chrome.runtime.getURL("src/popup/index.html");
+    if (popup && request.type === "current-save-state" && typeof request.tabId === "number" && typeof request.pageUrl === "string") {
+      const {tabId, pageUrl, offer} = request;
+      const state = () => ({prompt: repeatPrompt(tabId, pageUrl), relay: relaySnapshot(tabId, pageUrl)});
+      if (!offer || typeof offer.filename !== "string") { sendResponse(state()); return false; }
+      void savedThisSession(pageUrl, offer).then(saved => sendResponse({...state(), saved}), () => sendResponse(state()));
+      return true;
+    }
+    if (popup && request.type === "answer-repeat-save" && typeof request.id === "string" && typeof request.allow === "boolean") {
+      answerRepeat(request.id, request.allow);
+      sendResponse({ok: true});
+      return false;
+    }
+  }
   if (isBridgeToBackgroundMessage(msg)) {
     if (msg.type === "download-best-hotkey") {
       const tabId = sender.tab?.id;

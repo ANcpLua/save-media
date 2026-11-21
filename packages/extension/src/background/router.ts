@@ -15,6 +15,7 @@ import type {
   DiscoveryFailure,
   JobStatus,
 } from "../types/messages";
+import type { SavePermit } from "./session-saves";
 import type { Logger } from "../util/logger";
 import { REFRESHING_VIDEO_SOURCE } from "../types/messages";
 import { suggestFilename, timestampedPath } from "../util/filename";
@@ -48,6 +49,7 @@ export interface RouterDeps {
   readonly downloads: {
     download: (opts: { url: string; filename: string; conflictAction?: string }) => Promise<number>;
   };
+  readonly reserveSave?: (descriptor: StreamDescriptor, choice: UserChoice, file?: NamedFile) => Promise<SavePermit | null>;
   readonly ensureEngineHost: () => Promise<void>;
   readonly refreshDirectSource?: (descriptor: StreamDescriptor, signal: AbortSignal) => Promise<StreamDescriptor | null>;
   readonly releaseBlob?: (url: string) => void;
@@ -55,6 +57,7 @@ export interface RouterDeps {
 }
 
 interface ActiveJob {
+  readonly permit?: SavePermit;
   readonly descriptor: StreamDescriptor;
   readonly choice: UserChoice;
   readonly plan: JobPlan | null;
@@ -63,10 +66,12 @@ interface ActiveJob {
 
 export type BestDownloadOutcome =
   | { readonly kind: "started"; readonly streamId: StreamDescriptor["id"] }
+  | { readonly kind: "skipped" }
   | { readonly kind: "no-media" }
   | { readonly kind: "failed"; readonly streamId: StreamDescriptor["id"]; readonly error: JobError; readonly duringDiscovery?: true };
 
 export interface NamedFile {
+  readonly linkedPage?: string;
   readonly pageUrl: string;
   readonly filename: string;
 }
@@ -399,7 +404,8 @@ export function createRouter(deps: RouterDeps): Router {
       return { kind: "no-media" };
     }
 
-    const error = await startDownload(descriptor.id, bestDownloadChoice(descriptor));
+    const error = await startDownload(descriptor.id, bestDownloadChoice(descriptor), file);
+    if (error === "skipped") return {kind: "skipped"};
     return error ? { kind: "failed", streamId: descriptor.id, error } : { kind: "started", streamId: descriptor.id };
   }
 
@@ -417,7 +423,7 @@ export function createRouter(deps: RouterDeps): Router {
         && v.segmentRef.segmentUrls.length === 0);
   }
 
-  async function startDownload(id: StreamDescriptor["id"], choice: UserChoice): Promise<JobError | null> {
+  async function startDownload(id: StreamDescriptor["id"], choice: UserChoice, file?: NamedFile): Promise<JobError | "skipped" | null> {
     const descriptor = findDescriptor(id);
     if (!descriptor) {
       return { code: "manifest_404", severity: "terminal", url: "", httpStatus: 0 };
@@ -435,12 +441,15 @@ export function createRouter(deps: RouterDeps): Router {
       }
     }
 
-    jobs.set(id, { descriptor, choice, plan: plan.kind === "refuse" ? null : plan });
+    const permit = await deps.reserveSave?.(descriptor, choice, file);
+    if (permit === null) return "skipped";
+    jobs.set(id, { descriptor, choice, ...(permit ? {permit} : {}), plan: plan.kind === "refuse" ? null : plan });
     statuses.set(id, { phase: "active", bytesWritten: 0, bytesTotal: null, stage: "Starting" });
     try {
       await deps.ensureEngineHost();
     } catch (err) {
       jobs.delete(id);
+      await permit?.finish(false);
       const error: JobError = { code: "engine_job_failed", severity: "terminal", at: "init", detail: err instanceof Error ? err.message : String(err) };
       statuses.set(id, { phase: "failed", error });
       return error;
@@ -465,14 +474,19 @@ export function createRouter(deps: RouterDeps): Router {
       const job = jobs.get(msg.streamId);
       const filename = job && job.plan?.kind !== "direct" ? timestampedPath(msg.filename) : msg.filename;
       try {
+        const writing = {type: "job-progress" as const, streamId: msg.streamId, bytesWritten: 0, bytesTotal: null, phase: "Writing to Downloads"};
+        statuses.set(msg.streamId, {phase: "active", bytesWritten: 0, bytesTotal: null, stage: writing.phase});
+        deps.runtime.sendMessage(writing);
         await deps.downloads.download({
           url: msg.blobUrl,
           filename,
           conflictAction: "uniquify",
         });
+        await job?.permit?.finish(true);
         statuses.set(msg.streamId, { phase: "complete" });
         return { type: "job-complete", streamId: msg.streamId, path: filename };
       } catch (err) {
+        await job?.permit?.finish(false);
         const error = saveFailure(err, filename);
         statuses.set(msg.streamId, { phase: "failed", error });
         return {
@@ -511,6 +525,7 @@ export function createRouter(deps: RouterDeps): Router {
         }
       }
       jobs.delete(msg.streamId);
+      await job?.permit?.finish(false);
       statuses.set(msg.streamId, { phase: "failed", error });
       return { type: "job-failed", streamId: msg.streamId, error };
     }
@@ -525,7 +540,7 @@ export function createRouter(deps: RouterDeps): Router {
     }
     if (msg.type === "download") {
       const err = await startDownload(msg.streamId, msg.choice);
-      if (err) {
+      if (err && err !== "skipped") {
         statuses.set(msg.streamId, { phase: "failed", error: err });
         const failMsg: BackgroundToPopupMessage = { type: "job-failed", streamId: msg.streamId, error: err };
         deps.runtime.sendMessage(failMsg);
@@ -555,7 +570,10 @@ export function createRouter(deps: RouterDeps): Router {
     snapshot,
     findDescriptor,
     clearTab,
-    startDownload,
+    startDownload: async (id, choice) => {
+      const outcome = await startDownload(id, choice);
+      return outcome === "skipped" ? null : outcome;
+    },
     startBestDownload,
     handleEngineMessage,
     handlePopupMessage,

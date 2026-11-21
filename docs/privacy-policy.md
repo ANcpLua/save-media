@@ -26,6 +26,15 @@ AES-128 HLS is decrypted locally with the browser's own WebCrypto, and only
 when the server hands the key to the page in the clear; the key is used in
 memory for that download and is never stored or transmitted.
 
+## Repeat downloads
+
+After the browser confirms a SaveMedia download, the extension keeps a local
+fingerprint for the rest of that browser session. It uses this fingerprint to
+ask before saving another copy. The receipt contains a hash and a success
+flag. Closing the browser or reloading the extension clears it. SaveMedia
+checks the status of its own download by ID. Duplicate detection requires
+no folder scan, cookies or access to other downloads.
+
 ## Optional secure relay in Chrome builds
 
 When a build includes a secure relay, the confirmation names its hostname.
