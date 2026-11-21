@@ -2,7 +2,7 @@
 // message guards local so the bridge does not pull in the zod runtime.
 import { declaredMediaFilename, discoverPageMedia } from "./discovery";
 import { captureGeneratedDownload, fileDownloadOffer } from "./generated-download";
-import type { DiscoveredMedia, FileSaveProblem, FileSaveState, HotkeyFeedbackOutcome, PageMediaSnapshot } from "../types/messages";
+import type { DiscoveredMedia, FileRelayStatus, FileSaveProblem, FileSaveState, HotkeyFeedbackOutcome, PageMediaSnapshot } from "../types/messages";
 
 export {};
 const BRIDGE_TAG = "__savemedia" as const;
@@ -29,6 +29,7 @@ interface HotkeyFeedbackMessage {
 }
 
 // The page keeps the last attempt across popup closure and service worker sleep.
+let lastRelay: {pageUrl: string; status: FileRelayStatus} | null = null;
 let lastFileSave: { pageUrl: string; problem: FileSaveProblem } | null = null;
 
 window.addEventListener("message", event => {
@@ -67,7 +68,14 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
     sendResponse(window.top === window && msg.pageUrl === location.href ? currentFileSaveState() : null);
     return false;
   }
+  if (isRecord(msg) && msg.type === "file-relay-status" && msg.pageUrl === location.href && window.top === window) {
+    lastRelay = {pageUrl: location.href, status: msg.status as FileRelayStatus};
+    lastFileSave = null;
+    sendResponse({ok: true});
+    return false;
+  }
   if (isRecord(msg) && msg.type === "file-save-problem" && msg.pageUrl === location.href && window.top === window) {
+    lastRelay = null;
     lastFileSave = msg.problem ? { pageUrl: location.href, problem: msg.problem as FileSaveProblem } : null;
     sendResponse({ ok: true });
     return false;
@@ -148,7 +156,8 @@ function pageMediaSnapshot(): PageMediaSnapshot {
 function currentFileSaveState(): FileSaveState {
   const offer = fileDownloadOffer();
   const problem = lastFileSave?.pageUrl === location.href ? lastFileSave.problem : null;
-  return { ...(offer ? { fileDownload: offer } : {}), fileSaveProblem: problem };
+  return { ...(offer ? { fileDownload: offer } : {}), fileSaveProblem: problem,
+    ...(lastRelay?.pageUrl === location.href ? {relayStatus: lastRelay.status} : {}) };
 }
 
 function captureFrame(v: HTMLVideoElement): string | null {

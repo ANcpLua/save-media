@@ -13,6 +13,7 @@ import {
   type LocalJobView,
   type PopupToBackgroundMessage,
 } from "../types/messages";
+import { relayHost } from "../engine/relay-config";
 import { hotkeyErrorDetail } from "./hotkey-jobs";
 import { describeFileSaveProblem } from "./file-save-problem";
 import { renewableResource } from "./refresh-direct";
@@ -45,6 +46,9 @@ export interface DownloadBestDeps {
   };
   readonly handleCapture: (tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>;
   readonly generateDownload?: (tabId: number, pageUrl: string, offer: FileDownloadOffer) => Promise<DiscoveredMedia | null>;
+  readonly relayFile?: (tabId: number, pageUrl: string, offer: FileDownloadOffer, source: DiscoveredMedia) => Promise<{saved: string} | {error: string}>;
+  readonly allowRelayForSite?: (pageUrl: string) => Promise<void>;
+  readonly relayAllowedForSite?: (pageUrl: string) => Promise<boolean>;
   readonly rememberFileSaveProblem?: (tabId: number, pageUrl: string, problem: FileSaveProblem | null) => Promise<void>;
   /**
    * Visible per-tab feedback for the hotkey path. The popup is usually
@@ -155,10 +159,15 @@ export async function downloadBestForTab(
     await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, null);
     const result = await startFilePageDownload(deps, tabId, discovery.pageUrl, offer, { fromPopup });
     if (!result) return;
+    if ("saved" in result) {
+      deps.showHotkeyFeedback(tabId, "complete", result.saved);
+      return;
+    }
     if ("problem" in result) {
       if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, discovery.pageUrl)) return;
       await deps.rememberFileSaveProblem?.(tabId, discovery.pageUrl, result.problem);
-      deps.showHotkeyFeedback(tabId, "failed", `${result.problem.title}. Open SaveMedia for details.`);
+      deps.showHotkeyFeedback(tabId, "failed", result.problem.resourceFingerprint && relayHost
+        ? "Open SaveMedia to try the secure relay." : `${result.problem.title}. Open SaveMedia for details.`);
       return;
     }
     outcome = result;
@@ -196,7 +205,7 @@ export async function downloadBestForTab(
   deps.runtime.sendMessage(msg, () => undefined);
 }
 
-type FilePageResult = Extract<BestDownloadOutcome, { kind: "started" }> | { problem: FileSaveProblem } | null;
+type FilePageResult = Extract<BestDownloadOutcome, { kind: "started" }> | { problem: FileSaveProblem } | { saved: string } | null;
 const pendingFileLinks = new Map<string, Promise<FilePageResult>>();
 
 export async function handleFileConnectionChoice(
@@ -210,6 +219,7 @@ export async function handleFileConnectionChoice(
     return;
   }
   const offer = state?.fileDownload;
+  if (offer?.filename === filename && warning.resourceFingerprint && deps.relayFile) await deps.allowRelayForSite?.(pageUrl);
   const result = offer?.filename === filename && warning.resourceFingerprint
     ? await startFilePageDownload(deps, tabId, pageUrl, offer, { fromPopup: true, expectedFingerprint: warning.resourceFingerprint })
     : { problem: describeFileSaveProblem(filename, "download link") };
@@ -221,6 +231,10 @@ export async function handleFileConnectionChoice(
       : result.problem;
     await deps.rememberFileSaveProblem?.(tabId, pageUrl, problem);
     deps.showHotkeyFeedback(tabId, "failed", problem.title);
+    return;
+  }
+  if ("saved" in result) {
+    deps.showHotkeyFeedback(tabId, "complete", result.saved);
     return;
   }
   deps.trackHotkeyJob?.(result.streamId, tabId);
@@ -260,6 +274,15 @@ async function resolveAndStartFileDownload(
     return { problem: { filename: offer.filename, stage: "download link", code: "https_link_unavailable",
       title: "File wasn’t saved", body: "The site didn’t supply a matching HTTPS link for this file." } };
   }
+  async function saveByRelay(media: DiscoveredMedia): Promise<FilePageResult> {
+    if (deps.tabs.isOnPage && !await deps.tabs.isOnPage(tabId, pageUrl)) return null;
+    deps.showHotkeyFeedback(tabId, "retrying", "Saving through the secure relay");
+    const result = await deps.relayFile!(tabId, pageUrl, offer, media);
+    if ("saved" in result) return result;
+    return {problem: {filename: offer.filename, stage: "file connection", code: "secure_retry_failed",
+      title: "File wasn’t saved", body: result.error}};
+  }
+  if (expectedFingerprint && deps.relayFile) return saveByRelay(source);
   const rejectedHosts = new Set<string>();
   const failedRedirects = new Set<string>();
   const triedUrls = new Set<string>();
@@ -280,6 +303,9 @@ async function resolveAndStartFileDownload(
     const problem = certificate ? { ...failure, resourceFingerprint: fingerprint } : failure;
     const renewableLink = stage === "file connection" && error?.code === "access_denied" && error.httpStatus === 403
       && renewableResource(source.url) !== null;
+    if (certificate && new URL(source.url).protocol === "https:" && deps.relayFile && await deps.relayAllowedForSite?.(pageUrl)) {
+      return saveByRelay(source);
+    }
     if ((!certificate && !renewableLink) || renewals >= MAX_LINK_RENEWALS) return { problem };
 
     const entry = new URL(source.url);

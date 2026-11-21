@@ -14,10 +14,16 @@ function browserTarget(): "chromium" | "firefox" {
 
 export default defineConfig(() => {
   const target = browserTarget();
+  const configured = target === "chromium" ? process.env.SAVEMEDIA_RELAY_URL : undefined;
+  const relay = configured ? new URL(configured) : null;
+  if (relay && (relay.protocol !== "wss:" || relay.username || relay.password || relay.search || relay.hash || !relay.pathname.endsWith("/"))) {
+    throw new Error("SAVEMEDIA_RELAY_URL must be a credential-free wss URL ending with /");
+  }
   return {
     plugins: [react()],
     define: {
       __BROWSER__: JSON.stringify(target),
+      __RELAY_URL__: JSON.stringify(relay?.href ?? ""),
     },
     build: {
       target: "es2022",

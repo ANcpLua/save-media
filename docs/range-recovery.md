@@ -6,8 +6,7 @@ extension. When the browser follows a redirect to the file, SaveMedia keeps
 the entry URL and remembers the observed destination for deduplication. A
 save starts from the entry again so the site's own redirect can choose the
 current destination. Query strings and numeric paths can identify different
-files. Only explicit redirect evidence joins distinct URLs. The extension
-uses the browser's normal access and network settings.
+files. Only explicit redirect evidence joins distinct URLs. Initial discovery uses the browser's normal access and network settings.
 
 Discovery reads at most the first 4 KiB of a candidate and looks for a
 supported container or playlist. Successful status codes, filenames, and
@@ -40,22 +39,21 @@ previously redirected to the rejected host so the site can choose a new
 destination. A repeated failed route, an unrelated file, or three link
 renewals ends automatic recovery. A signed link returning HTTP 403 can also
 be renewed. Explicit login, payment and HTTP 451 responses end the attempt.
-If automatic recovery ends with a certificate rejection, the file row offers
-**Cancel** and **Download anyway**. Confirmation starts another checked attempt.
-The extension reads the current file and warning together from the top frame
-so confirmation can skip scanning players and capturing thumbnails. The tab, page and
-filename must still match. A digest of the file path and stable query
-parameters binds the retry to the original file while allowing the delivery
-host and signature to change. Chrome verifies the connection and SaveMedia
-checks the media bytes as usual. A second certificate rejection shows
-**File wasn’t saved**. Cancel dismisses the prompt.
+On a relay-enabled Chrome build, **Use secure relay** appears after a
+certificate rejection. The confirmation names the relay and grants this site
+permission for the current browser session. Download and Alt+S share that
+permission. A packaged libcurl.js worker fetches the same named file over WSS
+using its bundled certificate authorities. It checks each HTTPS redirect before
+following it. The site still runs its own Download control. When that document
+uses a successful public GET with a single `path` parameter matching the file
+and returns signature fields already present in the generated link, the worker
+renews them on the transfer route. Other generated links are used as supplied.
+A site that declines the relay's address can still refuse a transfer.
 
-The popup shows **Ready to save** in green after a successful direct-file
-probe. **Saved** turns green once the browser reports download completion.
-Orange marks an observed obstacle or an attempt to recover from it. The
-connection warning keeps its orange box and uses red for the failed check
-and the user's **Download anyway** choice. Ordinary redirects run silently.
-These states describe requests and files and make no attribution to a provider.
+Both transports use the same container, range and size checks. A scoped
+worker holds one transfer in memory. Chrome writes the verified blob under
+the original filename and reports completion before the popup shows **Saved**.
+A build without a relay endpoint retains the direct **Download anyway** retry.
 
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
@@ -74,8 +72,8 @@ again. For a single named file with an expiring URL, the extension lets
 Chrome open the same file page in a temporary background tab. It retries
 only when that page exposes one fresh address for the same resource path
 and file parameters, with the same filename, container and byte count.
-The original tab carries on and Chrome closes the temporary tab. The
-extension relies on Chrome's ordinary session, resolver and TLS checks.
+The original tab carries on and Chrome closes the temporary tab. This
+direct retry uses Chrome's ordinary session, resolver and TLS checks.
 
 MP4 and QuickTime verification walks the top-level boxes and requires movie
 metadata and media data. Modern QuickTime uses the `qt  ` file type. Legacy
@@ -104,8 +102,8 @@ popup reopens, including after an Alt+S attempt. The tab holds the result
 until a new save or page load. The named file row shows the reason and a
 retry button.
 
-Chrome uses its configured resolver for both the page and the extension's
-requests. Chrome's Secure DNS setting can select an encrypted resolver on
+Chrome uses its configured resolver for the page and direct requests.
+An approved relay resolves destination hosts for requests made through it. Chrome's Secure DNS setting can select an encrypted resolver on
 devices where the browser permits that choice. The media request still
 validates TLS for the original hostname. See [Chrome's Secure DNS documentation](https://support.google.com/chrome/answer/10468685).
 
@@ -124,6 +122,23 @@ use the same directory. Use **Reload** on that extension and refresh the file
 page to activate the new page scripts. Check a reported connection failure
 with the same Chrome profile and network settings as the original report.
 A save in a browser using a different resolver verifies that route only.
+
+For a relay-enabled preview, supply an operator-authorized Wisp endpoint
+at build time. Only `wss://` endpoints are accepted. The following builds a
+private preview with the library project's documented public demo. Chrome
+needs no companion or DNS configuration. Production needs a supported relay
+with an operator, traffic limits and an appropriate privacy disclosure.
+
+```sh
+SAVEMEDIA_RELAY_URL=wss://wisp.mercurywork.shop/ bun run build
+node packages/extension/scripts/smoke-relay.mjs packages/extension/dist-chrome
+```
+
+The focused check uses Playwright Chromium, OpenSSL and two project-owned
+MOV files. It gives the isolated browser profile an untrusted local TLS route
+to the fixture host. The relay resolves that host independently. The check
+drives Download and Alt+S and compares both saved files with the originals.
+Only the browser profile created for this check uses the simulated bad route.
 
 Install the workspace dependencies, Playwright Chromium and `ffprobe` to run
 the focused check.

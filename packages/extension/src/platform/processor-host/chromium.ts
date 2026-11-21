@@ -7,6 +7,8 @@
  * registers its own runtime.onMessage listener.
  */
 
+import { relayUrl } from "../../engine/relay-config";
+
 const OFFSCREEN_DOCUMENT_PATH = "src/engine/offscreen.html";
 
 let creating: Promise<void> | null = null;
@@ -31,7 +33,7 @@ export async function ensureEngineHost(): Promise<void> {
   }
   creating = chrome.offscreen.createDocument({
     url: OFFSCREEN_DOCUMENT_PATH,
-    reasons: ["BLOBS", "DOM_SCRAPING"] as chrome.offscreen.Reason[],
+    reasons: ["BLOBS", "DOM_SCRAPING", ...(relayUrl ? ["WORKERS"] : [])] as chrome.offscreen.Reason[],
     justification: "Reads the original address from a site's download page and verifies media before saving it.",
   });
   try {

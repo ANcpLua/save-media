@@ -17,6 +17,9 @@ import type {
   FileSaveState,
   PopupToBackgroundMessage,
 } from "../types/messages";
+import { relayUrl } from "../engine/relay-config";
+import { saveThroughRelay } from "./save-through-relay";
+import { observeFileLink } from "./observe-file-link";
 import { createRouter } from "./router";
 import { refreshDirectSource } from "./refresh-direct";
 import { saveVerifiedDownload } from "./browser-download";
@@ -158,14 +161,25 @@ const downloadBestDeps: DownloadBestDeps = {
       let source: DiscoveredMedia | null;
       if (linkedPage && __BROWSER__ === "chromium") {
         await ensureEngineHost();
-        source = await chrome.runtime.sendMessage({ type: "read-linked-download", pageUrl: linkedPage, filename });
+        const generate = () => chrome.runtime.sendMessage({ type: "read-linked-download", pageUrl: linkedPage, filename });
+        source = relayUrl ? await observeFileLink(-1, linkedPage, generate) : await generate();
       } else {
-        source = await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+        const generate = () => chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+        source = relayUrl ? await observeFileLink(tabId, pageUrl, generate) : await generate();
       }
       return source?.filenameHint === filename && typeof source.url === "string"
         && await isOnPage(tabId, pageUrl) ? source : null;
     } catch { return null; }
   },
+  ...(relayUrl ? {
+    relayAllowedForSite: async (pageUrl: string) => {
+      const key = "relay:" + new URL(pageUrl).origin;
+      return (await chrome.storage.session.get(key))[key] === true;
+    },
+    allowRelayForSite: (pageUrl: string) => chrome.storage.session.set({["relay:" + new URL(pageUrl).origin]: true}),
+    relayFile: (tabId, pageUrl, offer, source) => saveThroughRelay(tabId, pageUrl, offer, source,
+      async () => await isOnPage(tabId, pageUrl) && !router.listDescriptors(tabId).some(d => d.drm)),
+  } : {}),
   rememberFileSaveProblem: async (tabId, pageUrl, problem) => {
     const msg = { type: "file-save-problem", tabId, pageUrl, problem } satisfies BackgroundToPopupMessage;
     await chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }).catch(() => undefined);

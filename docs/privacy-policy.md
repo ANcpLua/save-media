@@ -26,6 +26,18 @@ AES-128 HLS is decrypted locally with the browser's own WebCrypto, and only
 when the server hands the key to the page in the clear; the key is used in
 memory for that download and is never stored or transmitted.
 
+## Optional secure relay in Chrome builds
+
+When a build includes a secure relay, the confirmation names its hostname.
+Choosing **Use secure relay** permits fallback for the current site until the
+browser session ends. The relay operator sees the client's IP address, target
+hostnames and ports, timing and transfer volume. The extension verifies the
+origin certificate inside the browser. The HTTPS request path, query,
+signature, response and media bytes remain encrypted through the relay.
+The relay client uses a fresh session without browser cookies. Each completed
+file is written by the browser. Ordinary discovery and direct downloads use
+the browser connection.
+
 ## Optional Local Downloader
 
 The extension includes an optional feature that is off by default. When the
@@ -39,8 +51,8 @@ may, at the user's explicit setting, read the browser's cookie store locally to
 act with the user's own session; those cookies never leave the user's computer
 and are never logged.
 
-The `storage` permission holds only these local settings (on/off, quality,
-cookie source, hotkey fallback). Nothing is synced or transmitted.
+The `storage` permission holds these local settings. Relay-enabled builds
+also remember approved site origins in browser-session storage.
 
 The `declarativeNetRequestWithHostAccess` permission lets the extension's own
 requests for a detected video carry the page's origin as Referer, as the

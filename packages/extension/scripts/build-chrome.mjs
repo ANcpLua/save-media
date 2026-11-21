@@ -21,5 +21,17 @@ await mkdir(out, { recursive: true });
 if (existsSync(buildDir)) await cp(buildDir, out, { recursive: true });
 
 const manifest = JSON.parse(await readFile(resolve(root, "manifest.json"), "utf-8"));
+if (process.env.SAVEMEDIA_RELAY_URL) {
+  manifest.version_name = manifest.version + " secure relay preview";
+  manifest.content_security_policy = { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" };
+  const vendor = resolve(out, "vendor/libcurl");
+  await mkdir(vendor, { recursive: true });
+  await cp(resolve(root, "licenses/GPL-3.0.txt"), resolve(vendor, "COPYING"));
+  await cp(resolve(root, "../../NOTICE"), resolve(out, "NOTICE"));
+  const library = dirname(fileURLToPath(import.meta.resolve("libcurl.js")));
+  for (const file of ["libcurl.mjs", "libcurl.wasm", "LICENSE", "README.md"]) {
+    await cp(resolve(library, file), resolve(vendor, file));
+  }
+}
 await writeFile(resolve(out, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log("chrome build →", out);

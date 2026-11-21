@@ -91,7 +91,18 @@ export function captureGeneratedDownload(expectedFilename: string, offscreen = f
         finish(null);
         return;
       }
-      finish({ url: url.href, filenameHint: expectedFilename });
+      // Correlate a pathname-specific renewal with this document's own fetch,
+      // even when several sandboxed frames share a download origin.
+      const requests = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
+      const signers = new Set(requests.filter(request => {
+        if (request.initiatorType !== "fetch" && request.initiatorType !== "xmlhttprequest") return false;
+        const address = new URL(request.name, pageUrl);
+        return address.protocol === "https:" && address.searchParams.size === 1
+          && address.searchParams.get("path") === url.pathname;
+      }).map(request => request.name));
+      const [signatureRequest] = signers;
+      finish({ url: url.href, filenameHint: expectedFilename,
+        ...(signers.size === 1 && signatureRequest ? {signatureRequest} : {}) });
     }
     navigation.addEventListener("navigate", onNavigate);
     window.addEventListener("pagehide", onPageHide, { once: true });

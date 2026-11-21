@@ -1,3 +1,4 @@
+import { relayHost } from "../engine/relay-config";
 import { useEffect, useRef, useState } from "react";
 import { userMessage, type StreamDescriptor } from "@savemedia/core";
 import { isBackgroundToPopupMessage } from "../types/messages";
@@ -97,7 +98,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   const [failures, setFailures] = useState<readonly DiscoveryFailure[]>(initialFailures);
   const [scanning, setScanning] = useState(false);
   const [snapshot, setSnapshot] = useState<PageMediaSnapshot | null>(null);
-  const [fileDownload, setFileDownload] = useState<"preparing" | "retrying" | "dismissing" | "unavailable" | null>(null);
+  const [fileDownload, setFileDownload] = useState<"preparing" | "retrying" | "relay" | "dismissing" | "unavailable" | null>(null);
   const asWindow = windowTabId() !== null;
 
   useEffect(() => {
@@ -196,7 +197,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   const ranked = rankDescriptors(descriptors, snapshot);
   const filename = ranked.length === 0 && tabId !== null && pageUrl
     ? snapshot?.fileDownload?.filename ?? snapshot?.fileSaveProblem?.filename : undefined;
-  const startingDownload = fileDownload === "preparing" || fileDownload === "retrying";
+  const relayStatus = snapshot?.relayStatus?.filename === filename ? snapshot?.relayStatus : undefined;
+  const startingDownload = fileDownload === "preparing" || fileDownload === "retrying" || fileDownload === "relay" || relayStatus?.phase === "saving";
   const problem = !startingDownload && filename === snapshot?.fileSaveProblem?.filename
     ? snapshot?.fileSaveProblem : null;
   const confirmConnection = problem?.code === "tls_certificate_rejected" && !!problem.resourceFingerprint;
@@ -204,11 +206,12 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   let fileAction = retryAvailable ? "Retry download" : "Download";
   if (fileDownload === "preparing") fileAction = "Preparing download…";
   if (fileDownload === "retrying") fileAction = "Trying the site’s download link…";
+  if (fileDownload === "relay" || relayStatus?.phase === "saving") fileAction = "Saving through secure relay…";
   const version = manifestVersion();
 
   function downloadFilePage(choice?: "retry" | "cancel"): void {
     if (tabId === null || !pageUrl || (!choice && scanning) || startingDownload || fileDownload === "dismissing") return;
-    setFileDownload(choice === "cancel" ? "dismissing" : choice === "retry" ? "retrying" : "preparing");
+    setFileDownload(choice === "cancel" ? "dismissing" : choice === "retry" ? (relayHost ? "relay" : "retrying") : "preparing");
     const msg: PopupToBackgroundMessage = choice && filename
       ? { type: "file-connection-choice", tabId, pageUrl, filename, retry: choice === "retry" }
       : { type: "download-page", tabId, pageUrl };
@@ -224,7 +227,10 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         setFileDownload("unavailable");
       }
       requestSnapshot(tabId, snap => {
-        if (snap && tabIdRef.current === tabId && pageUrlRef.current === pageUrl) setSnapshot(snap);
+        if (snap && tabIdRef.current === tabId && pageUrlRef.current === pageUrl) {
+          setSnapshot(snap);
+          if (snap.relayStatus) setFileDownload(null);
+        }
       });
     });
   }
@@ -248,8 +254,15 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         setStatuses(prev => ({ ...prev, [msg.streamId]: { phase: "failed", error: msg.error } }));
       } else if (msg.type === "retrying-file-link" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
         setFileDownload(current => current === "preparing" ? "retrying" : current);
+      } else if (msg.type === "file-relay-status" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
+        setSnapshot(prev => prev && {...prev, fileSaveProblem: null, relayStatus: msg.status});
+        setFileDownload(null);
       } else if (msg.type === "file-save-problem" && msg.tabId === tabIdRef.current && msg.pageUrl === pageUrlRef.current) {
-        setSnapshot(prev => prev && { ...prev, fileSaveProblem: msg.problem });
+        setSnapshot(prev => {
+          if (!prev) return prev;
+          const { relayStatus: _old, ...rest } = prev;
+          return { ...rest, fileSaveProblem: msg.problem };
+        });
       } else if (msg.type === "descriptors" && msg.tabId === tabIdRef.current) {
         setDescriptors(msg.descriptors);
         setFailures(msg.failures ?? []);
@@ -314,7 +327,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
                     <button type="button" onClick={() => downloadFilePage("cancel")} disabled={fileDownload === "dismissing"}
                       className="rounded-md border border-orange-300/60 px-2.5 py-1">Cancel</button>
                     <button type="button" onClick={() => downloadFilePage("retry")} disabled={fileDownload === "dismissing"}
-                      className="rounded-md border border-red-400 bg-red-950 px-2.5 py-1 font-semibold text-red-100">Download anyway</button>
+                      className="rounded-md border border-red-400 bg-red-950 px-2.5 py-1 font-semibold text-red-100">{relayHost ? "Use secure relay" : "Download anyway"}</button>
                   </div>
                 </div>
               ) : problem ? (
@@ -322,6 +335,8 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
                   <p className={`font-semibold ${downloadIssueText(problem)}`} role="status">{problem.title}</p>
                   <p className="mt-0.5 text-muted">{problem.body}</p>
                 </div>
+              ) : relayStatus?.phase === "saved" && !startingDownload ? (
+                <p className="mt-2 text-green-300" role="status">Saved to Downloads · {relayStatus.savedAs}</p>
               ) : fileDownload === "unavailable" && (
                 <p className="mt-2 text-orange-300" role="status">Couldn’t start the download. Try again.</p>
               )}

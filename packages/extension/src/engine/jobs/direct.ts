@@ -3,7 +3,7 @@ import { originalMediaFilename } from "../../util/filename";
 import type { JobResult, ProgressFn } from "../job";
 import {
   checkResponseStatus, fetchMediaRange, parseContentRange, probeMedia, rangeFailure, rangeMetadata,
-  RangeRecoveryError, recoverRequest, responseHeaders, type RangeMetadata, type RetryProgress,
+  RangeRecoveryError, recoverRequest, responseHeaders, type RangeMetadata, type RetryProgress, type MediaFetch,
 } from "../net/range-recovery";
 import { DIRECT_MEDIA_TYPES, requireDirectVideo, validateDirectBlob } from "../verify-direct";
 
@@ -11,10 +11,17 @@ const CHUNK_BYTES = 4 * 1024 * 1024;
 const WORKERS = 4;
 
 export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal): Promise<JobResult> {
+  const {blob, filename} = await verifiedDirectFile(plan, onProgress, signal, fetch);
+  return {blobUrl: URL.createObjectURL(blob), filename, checksum: ""};
+}
+
+export async function verifiedDirectFile(
+  plan: DirectPlan, onProgress: ProgressFn, signal: AbortSignal, fetchFile: MediaFetch,
+): Promise<{blob: Blob; filename: string}> {
   const connecting: RetryProgress = retry => onProgress(0, null, `Retrying connection (${retry.attempt}/${retry.maxAttempts})`);
   try {
     onProgress(0, null, "probing");
-    const probe = await probeMedia(fetch, plan.url, signal, connecting);
+    const probe = await probeMedia(fetchFile, plan.url, signal, connecting);
     const metadata = rangeMetadata(probe.headers);
     const container = requireDirectVideo(probe.bytes, probe.headers);
     const size = parseContentRange(probe.headers["content-range"])?.total ?? contentLength(probe.headers);
@@ -22,14 +29,15 @@ export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, sig
     const mime = DIRECT_MEDIA_TYPES[container];
 
     const blob = metadata
-      ? await downloadRanges(probe.url, metadata, mime, onProgress, signal)
-      : await downloadFull(plan.url, container, onProgress, signal, connecting);
+      ? await downloadRanges(probe.url, metadata, mime, onProgress, signal, fetchFile)
+      : await downloadFull(plan.url, container, onProgress, signal, connecting, fetchFile);
+    if (size !== null && size !== blob.size) throw new RangeRecoveryError("The file size changed after the probe");
 
     onProgress(blob.size, blob.size, "verifying");
     await validateDirectBlob(blob, container, signal);
     signal.throwIfAborted();
     onProgress(blob.size, blob.size, "finalizing");
-    return { blobUrl: URL.createObjectURL(blob), filename: originalMediaFilename(plan.filename, container) ?? plan.filename, checksum: "" };
+    return { blob, filename: originalMediaFilename(plan.filename, container) ?? plan.filename };
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof RangeRecoveryError || error instanceof TypeError
@@ -40,7 +48,7 @@ export async function runDirectJob(plan: DirectPlan, onProgress: ProgressFn, sig
   }
 }
 
-async function downloadRanges(url: string, metadata: RangeMetadata, mime: string, onProgress: ProgressFn, signal: AbortSignal): Promise<Blob> {
+async function downloadRanges(url: string, metadata: RangeMetadata, mime: string, onProgress: ProgressFn, signal: AbortSignal, fetchFile: MediaFetch): Promise<Blob> {
   const controller = new AbortController();
   const abort = () => controller.abort(signal.reason);
   signal.addEventListener("abort", abort, { once: true });
@@ -60,7 +68,7 @@ async function downloadRanges(url: string, metadata: RangeMetadata, mime: string
       const end = Math.min(start + CHUNK_BYTES, metadata.total) - 1;
       const bytes = await fetchMediaRange(url, start, end, metadata, rangeSignal, retry => {
         onProgress(received, metadata.total, `Retrying part ${index + 1}/${count} (${retry.attempt}/${retry.maxAttempts})`);
-      });
+      }, fetchFile);
       parts[index] = new Blob([bytes as BlobPart]);
       received += bytes.byteLength;
       onProgress(received, metadata.total, "downloading");
@@ -82,9 +90,9 @@ async function downloadRanges(url: string, metadata: RangeMetadata, mime: string
   return blob;
 }
 
-function downloadFull(url: string, container: OutputContainer, onProgress: ProgressFn, signal: AbortSignal, onRetry: RetryProgress): Promise<Blob> {
+function downloadFull(url: string, container: OutputContainer, onProgress: ProgressFn, signal: AbortSignal, onRetry: RetryProgress, fetchFile: MediaFetch): Promise<Blob> {
   return recoverRequest(async (attemptSignal, receivedBytes) => {
-    const response = await fetch(url, { credentials: "include", cache: "no-store", signal: attemptSignal });
+    const response = await fetchFile(url, { credentials: "include", cache: "no-store", signal: attemptSignal });
     const reader = response.body?.getReader();
     try {
       checkResponseStatus(response, url);

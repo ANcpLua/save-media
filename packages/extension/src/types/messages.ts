@@ -26,6 +26,7 @@ export interface MediaQuality {
 }
 
 export interface DiscoveredMedia {
+  readonly signatureRequest?: string;
   readonly url: string;
   readonly filenameHint?: string;
   readonly quality?: MediaQuality;
@@ -71,6 +72,7 @@ export type BackgroundToContentMessage =
   | { readonly type: "file-save-state"; readonly pageUrl: string }
   | { readonly type: "generate-download-url"; readonly pageUrl: string; readonly filename: string }
   | FileSaveProblemMessage
+  | FileRelayStatusMessage
   | { readonly type: "hotkey-feedback"; readonly outcome: HotkeyFeedbackOutcome; readonly detail: string };
 
 /** One <video> element on the page, as seen by the bridge when the popup opens. */
@@ -91,7 +93,19 @@ export interface PageMediaSnapshot extends FileSaveState {
   readonly videos: readonly PageVideo[];
 }
 
+export interface FileRelayStatus {
+  readonly filename: string;
+  readonly phase: "saving" | "saved";
+  readonly savedAs?: string;
+}
+export interface FileRelayStatusMessage {
+  readonly type: "file-relay-status";
+  readonly tabId: number;
+  readonly pageUrl: string;
+  readonly status: FileRelayStatus;
+}
 export interface FileSaveState {
+  readonly relayStatus?: FileRelayStatus;
   readonly fileDownload?: FileDownloadOffer;
   readonly fileSaveProblem?: FileSaveProblem | null;
 }
@@ -159,6 +173,7 @@ export type BackgroundToPopupMessage =
       readonly failures?: readonly DiscoveryFailure[]; readonly statuses?: Readonly<Record<string, JobStatus>> }
   | { readonly type: "retrying-file-link"; readonly tabId: number; readonly pageUrl: string }
   | FileSaveProblemMessage
+  | FileRelayStatusMessage
   | { readonly type: "local-status"; readonly settings: LocalSettingsValue; readonly host: HostPong | null; readonly permissionGranted: boolean; readonly jobs: readonly LocalJobView[] }
   | { readonly type: "local-job"; readonly job: LocalJobView }
   | { readonly type: "job-progress"; readonly streamId: StreamDescriptor["id"]; readonly bytesWritten: number; readonly bytesTotal: number | null; readonly phase: string }
@@ -282,6 +297,8 @@ const backgroundToPopupSchema = z.discriminatedUnion("type", [
     statuses: z.record(z.string(), z.object({ phase: z.enum(["queued", "active", "complete", "failed"]),
       bytesWritten: z.number().optional(), bytesTotal: numberOrNull.optional(), stage: z.string().optional(), error: record.optional() })).optional() }),
   z.object({ type: z.literal("retrying-file-link"), tabId: z.number(), pageUrl: z.string() }),
+  z.object({ type: z.literal("file-relay-status"), tabId: z.number(), pageUrl: z.string(),
+    status: z.object({filename: z.string(), phase: z.enum(["saving", "saved"]), savedAs: z.string().optional()}) }),
   z.object({ type: z.literal("file-save-problem"), tabId: z.number(), pageUrl: z.string(), problem: z.object({
     filename: z.string(), stage: z.enum(["download link", "file connection", "start download"]),
     title: z.string(), body: z.string(), code: z.string(), resourceFingerprint: z.string().optional(),

@@ -26,6 +26,7 @@ export interface ProbeInit {
   readonly signal?: AbortSignal;
 }
 
+export type MediaFetch = (url: string, init: ProbeInit) => Promise<Response>;
 export type ProbeFetch = (url: string, init: ProbeInit) => Promise<ProbeResponse>;
 
 export interface ContentRange {
@@ -233,10 +234,10 @@ export async function probeMedia(
 
 export async function fetchMediaRange(
   url: string, start: number, end: number, metadata: RangeMetadata, signal: AbortSignal,
-  onRetry?: RetryProgress,
+  onRetry?: RetryProgress, fetchFile: MediaFetch = fetch,
 ): Promise<Uint8Array> {
   return recoverRequest(async attemptSignal => {
-    const response = await fetch(url, {
+    const response = await fetchFile(url, {
       credentials: "include", cache: "no-store", signal: attemptSignal,
       headers: { range: `bytes=${start}-${end}`, "if-range": metadata.validator },
     });

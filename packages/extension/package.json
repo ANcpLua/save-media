@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@savemedia/core": "workspace:*",
+    "libcurl.js": "0.7.5",
     "m3u8-parser": "^7.2.0",
     "mediabunny": "^1.61.3",
     "react": "^18.3.1",
