@@ -180,6 +180,12 @@ test.describe("extension classifies real fixture pages", () => {
     await expect(probe.locator("header")).toContainText("savemedia");
   });
 
+  test.beforeEach(async () => {
+    // This describe shares a disposable profile. Each scenario starts a new
+    // SaveMedia session so saves in earlier scenarios cannot prompt this one.
+    await probe!.evaluate(() => chrome.storage.session.clear());
+  });
+
   test.afterEach(() => {
     expectNoFatalExtensionConsoleErrors(runtime);
   });
