@@ -6,6 +6,7 @@ import {
   type BridgeToBackgroundMessage,
   type ContentDiscoveryResponse,
   type DiscoveredMedia,
+  type FileDownloadOffer,
   type HotkeyFeedbackOutcome,
   type LocalJobView,
 } from "../types/messages";
@@ -36,7 +37,8 @@ export interface DownloadBestDeps {
     readonly startBestDownload: (tabId: number) => Promise<BestDownloadOutcome>;
     readonly setDiscoveryScope: (tabId: number, pageUrl: string, urls: readonly string[]) => void;
   };
-  readonly handleCapture: (tabId: number, msg: CaptureMessage) => Promise<void>;
+  readonly handleCapture: (tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>;
+  readonly generateDownload?: (tabId: number, pageUrl: string, offer: FileDownloadOffer) => Promise<DiscoveredMedia | null>;
   /**
    * Visible per-tab feedback for the hotkey path. The popup is usually
    * closed when Alt+S fires, so job-failed messages alone leave the user
@@ -65,11 +67,12 @@ export interface CommandsLike {
 }
 
 export async function discoverPageMediaForTab(
-  deps: Pick<DownloadBestDeps, "tabs" | "runtime" | "handleCapture" | "router">,
+  deps: Pick<DownloadBestDeps, "tabs" | "runtime" | "handleCapture" | "router" | "generateDownload">,
   tabId: number,
   fallbackPageUrl: string,
   expectedPageUrl?: string,
-): Promise<readonly DiscoveredMedia[] | null> {
+  generate = false,
+): Promise<{ pageUrl: string; media: readonly DiscoveredMedia[]; fileDownload?: FileDownloadOffer } | null> {
   const request: BackgroundToContentMessage = { type: "discover-page-media" };
   const response = await new Promise<ContentDiscoveryResponse | null>(resolve => {
     deps.tabs.sendMessage(tabId, request, resp => {
@@ -85,24 +88,30 @@ export async function discoverPageMediaForTab(
   const pageUrl = response.pageUrl || fallbackPageUrl;
   if (expectedPageUrl !== undefined && response.pageUrl !== expectedPageUrl) return null;
   const discovered = response.media ?? response.urls.map(url => ({ url }));
+  const offer = response.fileDownload;
+  const generated = generate && offer ? await deps.generateDownload?.(tabId, pageUrl, offer) : null;
+  const media = generated ? [...discovered, generated] : discovered;
   // New bridges return only the main player's sources. Scope both the popup
   // and the hotkey to them, including when previews were captured earlier.
-  if (response.media) deps.router.setDiscoveryScope(tabId, pageUrl, discovered.map(item => item.url));
-  for (const item of discovered) {
-    const { url } = item;
-    await deps.handleCapture(tabId, {
-      type: "capture",
-      payload: {
-        [MAIN_BRIDGE_TAG]: true,
-        kind: "media-source",
-        url,
-        pageUrl,
-        ...("quality" in item && item.quality ? { quality: item.quality } : {}),
-        ...("filenameHint" in item && item.filenameHint ? { filenameHint: item.filenameHint } : {}),
-      },
-    });
-  }
-  return discovered;
+  if (response.media) deps.router.setDiscoveryScope(tabId, pageUrl, media.map(item => item.url));
+  for (const item of discovered) await probeSource(deps, tabId, pageUrl, item);
+  if (generated) await probeSource(deps, tabId, pageUrl, generated, offer?.linkedPage);
+  return { pageUrl, media, ...(offer ? { fileDownload: offer } : {}) };
+}
+
+function probeSource(
+  deps: Pick<DownloadBestDeps, "handleCapture">, tabId: number, pageUrl: string,
+  source: DiscoveredMedia, referrerPage?: string,
+): Promise<void> {
+  const message: CaptureMessage = { type: "capture", payload: {
+    [MAIN_BRIDGE_TAG]: true,
+    kind: "media-source",
+    url: source.url,
+    pageUrl,
+    ...(source.quality ? { quality: source.quality } : {}),
+    ...(source.filenameHint ? { filenameHint: source.filenameHint } : {}),
+  } };
+  return referrerPage ? deps.handleCapture(tabId, message, undefined, referrerPage) : deps.handleCapture(tabId, message);
 }
 
 export async function downloadBestForActiveTab(deps: DownloadBestDeps): Promise<void> {
@@ -116,9 +125,21 @@ export async function downloadBestForTab(
   deps: DownloadBestDeps,
   tabId: number,
   fallbackPageUrl: string,
+  fromPopup = false,
 ): Promise<void> {
-  await discoverPageMediaForTab(deps, tabId, fallbackPageUrl);
-  const outcome = await deps.router.startBestDownload(tabId);
+  const discovery = await discoverPageMediaForTab(deps, tabId, fallbackPageUrl, fromPopup ? fallbackPageUrl : undefined);
+  if (fromPopup && !discovery) return;
+  let outcome = await deps.router.startBestDownload(tabId);
+  const offer = discovery?.fileDownload;
+  if (offer && (outcome.kind === "no-media" || (outcome.kind === "failed" && outcome.duringDiscovery))) {
+    const source = await deps.generateDownload?.(tabId, discovery.pageUrl, offer);
+    if (source) {
+      deps.router.setDiscoveryScope(tabId, discovery.pageUrl, [source.url]);
+      await probeSource(deps, tabId, discovery.pageUrl, source, offer.linkedPage);
+      outcome = await deps.router.startBestDownload(tabId);
+    }
+  }
+  if (fromPopup) return;
 
   if (outcome.kind === "started") {
     deps.trackHotkeyJob?.(outcome.streamId, tabId);
@@ -126,7 +147,7 @@ export async function downloadBestForTab(
     return;
   }
 
-  const delegable = outcome.kind === "no-media" || isDelegableError(outcome.error);
+  const delegable = !offer && (outcome.kind === "no-media" || isDelegableError(outcome.error));
   if (delegable && deps.localFallback && fallbackPageUrl) {
     const job = await deps.localFallback(fallbackPageUrl, tabId);
     if (job) {
@@ -136,7 +157,11 @@ export async function downloadBestForTab(
   }
 
   if (outcome.kind === "no-media") {
-    deps.showHotkeyFeedback(tabId, "no-media", "No supported media on this page");
+    if (offer) {
+      deps.showHotkeyFeedback(tabId, "failed", "The site did not provide a usable download link");
+    } else {
+      deps.showHotkeyFeedback(tabId, "no-media", "No supported media on this page");
+    }
     return;
   }
 

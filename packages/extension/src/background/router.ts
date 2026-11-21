@@ -63,7 +63,7 @@ interface ActiveJob {
 export type BestDownloadOutcome =
   | { readonly kind: "started"; readonly streamId: StreamDescriptor["id"] }
   | { readonly kind: "no-media" }
-  | { readonly kind: "failed"; readonly streamId: StreamDescriptor["id"]; readonly error: JobError };
+  | { readonly kind: "failed"; readonly streamId: StreamDescriptor["id"]; readonly error: JobError; readonly duringDiscovery?: true };
 
 export interface Router {
   readonly tabs: Map<number, TabState>;
@@ -381,7 +381,7 @@ export function createRouter(deps: RouterDeps): Router {
         }
       }
       const failure = listDiscoveryFailures(tabId)[0];
-      if (failure) return { kind: "failed", streamId: `discovery:${tabId}` as StreamDescriptor["id"], error: failure.error };
+      if (failure) return { kind: "failed", streamId: `discovery:${tabId}` as StreamDescriptor["id"], error: failure.error, duringDiscovery: true };
       return { kind: "no-media" };
     }
 

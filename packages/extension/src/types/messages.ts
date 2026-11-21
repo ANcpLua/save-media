@@ -53,14 +53,7 @@ export interface PageCaptureMessage {
   readonly pageUrl: string;
 }
 
-export interface PageCommandMessage {
-  readonly [MAIN_BRIDGE_TAG]: true;
-  readonly kind: "download-best-hotkey";
-  readonly pageUrl: string;
-  readonly url?: null;
-}
-
-export type MainToBridgeMessage = PageCaptureMessage | PageCommandMessage;
+export type MainToBridgeMessage = PageCaptureMessage;
 
 export type BridgeToBackgroundMessage =
   | { readonly type: "capture"; readonly payload: PageCaptureMessage }
@@ -72,6 +65,7 @@ export type HotkeyFeedbackOutcome = "started" | "delegated" | "complete" | "no-m
 export type BackgroundToContentMessage =
   | { readonly type: "discover-page-media" }
   | { readonly type: "page-media-snapshot" }
+  | { readonly type: "generate-download-url"; readonly pageUrl: string; readonly filename: string }
   | { readonly type: "hotkey-feedback"; readonly outcome: HotkeyFeedbackOutcome; readonly detail: string };
 
 /** One <video> element on the page, as seen by the bridge when the popup opens. */
@@ -90,6 +84,12 @@ export interface PageVideo {
 export interface PageMediaSnapshot {
   readonly pageTitle: string;
   readonly videos: readonly PageVideo[];
+  readonly generatedDownloadFilename?: string;
+}
+
+export interface FileDownloadOffer {
+  readonly filename: string;
+  readonly linkedPage?: string;
 }
 
 export type CookieSourceValue = CookieSource;
@@ -113,6 +113,7 @@ export interface ContentDiscoveryResponse {
   readonly pageUrl: string;
   readonly urls: readonly string[];
   readonly media?: readonly DiscoveredMedia[];
+  readonly fileDownload?: FileDownloadOffer;
 }
 
 export interface DiscoveryFailure {
@@ -140,6 +141,7 @@ export type BackgroundToPopupMessage =
 export type PopupToBackgroundMessage =
   | { readonly type: "list"; readonly tabId: number }
   | { readonly type: "rescan"; readonly tabId: number }
+  | { readonly type: "download-page"; readonly tabId: number; readonly pageUrl: string }
   | { readonly type: "local-status" }
   | { readonly type: "local-settings"; readonly patch: Partial<LocalSettingsValue> }
   | { readonly type: "local-download"; readonly tabId: number | null; readonly pageUrl: string }
@@ -224,6 +226,7 @@ const bridgeToBackgroundSchema = z.discriminatedUnion("type", [
 const popupToBackgroundSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("list"), tabId: z.number() }),
   z.object({ type: z.literal("rescan"), tabId: z.number() }),
+  z.object({ type: z.literal("download-page"), tabId: z.number(), pageUrl: z.string() }),
   z.object({ type: z.literal("local-status") }),
   z.object({ type: z.literal("local-settings"), patch: localSettingsPatchSchema }),
   z.object({ type: z.literal("local-download"), tabId: numberOrNull, pageUrl: z.string() }),

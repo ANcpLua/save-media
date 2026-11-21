@@ -12,6 +12,7 @@ import {
 import type {
   BackgroundToEngineMessage,
   BackgroundToPopupMessage,
+  DiscoveredMedia,
   EngineToBackgroundMessage,
   PopupToBackgroundMessage,
 } from "../types/messages";
@@ -65,7 +66,7 @@ router = createRouter({
   ensureEngineHost,
   refreshDirectSource: (descriptor, signal) => refreshDirectSource({
     tabs: chrome.tabs,
-    discover: (tabId, pageUrl) => discoverPageMediaForTab(downloadBestDeps, tabId, pageUrl, pageUrl),
+    discover: async (tabId, pageUrl) => (await discoverPageMediaForTab(downloadBestDeps, tabId, pageUrl, pageUrl, true))?.media ?? null,
     list: tabId => router.listDescriptors(tabId),
   }, descriptor, signal),
   releaseBlob: blobUrl => {
@@ -144,6 +145,21 @@ const downloadBestDeps: DownloadBestDeps = {
   },
   router,
   handleCapture,
+  generateDownload: async (tabId, pageUrl, { filename, linkedPage }) => {
+    try {
+      if ((await chrome.tabs.get(tabId)).url !== pageUrl) return null;
+      const message: BackgroundToContentMessage = { type: "generate-download-url", pageUrl, filename };
+      let source: DiscoveredMedia | null;
+      if (linkedPage && __BROWSER__ === "chromium") {
+        await ensureEngineHost();
+        source = await chrome.runtime.sendMessage({ type: "read-linked-download", pageUrl: linkedPage, filename });
+      } else {
+        source = await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+      }
+      return source?.filenameHint === filename && typeof source.url === "string"
+        && (await chrome.tabs.get(tabId)).url === pageUrl ? source : null;
+    } catch { return null; }
+  },
   showHotkeyFeedback,
   localFallback: (pageUrl, tabId) => localDownloader.startFallback(pageUrl, tabId),
   trackHotkeyJob: (streamId, tabId) => hotkeyJobs.track(streamId, tabId),
@@ -236,6 +252,11 @@ chrome.runtime.onMessage.addListener((
   }
 
   if (isPopupToBackgroundMessage(msg)) {
+    if (msg.type === "download-page") {
+      void downloadBestForTab(downloadBestDeps, msg.tabId, msg.pageUrl, true)
+        .then(() => sendResponse(router.snapshot(msg.tabId)), () => sendResponse(router.snapshot(msg.tabId)));
+      return true;
+    }
     if (msg.type === "rescan") {
       // A failed or unreachable rescan must not erase the previous error.
       // Successful probes clear their own failures through onProbeSuccess.

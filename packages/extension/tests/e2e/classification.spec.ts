@@ -477,6 +477,52 @@ test.describe("extension classifies real fixture pages", () => {
     return popup;
   }
 
+  test("follows the site-generated download redirect from the popup and Alt+S", async () => {
+    await clearDownloadHistory();
+    const page = await context!.newPage();
+    const cdp = await context!.newCDPSession(page);
+    await cdp.send("Browser.setDownloadBehavior", { behavior: "default" });
+    const files = [
+      { page: "linked-31", name: "Test pattern 31.mov", fixture: "test-pattern.mov" },
+      { page: "download-32", name: "Färbige Balken 32.mov", fixture: "color-bars.mov" },
+    ];
+    let popup: Page | undefined;
+    try {
+      for (const file of files) {
+        const path = `/page/${file.page}.html`;
+        await page.goto(path);
+        popup = await openPopupFor(page);
+        await expect(popup.getByText(file.name, { exact: true })).toHaveCount(1);
+        const download = popup.getByRole("button", { name: "Download", exact: true });
+        await expect(download).toHaveCount(1);
+        await expect(download).toBeEnabled();
+        if (file.page === "linked-31") {
+          await download.click();
+          await expect(popup.getByTestId("job-complete")).toBeVisible({ timeout: 20_000 });
+        } else {
+          await popup.close();
+          popup = undefined;
+          await page.bringToFront();
+          await page.keyboard.press("Alt+KeyS");
+          await expect(page.locator('[data-savemedia="feedback"] .t')).toContainText(`Saved${file.name}`);
+        }
+        const saved = await waitForCompletedDownload(page, file.name);
+        expect(basename(saved)).toBe(file.name);
+        const expected = readFileSync(resolve(here, "media-fixtures/direct", file.fixture));
+        expect(readFileSync(saved)).toEqual(expected);
+        expect(new URL(page.url()).pathname).toBe(path);
+        await popup?.close();
+        popup = undefined;
+      }
+      expect(await probe!.evaluate(() => chrome.downloads.search({}))).toHaveLength(2);
+    } finally {
+      await popup?.close();
+      await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: downloadDir! });
+      await page.close();
+      for (const { name } of files) rmSync(resolve(downloadDir!, name), { force: true });
+    }
+  });
+
   test("saves original MOV files through the popup and Alt+S after source rotation", async ({ request }) => {
     await clearDownloadHistory();
     const page = await context!.newPage();

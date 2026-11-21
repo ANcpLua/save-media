@@ -29,16 +29,9 @@ interface PageCaptureMessage {
   audioUrl?: string;
 }
 
-interface PageCommandMessage {
-  [BRIDGE_TAG]: true;
-  kind: "download-best-hotkey";
-  pageUrl: string;
-}
-
-type MainToBridgeMessage = PageCaptureMessage | PageCommandMessage;
 type CaptureExtras = Partial<Omit<PageCaptureMessage, typeof BRIDGE_TAG | "kind" | "url" | "pageUrl">>;
 
-const post = (msg: MainToBridgeMessage): void => {
+const post = (msg: PageCaptureMessage): void => {
   window.postMessage(msg, "*");
 };
 
@@ -57,10 +50,6 @@ function canonicaliseUrl(url: string | null): string | null {
 
 const emit = (kind: CaptureKind, url: string | null, extras: CaptureExtras = {}): void => {
   post({ [BRIDGE_TAG]: true, kind, url: canonicaliseUrl(url), pageUrl: location.href, ...extras });
-};
-
-const emitDownloadBestHotkey = (): void => {
-  post({ [BRIDGE_TAG]: true, kind: "download-best-hotkey", pageUrl: location.href });
 };
 
 /**
@@ -97,9 +86,6 @@ if (siteResolver) {
 } else {
   installGenericDiscovery();
 }
-
-// The download-best hotkey works everywhere, including resolver sites.
-installHotkey();
 
 function installGenericDiscovery(): void {
   installResourceTimingObserver();
@@ -197,27 +183,4 @@ function installMediaElementObserver(): void {
   document.querySelectorAll("video, audio").forEach(el => observeMediaElement(el as HTMLVideoElement));
 }
 
-function installHotkey(): void {
-  document.addEventListener("keydown", event => {
-    if (!event.isTrusted || !isDownloadBestHotkey(event) || isEditableTarget(event.target)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    emitDownloadBestHotkey();
-  }, true);
-}
-
-function isDownloadBestHotkey(event: KeyboardEvent): boolean {
-  if (event.repeat || event.metaKey || event.shiftKey) return false;
-  const sKey = event.code === "KeyS" || (typeof event.key === "string" && event.key.toLowerCase() === "s");
-  if (!sKey) return false;
-  return (event.altKey && !event.ctrlKey) || (event.ctrlKey && !event.altKey);
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return target instanceof HTMLInputElement
-    || target instanceof HTMLTextAreaElement
-    || target instanceof HTMLSelectElement;
-}
 })();

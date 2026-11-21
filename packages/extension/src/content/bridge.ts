@@ -1,7 +1,8 @@
 // Vite inlines discovery into this classic content-script entry. Keep the
 // message guards local so the bridge does not pull in the zod runtime.
 import { declaredMediaFilename, discoverPageMedia } from "./discovery";
-import type { DiscoveredMedia } from "../types/messages";
+import { captureGeneratedDownload, fileDownloadOffer } from "./generated-download";
+import type { DiscoveredMedia, PageMediaSnapshot } from "../types/messages";
 
 export {};
 const BRIDGE_TAG = "__savemedia" as const;
@@ -17,14 +18,6 @@ interface PageCapturePayload {
   [key: string]: unknown;
 }
 
-interface PageCommandPayload {
-  [BRIDGE_TAG]: true;
-  kind: "download-best-hotkey";
-  pageUrl: string;
-}
-
-type MainPayload = PageCapturePayload | PageCommandPayload;
-
 interface DiscoverPageMediaMessage {
   type: "discover-page-media";
 }
@@ -39,18 +32,24 @@ window.addEventListener("message", event => {
   if (event.source !== window) return;
   const data = event.data;
   if (!isMainPayload(data)) return;
-  if (data.kind === "download-best-hotkey") {
-    chrome.runtime.sendMessage(
-      { type: "download-best-hotkey", pageUrl: data.pageUrl },
-      () => void chrome.runtime.lastError,
-    );
-    return;
-  }
   chrome.runtime.sendMessage(
     { type: "capture", payload: withFilePageMetadata(data) },
     () => void chrome.runtime.lastError,
   );
 });
+
+// Keep the trusted keyboard gesture in the isolated bridge. A page's own
+// postMessage cannot request a save or run its download control.
+document.addEventListener("keydown", event => {
+  if (!event.isTrusted || event.repeat || event.metaKey || event.shiftKey) return;
+  if (event.altKey === event.ctrlKey || (event.code !== "KeyS" && event.key.toLowerCase() !== "s")) return;
+  if (event.target instanceof HTMLElement && (event.target.isContentEditable
+    || event.target.matches("input, textarea, select"))) return;
+  event.preventDefault();
+  event.stopPropagation();
+  chrome.runtime.sendMessage({ type: "download-best-hotkey", pageUrl: location.href },
+    () => void chrome.runtime.lastError);
+}, true);
 
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   if (isHotkeyFeedbackMessage(msg)) {
@@ -61,13 +60,20 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
     sendResponse(pageMediaSnapshot());
     return false;
   }
+  if (isRecord(msg) && msg.type === "generate-download-url" && typeof msg.filename === "string"
+    && msg.pageUrl === location.href && window.top === window) {
+    void captureGeneratedDownload(msg.filename).then(sendResponse);
+    return true;
+  }
   if (!isDiscoverPageMediaMessage(msg)) return false;
   const pageUrl = location.href;
   const media = discoverPageMedia(document, pageUrl);
-  const reply = (items: readonly DiscoveredMedia[]) => {
-    sendResponse(location.href === pageUrl ? { pageUrl, urls: items.map(item => item.url), media: items } : null);
-  };
-  if (media.length || !declaredMediaFilename(document)) {
+  const offer = fileDownloadOffer();
+  const reply = (items: readonly DiscoveredMedia[]) => sendResponse(location.href === pageUrl ? {
+    pageUrl, urls: items.map(item => item.url), media: items,
+    ...(offer ? { fileDownload: offer } : {}),
+  } : null);
+  if (media.length || offer || !declaredMediaFilename(document)) {
     reply(media);
     return false;
   }
@@ -109,10 +115,7 @@ function waitForFilePageMedia(pageUrl: string): Promise<readonly DiscoveredMedia
 // used, followed by page metadata when there is just one video.
 const THUMB_WIDTH = 160;
 
-function pageMediaSnapshot(): {
-  pageTitle: string;
-  videos: { src: string; thumbnail: string | null; width: number; height: number; duration: number | null; visible: number; playing: boolean }[];
-} {
+function pageMediaSnapshot(): PageMediaSnapshot {
   const title = document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() || document.title;
   const elements = [...document.querySelectorAll("video")];
   const pageImage = elements.length === 1
@@ -127,7 +130,8 @@ function pageMediaSnapshot(): {
     visible: visibleFraction(v),
     playing: !v.paused && !v.ended && v.readyState >= 2,
   })).filter(v => v.src || v.thumbnail);
-  return { pageTitle: title, videos };
+  const generated = fileDownloadOffer()?.filename;
+  return { pageTitle: title, videos, ...(generated ? { generatedDownloadFilename: generated } : {}) };
 }
 
 function captureFrame(v: HTMLVideoElement): string | null {
@@ -243,10 +247,9 @@ chrome.runtime.sendMessage(
   () => void chrome.runtime.lastError,
 );
 
-function isMainPayload(value: unknown): value is MainPayload {
+function isMainPayload(value: unknown): value is PageCapturePayload {
   if (!isRecord(value)) return false;
   if (value[BRIDGE_TAG] !== true || typeof value.pageUrl !== "string") return false;
-  if (value.kind === "download-best-hotkey") return true;
   return isCaptureKind(value.kind)
     && (typeof value.url === "string" || value.url === null)
     && isOptionalStringRecord(value.responseHeaders)

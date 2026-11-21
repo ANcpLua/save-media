@@ -27,7 +27,7 @@ export interface CaptureDeps {
   readonly logger?: Logger;
 }
 
-export type CaptureHandler = ((tabId: number, msg: CaptureMessage, observedUrl?: string) => Promise<void>) & {
+export type CaptureHandler = ((tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string) => Promise<void>) & {
   clearTab(tabId: number): void;
 };
 
@@ -38,18 +38,18 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     state?.controller.abort();
     tabs.delete(tabId);
   }
-  function handleCapture(tabId: number, msg: CaptureMessage, observedUrl?: string): Promise<void> {
+  function handleCapture(tabId: number, msg: CaptureMessage, observedUrl?: string, referrerPage?: string): Promise<void> {
     let state = tabs.get(tabId);
     if (!state) { state = { controller: new AbortController(), pending: new Map() }; tabs.set(tabId, state); }
-    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem, msg.payload.quality, msg.payload.filenameHint, observedUrl]);
+    const key = JSON.stringify([msg.payload.kind === "eme", msg.payload.url, msg.payload.audioUrl, msg.payload.keySystem, msg.payload.quality, msg.payload.filenameHint, observedUrl, referrerPage]);
     const existing = state.pending.get(key);
     if (existing) return existing;
     const current = state;
-    const pending = capture(tabId, msg, current.controller.signal, observedUrl).finally(() => current.pending.delete(key));
+    const pending = capture(tabId, msg, current.controller.signal, observedUrl, referrerPage).finally(() => current.pending.delete(key));
     current.pending.set(key, pending);
     return pending;
   }
-  async function capture(tabId: number, msg: CaptureMessage, signal: AbortSignal, observedUrl?: string): Promise<void> {
+  async function capture(tabId: number, msg: CaptureMessage, signal: AbortSignal, observedUrl?: string, referrerPage?: string): Promise<void> {
     const cap = msg.payload;
     if (cap.elementTag === "audio" || (!cap.url && cap.kind !== "eme")) return;
     if (cap.url && !/^https?:\/\//i.test(cap.url)) return;
@@ -65,7 +65,7 @@ export function createCaptureHandler(deps: CaptureDeps): CaptureHandler {
     if (cap.url) {
       try {
         if (deps.mirrorReferer) {
-          await deps.mirrorReferer(cap.url, cap.pageUrl);
+          await deps.mirrorReferer(cap.url, referrerPage ?? cap.pageUrl);
           if (observedUrl && observedUrl !== cap.url) await deps.mirrorReferer(observedUrl, cap.pageUrl);
         }
         const url = cap.url;

@@ -288,6 +288,17 @@ function serveFilePageMedia(req, res, path) {
 }
 
 const pages = {
+  "linked-31": html("Test pattern", `<main><h1>${quickTimeFiles.get("31").name}</h1>
+    <video src="/page/file-data.html" controls></video>
+    <a href="/page/download-31.html" target="_blank">Download</a></main>
+    <aside><a href="/page/download-32.html">Download</a></aside>`),
+  ...Object.fromEntries([...quickTimeFiles].map(([id, { name }]) => [`download-${id}`, html(name,
+    `<h1>${name}</h1><a href="#">Download</a><script>
+      document.querySelector("a").addEventListener("click", event => {
+        event.preventDefault();
+        setTimeout(() => { location.href = "/file/${id}"; }, 20);
+      });
+    </script>`)])),
   "file-31": html("Test pattern", `<h1>Test pattern 31.mov</h1><script>
     fetch("/file-info/31").then(response => response.json()).then(({ url }) => {
       const player = document.createElement("video");

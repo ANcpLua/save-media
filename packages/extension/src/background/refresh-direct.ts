@@ -52,10 +52,10 @@ export async function refreshDirectSource(
     // leaves the user's page, playback, and browsing session in place.
     if (!await waitForPage(deps.tabs, id, original.pageUrl, signal)) return null;
     const sources = await deps.discover(id, original.pageUrl);
-    if (signal.aborted || sources?.length !== 1) return null;
-    const [source] = sources;
-    if (source?.filenameHint !== original.title) return null;
-    if (source.url === original.source.url || renewableResource(source.url) !== resource) return null;
+    const matches = sources?.filter(source => source.filenameHint === original.title
+      && source.url !== original.source.url && renewableResource(source.url) === resource) ?? [];
+    if (signal.aborted || matches.length !== 1) return null;
+    const source = matches[0]!;
     return deps.list(id).find(candidate => isDirect(candidate) && candidate.source.url === source.url
       && candidate.container === original.container && candidate.title === original.title
       && declaredTotalBytes(candidate.source.headers) === size) ?? null;

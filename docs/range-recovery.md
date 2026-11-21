@@ -20,6 +20,14 @@ for the page to supply a source. The popup shows the reason when discovery
 fails and **Check page again** probes the current sources. Navigation cancels
 probes from the previous page.
 
+When a page names a file and exposes one Download control near its heading,
+SaveMedia can use that control if the player supplies no usable source. The popup and
+Alt+S run the site's own handler at save time, when it can generate a fresh
+address. Chromium can read the same control on a linked download page in a
+sandboxed frame. The extension passes the resulting navigation address to
+the direct-file verifier and keeps the original tab open. Chrome follows the
+HTTP redirects and applies its usual certificate checks.
+
 Both the popup and Alt+S use the same download job. A range response with a
 strong ETag or Last-Modified selects four concurrent workers reading 4 MiB
 chunks. Each chunk uses `If-Range` and checks its offsets, byte count, and
@@ -80,10 +88,15 @@ the focused check.
 bun install --frozen-lockfile
 (cd packages/extension && bunx playwright install chromium)
 bun run build
+bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'site-generated download redirect'
 bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'after source rotation'
 ```
 
-The Chromium test saves two distinct local movies in one tab using the popup
+The redirect check opens a named file page with an unavailable player source.
+It uses the popup to resolve the linked download page, then Alt+S on a second
+download page. The check compares both output filenames and every byte.
+
+The source-rotation check saves two distinct local movies in one tab using the popup
 and then Alt+S. The first source appears after the popup opens and expires
 after discovery. The second source changes its redirect destination. The
 test checks the original filename, bytes and video track on disk. Separate failure

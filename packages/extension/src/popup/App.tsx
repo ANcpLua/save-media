@@ -18,7 +18,7 @@ function windowTabId(): number | null {
 
 function requestSnapshot(tabId: number, cb: (snap: PageMediaSnapshot | null) => void): void {
   const msg: BackgroundToContentMessage = { type: "page-media-snapshot" };
-  chrome.tabs.sendMessage(tabId, msg, (response: unknown) => {
+  chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }, (response: unknown) => {
     void chrome.runtime.lastError;
     cb(response && typeof response === "object" && Array.isArray((response as PageMediaSnapshot).videos) ? response as PageMediaSnapshot : null);
   });
@@ -75,7 +75,8 @@ export function followActiveTab(
 // the package version. Optional-chained because the test chrome mock and the
 // screenshot harness do not stub getManifest.
 function manifestVersion(): string {
-  return globalThis.chrome?.runtime?.getManifest?.().version ?? "";
+  const manifest = globalThis.chrome?.runtime?.getManifest?.();
+  return manifest?.version_name ?? manifest?.version ?? "";
 }
 
 export interface AppProps {
@@ -90,16 +91,18 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   const [tabId, setTabId] = useState<number | null>(null);
   const [pageUrl, setPageUrl] = useState<string | null>(null);
   const tabIdRef = useRef<number | null>(null);
+  const pageUrlRef = useRef<string | null>(null);
   const [statuses, setStatuses] = useState<Record<string, JobStatus>>({ ...initialStatuses });
   const [failures, setFailures] = useState<readonly DiscoveryFailure[]>(initialFailures);
   const [scanning, setScanning] = useState(false);
   const [snapshot, setSnapshot] = useState<PageMediaSnapshot | null>(null);
+  const [fileDownload, setFileDownload] = useState<"preparing" | "unavailable" | null>(null);
   const asWindow = windowTabId() !== null;
 
   useEffect(() => {
     if (skipFetch) return undefined;
     const start = (id: number | null, url: string | null) => {
-      if (id !== tabIdRef.current) {
+      if (id !== tabIdRef.current || url !== pageUrlRef.current) {
         // A different page: drop the previous tab's items at once instead of
         // showing them until the new list arrives.
         setDescriptors([]);
@@ -107,8 +110,10 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         setStatuses({});
         setScanning(false);
         setSnapshot(null);
+        setFileDownload(null);
       }
       tabIdRef.current = id;
+      pageUrlRef.current = url;
       setTabId(id);
       setPageUrl(url);
       if (id === null) return;
@@ -188,6 +193,25 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
   }
 
   const ranked = rankDescriptors(descriptors, snapshot);
+  const filename = ranked.length === 0 && tabId !== null && pageUrl ? snapshot?.generatedDownloadFilename : undefined;
+
+  function downloadFilePage(): void {
+    if (tabId === null || !pageUrl || scanning || fileDownload === "preparing") return;
+    setFileDownload("preparing");
+    const msg: PopupToBackgroundMessage = { type: "download-page", tabId, pageUrl };
+    chrome.runtime.sendMessage(msg, (response: unknown) => {
+      void chrome.runtime.lastError;
+      if (tabIdRef.current !== tabId || pageUrlRef.current !== pageUrl) return;
+      if (isBackgroundToPopupMessage(response) && response.type === "descriptors") {
+        setDescriptors(response.descriptors);
+        setFailures(response.failures ?? []);
+        if (response.statuses) setStatuses({ ...response.statuses });
+        setFileDownload(response.descriptors.length ? null : "unavailable");
+      } else {
+        setFileDownload("unavailable");
+      }
+    });
+  }
 
   useEffect(() => {
     function listener(msg: unknown): void {
@@ -255,10 +279,26 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
             </button>
           )}
         </div>
-        {ranked.length === 0 && failures.length === 0 && !scanning && (
+        {ranked.length === 0 && !filename && failures.length === 0 && !scanning && (
           <div className="px-3 py-8 text-center text-muted text-xs">
             {tabId === null && !skipFetch ? "No active tab." : "No media detected on this page."}
           </div>
+        )}
+        {filename && (
+          <ul className="px-2 pb-1">
+            <li className="rounded-lg bg-surface border border-accent/60 p-3 text-xs">
+              <p className="break-words font-medium">{filename}</p>
+              {fileDownload === "unavailable" && failures.length === 0 && (
+                <p className="mt-2 text-muted" role="status">The site did not provide a usable download link.</p>
+              )}
+              <div className="mt-2 flex justify-end">
+                <button type="button" onClick={downloadFilePage} disabled={scanning || fileDownload === "preparing"}
+                  className="bg-accent hover:brightness-110 disabled:opacity-50 text-ink font-medium px-2.5 py-1 rounded-md">
+                  {fileDownload === "preparing" ? "Preparing download…" : fileDownload === "unavailable" ? "Retry download" : "Download"}
+                </button>
+              </div>
+            </li>
+          </ul>
         )}
         {ranked.length > 0 && (
           <ul className="px-2 pb-1 space-y-1.5">
@@ -276,7 +316,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
             ))}
           </ul>
         )}
-        {failures.length > 0 && (descriptors.some(isDownloadableCandidate) ? (
+        {failures.length > 0 && (descriptors.some(isDownloadableCandidate) || (filename && fileDownload !== "unavailable") ? (
           <details className="px-3 py-1 text-xs text-muted">
             <summary className="cursor-pointer">Unavailable sources</summary>
             <DiscoveryFailures failures={failures} />
@@ -291,7 +331,7 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
       </div>
 
       <footer className="px-3 py-2 border-t border-line text-[10px] text-muted flex items-center justify-end">
-        <span>{ranked.length} detected{version && ` · v${version}`}</span>
+        <span>{filename ? 1 : ranked.length} detected{version && ` · v${version}`}</span>
       </footer>
     </main>
   );
