@@ -1,5 +1,10 @@
 import type { StreamDescriptor, Variant } from "@savemedia/core";
 
+export function isDownloadableCandidate(d: StreamDescriptor): boolean {
+  return !d.capabilities.drmBlocked
+    && (d.capabilities.directDownload || d.protocol === "hls" || hasDownloadableDemuxedPair(d));
+}
+
 /**
  * A descriptor dispatch can actually turn into an av-merge plan: dash
  * protocol with at least one video variant and one audio rendition whose

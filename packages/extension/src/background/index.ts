@@ -18,6 +18,7 @@ import type {
 import { createRouter } from "./router";
 import { saveVerifiedDownload } from "./browser-download";
 import { createCaptureHandler } from "./capture";
+import { createDiagnosticFetch } from "./diagnostic-fetch";
 import { discoverPageMediaForTab, downloadBestForTab, registerDownloadBestCommand, type DownloadBestDeps } from "./download-best";
 import { createHotkeyJobs } from "./hotkey-jobs";
 import { createRefererMirror, registerNetworkCapture } from "./network-capture";
@@ -70,7 +71,7 @@ router = createRouter({
 });
 
 const handleCapture = createCaptureHandler({
-  fetchFn: (url, init) => fetch(url, init),
+  fetchFn: createDiagnosticFetch(chrome.webRequest, chrome.runtime.getURL("").replace(/\/$/, "")),
   mirrorReferer: createRefererMirror(chrome.declarativeNetRequest, new URL(chrome.runtime.getURL("")).host),
   onDescriptor: (tabId, descriptor) => {
     const added = router.addDescriptor(tabId, descriptor);

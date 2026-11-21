@@ -18,7 +18,7 @@ import type {
 import type { Logger } from "../util/logger";
 import { suggestFilename, timestampedPath } from "../util/filename";
 import { dispatchRefusalToError } from "../util/dispatch-refusal";
-import { hasDownloadableDemuxedPair } from "../util/demuxed-pair";
+import { isDownloadableCandidate } from "../util/downloadable";
 
 export { dispatchRefusalToError } from "../util/dispatch-refusal";
 
@@ -338,11 +338,6 @@ export function createRouter(deps: RouterDeps): Router {
       variantId: variant?.id ?? null,
       audioRenditionId: variant?.audioRenditionId ?? null,
     };
-  }
-
-  function isDownloadableCandidate(d: StreamDescriptor): boolean {
-    return !d.capabilities.drmBlocked
-      && (d.capabilities.directDownload || d.protocol === "hls" || hasDownloadableDemuxedPair(d));
   }
 
   async function startBestDownload(tabId: number): Promise<BestDownloadOutcome> {

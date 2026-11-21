@@ -1,5 +1,11 @@
-import type { JobError } from "@savemedia/core";
+import type { BrowserRequestDiagnostic, JobError } from "@savemedia/core";
 import type { RetryableHttpError } from "./fetch-with-retry";
+
+export class BrowserFetchError extends TypeError {
+  constructor(readonly diagnostic: BrowserRequestDiagnostic) {
+    super("The browser could not complete the media request");
+  }
+}
 
 export type NetworkPhase = "manifest" | "segment" | "direct";
 
@@ -22,7 +28,7 @@ export function classifyNetworkFailure(
     };
   }
 
-  if (err.status === 401 || err.status === 402 || err.status === 403) {
+  if (err.status === 401 || err.status === 402 || err.status === 403 || err.status === 451) {
     return {
       code: "access_denied",
       severity: "terminal",
@@ -33,7 +39,7 @@ export function classifyNetworkFailure(
         ? "login-or-cookie"
         : err.status === 402
           ? "payment-or-entitlement"
-          : "forbidden-or-expired-url",
+          : err.status === 451 ? "legal-restriction" : "forbidden-or-expired-url",
     };
   }
 

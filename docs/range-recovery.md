@@ -41,22 +41,29 @@ extension leaves existing downloads on disk.
 
 ## When the file page loads and the media request fails
 
-The page and the video can use different hosts. Diagnose the media host on
-the same network with TLS verification enabled. A certificate issued by a
-DNS filter's block-page service means the request reached that service.
-The network operator can confirm the policy and review a suspected false
-positive. SaveMedia needs a verified response from the media host before
-it can offer the file. See [Whalebone's resolver troubleshooting](https://docs.whalebone.io/en/immunity/domain_resolution_analysis.html).
+The page and the video can use different hosts. When the browser supplies
+a diagnostic during discovery, the popup shows a short reason such as
+**Untrusted source** and puts the host and browser error under **Technical
+details**. Alt+S shows the short reason if no save can start. Available
+downloads appear above the collapsed **Unavailable sources** section.
+The browser's error event is used for display only.
+
+Support can diagnose the media host on the same network with TLS verification
+enabled. A certificate issued by a DNS filter's block-page service means the
+request reached that service. The network operator can review a suspected
+false positive. SaveMedia needs a verified response from the media host
+before it can offer the file. See [Whalebone's resolver troubleshooting](https://docs.whalebone.io/en/immunity/domain_resolution_analysis.html).
 
 ## Verify locally
 
-Install the workspace dependencies, Playwright Chromium, and `ffprobe`, then run:
+Install the workspace dependencies, Playwright Chromium, `ffprobe` and
+`openssl` to run the focused checks.
 
 ```sh
 bun install --frozen-lockfile
 (cd packages/extension && bunx playwright install chromium)
 bun run build
-bun run --filter @savemedia/extension test:e2e:chromium -g 'original MOV files|during a MOV save|range-only'
+bun run --filter @savemedia/extension test:e2e:chromium -g 'original MOV files|during a MOV save|range-only|untrusted and restricted'
 ```
 
 The Chromium test saves two distinct local movies in one tab using the popup
@@ -67,6 +74,9 @@ visible feedback and an empty download list. The movies come from FFmpeg's
 test pattern and color bars with a generated tone. The color bars fixture's
 first atom is tagged as free space to exercise legacy QuickTime while
 keeping all offsets intact. The HTTPS fixture covers range recovery and retries.
+The connection failure test uses an untrusted loopback certificate and an
+HTTP 451 response. Both the popup and Alt+S report the failure, and Chromium
+records zero downloads. The certificate check remains active in that test.
 
 The range and top-level box checks were adapted from
 `internal/rescue/downloader.go` and `internal/rescue/validate.go` in Video

@@ -3,8 +3,9 @@ import type { StreamDescriptor } from "@savemedia/core";
 import { friendlyVideoCodec, friendlyAudioCodec, userMessage } from "@savemedia/core";
 import type { PopupToBackgroundMessage, JobStatus } from "../../types/messages";
 import { suggestFilename } from "../../util/filename";
-import { hasDownloadableDemuxedPair } from "../../util/demuxed-pair";
+import { hasDownloadableDemuxedPair, isDownloadableCandidate } from "../../util/downloadable";
 import { formatDuration, type Preview } from "../preview-match";
+import { TechnicalDetails } from "./TechnicalDetails";
 
 export type { JobStatus } from "../../types/messages";
 
@@ -42,9 +43,8 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
   const isDrmBlocked = descriptor.capabilities.drmBlocked;
   const isDeferred = descriptor.drm?.reason === "clearkey_deferred";
   const action = outputActionLabel(descriptor);
-  const isDownloadable = descriptor.capabilities.directDownload
-    || descriptor.protocol === "hls"
-    || hasDownloadableDemuxedPair(descriptor);
+  const isDownloadable = isDownloadableCandidate(descriptor);
+  const failure = status?.phase === "failed" && status.error ? userMessage(status.error) : null;
   const activeProgressWidth = status?.phase === "active" ? progressWidth(status) : "30%";
 
   function download() {
@@ -190,10 +190,12 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
         </div>
       )}
 
-      {status?.phase === "failed" && status.error && (
-        <div className="mt-2 ml-5 text-red-400" data-testid="job-error">
-          <p className="font-medium">{userMessage(status.error).title}</p>
-          <p className="text-muted mt-0.5">{userMessage(status.error).body}</p>
+      {failure && (
+        <div className="mt-2 ml-5" data-testid="job-error">
+          <p className={failure.technicalDetails ? "font-medium" : "font-medium text-red-400"}>{failure.title}</p>
+          {failure.technicalDetails
+            ? <TechnicalDetails body={failure.body} details={failure.technicalDetails} />
+            : <p className="text-muted mt-0.5">{failure.body}</p>}
         </div>
       )}
 

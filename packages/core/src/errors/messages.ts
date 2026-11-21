@@ -7,6 +7,7 @@ export type ActionKind =
 export interface UserMessage {
   readonly title: string;
   readonly body: string;
+  readonly technicalDetails?: string;
   readonly action: { readonly label: string; readonly kind: ActionKind } | null;
 }
 
@@ -180,12 +181,21 @@ export function userMessage(err: JobError): UserMessage {
 
     case "access_denied":
       return {
-        title: "The site denied access",
+        title: err.httpStatus === 451 ? "Access restricted" : "The site denied access",
         body: accessDeniedBody(err.httpStatus, err.explanation),
+        ...(err.httpStatus === 451 ? { technicalDetails: "HTTP 451" } : {}),
         action: null,
       };
 
     case "network_unreachable":
+      if (err.browserDiagnostic) {
+        const { code, host } = err.browserDiagnostic;
+        return {
+          ...networkDiagnosticMessage(code),
+          technicalDetails: `${host} · ${code}`,
+          action: { label: "Retry full download", kind: "retry-job" },
+        };
+      }
       return {
         title: "Network request failed",
         body: `The browser could not fetch the ${err.phase} URL. This can be network loss, an expired signed URL, or a browser/security restriction. Detail: ${err.detail}`,
@@ -252,7 +262,25 @@ export function userMessage(err: JobError): UserMessage {
   }
 }
 
-function accessDeniedBody(status: 401 | 402 | 403, explanation: string): string {
+// Browser diagnostics are hints for the user. Unknown codes keep a
+// generic title because browsers can change how their errors are reported.
+function networkDiagnosticMessage(code: string): Pick<UserMessage, "title" | "body"> {
+  if (/^net::ERR_CERT_/.test(code) || code === "net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN") {
+    return { title: "Untrusted source", body: "The browser could not verify the media server's certificate." };
+  }
+  if (/^net::ERR_DNS_/.test(code) || code === "net::ERR_NAME_NOT_RESOLVED" || code === "NS_ERROR_UNKNOWN_HOST") {
+    return { title: "Video host unavailable", body: "The browser could not find the address for the video host." };
+  }
+  if (/^net::ERR_BLOCKED_/.test(code)) {
+    return { title: "Request blocked", body: "The browser reported that the media request was blocked." };
+  }
+  return { title: "Network request failed", body: "The browser could not complete the media request." };
+}
+
+function accessDeniedBody(status: 401 | 402 | 403 | 451, explanation: string): string {
+  if (status === 451) {
+    return "The site or a network intermediary reported a legal restriction. Check its notice or ask the network operator for details.";
+  }
   if (status === 402 || explanation === "payment-or-entitlement") {
     return "The server requires an account, entitlement, purchase, or other access token for this URL. This is access control, not automatically DRM; savemedia cannot invent credentials it does not have.";
   }

@@ -13,7 +13,7 @@ export type {
   OutputMode, UserChoice, DispatchRefusal, DispatchRefusalReason,
   VerifyCheckKind,
 } from "./types/job";
-export type { JobError, JobErrorCode, JobErrorSeverity } from "./errors/taxonomy";
+export type { BrowserRequestDiagnostic, JobError, JobErrorCode, JobErrorSeverity } from "./errors/taxonomy";
 export type { UserMessage, ActionKind } from "./errors/messages";
 export type { VerifiedOutput, UnverifiedOutput, VerifyCheck, VerifyResult } from "./engine/verify";
 export type { ClassifyInput } from "./classifier/classify";

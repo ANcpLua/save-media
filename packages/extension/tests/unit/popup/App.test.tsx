@@ -62,6 +62,24 @@ describe("popup App", () => {
     expect(screen.getByTestId("job-error").textContent).toMatch(/server is busy/i);
   });
 
+  it("keeps other source failures collapsed when a file is saved", () => {
+    const descriptor = directDescriptor();
+    const url = "https://cdn.example/other.mov";
+    render(<App
+      skipFetch
+      initialDescriptors={[descriptor]}
+      initialStatuses={{ [descriptor.id]: { phase: "complete" } }}
+      initialFailures={[{
+        url,
+        error: { code: "network_unreachable", severity: "terminal", phase: "direct", url, detail: "fixture",
+          browserDiagnostic: { code: "net::ERR_CERT_AUTHORITY_INVALID", host: "cdn.example" } },
+      }]}
+    />);
+    expect(screen.getByTestId("job-complete").textContent).toContain("Saved.");
+    expect(screen.getByText("Unavailable sources").closest("details")?.open).toBe(false);
+    expect(screen.getByText("Technical details").closest("details")?.open).toBe(false);
+  });
+
   it("renders the empty state when no descriptors are present", () => {
     render(<App skipFetch />);
     expect(screen.getByText(/no media detected/i)).toBeTruthy();

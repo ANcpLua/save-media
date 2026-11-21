@@ -45,7 +45,8 @@ function basename(path: string | null | undefined): string {
 }
 
 export function hotkeyErrorDetail(error: JobError): string {
-  const { title, action } = userMessage(error);
+  const { title, action, technicalDetails } = userMessage(error);
+  if (technicalDetails) return title;
   if (error.code === "unexpected_media_response" || error.code === "access_denied") {
     return `${title}. Reload the file page and try again.`;
   }

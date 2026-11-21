@@ -2,7 +2,7 @@
 // See licenses/video-rescue-MIT.txt. Browser adaptation: bounded probes,
 // per-range retries and representation checks; no filesystem/native host.
 import { type JobError } from "@savemedia/core";
-import { classifyNetworkFailure, type NetworkPhase } from "./error-classification";
+import { BrowserFetchError, classifyNetworkFailure, type NetworkPhase } from "./error-classification";
 
 export interface RangeRetry {
   readonly attempt: number;
@@ -61,7 +61,8 @@ export function rangeFailure(error: unknown, url: string, phase: NetworkPhase): 
     return { code: "engine_job_failed", severity: "terminal", at: phase === "manifest" ? "manifest" : "segment",
       detail: status === undefined ? error.message : `Media request returned HTTP ${status}. Reload the page and check again.` };
   }
-  return classified ?? { code: "network_unreachable", severity: "terminal", phase, url: origin, detail };
+  return { code: "network_unreachable", severity: "terminal", phase, url: origin, detail,
+    ...(error instanceof BrowserFetchError ? { browserDiagnostic: error.diagnostic } : {}) };
 }
 
 export function parseContentRange(value: string | undefined): ContentRange | null {

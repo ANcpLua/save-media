@@ -1,6 +1,10 @@
 import { test, expect, chromium, type BrowserContext, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -535,6 +539,82 @@ test.describe("extension classifies real fixture pages", () => {
       }
     });
   }
+
+  test("reports untrusted and restricted video sources without offering a download", async () => {
+    await clearDownloadHistory();
+    const temporary = mkdtempSync(resolve(tmpdir(), "savemedia-cert-"));
+    const key = resolve(temporary, "test.key");
+    const cert = resolve(temporary, "test.crt");
+    const page = await context!.newPage();
+    let mediaRequests = 0;
+    let mediaHost = "";
+    let popup: Page | undefined;
+    let secureServer: ReturnType<typeof createHttpsServer> | undefined;
+    const server = createHttpServer((req, res) => {
+      if (req.url === "/redirect.mov") {
+        res.writeHead(302, { location: "https://" + mediaHost + "/clip.mov?fixture=not-for-display" });
+        res.end();
+      } else if (req.url === "/restricted.mov") {
+        res.writeHead(451, { "content-type": "text/html" });
+        res.end("<p>Unavailable for legal reasons</p>");
+      } else {
+        const source = req.url === "/certificate.html" ? "/redirect.mov" : "/restricted.mov";
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end('<!doctype html><title>Video fixture</title><video preload="none" controls src="' + source + '"></video>');
+      }
+    });
+
+    try {
+      // The test keeps Chromium's normal certificate checks enabled.
+      execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+        "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+        "-keyout", key, "-out", cert], { stdio: "ignore" });
+      const video = readFileSync(resolve(here, "media-fixtures/direct/test-pattern.mov"));
+      secureServer = createHttpsServer({ key: readFileSync(key), cert: readFileSync(cert) }, (_req, res) => {
+        mediaRequests += 1;
+        res.writeHead(200, { "content-type": "video/quicktime" });
+        res.end(video);
+      });
+      await once(secureServer.listen(0, "127.0.0.1"), "listening");
+      mediaHost = "127.0.0.1:" + (secureServer.address() as AddressInfo).port;
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const origin = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
+
+      for (const [path, title, details] of [
+        ["/certificate.html", "Untrusted source", mediaHost + " · net::ERR_CERT_AUTHORITY_INVALID"],
+        ["/restriction.html", "Access restricted", "HTTP 451"],
+      ] as const) {
+        await page.goto(origin + path);
+        popup = await openPopupFor(page);
+        await expect(popup.getByRole("status").filter({ hasText: title })).toBeVisible();
+        await expect(popup.getByRole("button", { name: "Check page again" })).toBeEnabled();
+        await expect(popup.getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
+        const technicalDetails = popup.getByText(details, { exact: true });
+        await expect(technicalDetails).toBeHidden();
+        await popup.getByText("Technical details", { exact: true }).click();
+        await expect(technicalDetails).toBeVisible();
+        await expect(popup.locator("main")).not.toContainText("not-for-display");
+        await popup.close();
+        popup = undefined;
+
+        await page.bringToFront();
+        await page.keyboard.press("Alt+KeyS");
+        const toast = page.locator('[data-savemedia="feedback"] .t');
+        await expect(toast).toHaveText("Not saved" + title);
+        expect(await probe!.evaluate(() => chrome.downloads.search({}))).toEqual([]);
+      }
+      expect(mediaRequests).toBe(0);
+    } finally {
+      await popup?.close();
+      await page.close();
+      for (const fixture of [server, secureServer]) {
+        if (!fixture) continue;
+        fixture.closeAllConnections();
+        await new Promise<void>(resolveClose => fixture.close(() => resolveClose()));
+      }
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
 
   test("download pipeline saves direct MP4 as a playable MP4", async () => {
     await clearDownloadHistory();

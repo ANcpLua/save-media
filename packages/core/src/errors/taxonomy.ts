@@ -3,6 +3,11 @@ import type { VideoCodec, AudioCodec } from "../types/codec";
 
 export type JobErrorSeverity = "terminal" | "recoverable";
 
+export interface BrowserRequestDiagnostic {
+  readonly code: string;
+  readonly host: string;
+}
+
 export type JobError =
   // DRM / CDM-bound encryption
   | { code: "encrypted_media_detected";   severity: "terminal";    detectedVia: readonly DrmSignalSource[]; keySystem: string | null }
@@ -36,8 +41,8 @@ export type JobError =
   | { code: "manifest_refresh_failed";    severity: "recoverable"; url: string; httpStatus: number | "network-error"; attemptsRemaining: number }
   | { code: "rate_limited";               severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 429; retryAfterSeconds: number | null }
   | { code: "server_busy";                severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: number }
-  | { code: "access_denied";              severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 401 | 402 | 403; explanation: "login-or-cookie" | "payment-or-entitlement" | "forbidden-or-expired-url" }
-  | { code: "network_unreachable";        severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; detail: string }
+  | { code: "access_denied";              severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 401 | 402 | 403 | 451; explanation: "login-or-cookie" | "payment-or-entitlement" | "forbidden-or-expired-url" | "legal-restriction" }
+  | { code: "network_unreachable";        severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; detail: string; browserDiagnostic?: BrowserRequestDiagnostic }
 
   // Browser security
   | { code: "cors_blocked";               severity: "terminal";    url: string; blockedHeader: "Access-Control-Allow-Origin" | "Access-Control-Allow-Headers" | "credentials" }

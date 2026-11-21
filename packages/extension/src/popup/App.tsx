@@ -4,7 +4,9 @@ import { isBackgroundToPopupMessage } from "../types/messages";
 import type { BackgroundToContentMessage, DiscoveryFailure, PageMediaSnapshot, PopupToBackgroundMessage } from "../types/messages";
 import { DetectedItem, type JobStatus } from "./components/DetectedItem";
 import { LocalDownloader } from "./components/LocalDownloader";
+import { TechnicalDetails } from "./components/TechnicalDetails";
 import { rankDescriptors } from "./preview-match";
+import { isDownloadableCandidate } from "../util/downloadable";
 
 // `?tabId=` is set when the popup was opened as its own window (the button
 // in the header); then the active tab would be the window itself.
@@ -253,22 +255,12 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
             </button>
           )}
         </div>
-        {failures.length > 0 && (
-          <ul className="px-2 py-1 space-y-1.5" aria-label="Media check failures">
-            {failures.map(failure => (
-              <li key={failure.url} className="rounded-lg border border-red-900/40 bg-surface p-3 text-xs" role="status">
-                <p className="font-medium text-red-400">{userMessage(failure.error).title}</p>
-                <p className="text-muted mt-1">{userMessage(failure.error).body}</p>
-                <p className="text-muted mt-1">{mediaHost(failure.url)}</p>
-              </li>
-            ))}
-          </ul>
-        )}
-        {descriptors.length === 0 && failures.length === 0 ? (
+        {ranked.length === 0 && failures.length === 0 && (
           <div className="px-3 py-8 text-center text-muted text-xs">
             {tabId === null && !skipFetch ? "No active tab." : "No media detected on this page."}
           </div>
-        ) : (
+        )}
+        {ranked.length > 0 && (
           <ul className="px-2 pb-1 space-y-1.5">
             {ranked.map(r => (
               <DetectedItem
@@ -284,6 +276,14 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
             ))}
           </ul>
         )}
+        {failures.length > 0 && (descriptors.some(isDownloadableCandidate) ? (
+          <details className="px-3 py-1 text-xs text-muted">
+            <summary className="cursor-pointer">Unavailable sources</summary>
+            <DiscoveryFailures failures={failures} />
+          </details>
+        ) : (
+          <DiscoveryFailures failures={failures} />
+        ))}
       </section>
 
       <div className="border-t border-line">
@@ -294,6 +294,27 @@ export function App({ initialDescriptors = [], initialStatuses = {}, initialFail
         <span>{ranked.length} detected{version && ` · v${version}`}</span>
       </footer>
     </main>
+  );
+}
+
+function DiscoveryFailures({ failures }: { readonly failures: readonly DiscoveryFailure[] }) {
+  return (
+    <ul className="px-2 py-1 space-y-1.5" aria-label="Media check failures">
+      {failures.map(({ url, error }) => {
+        const { title, body, technicalDetails } = userMessage(error);
+        return (
+          <li key={url} className="rounded-lg border border-line bg-surface p-3 text-xs text-white">
+            <p className="font-medium" role="status">{title}</p>
+            {technicalDetails ? <TechnicalDetails body={body} details={technicalDetails} /> : (
+              <>
+                <p className="text-muted mt-1">{body}</p>
+                <p className="text-muted mt-1">{mediaHost(url)}</p>
+              </>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
