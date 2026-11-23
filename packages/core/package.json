@@ -30,12 +30,12 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "m3u8-parser": "^7.2.0",
+    "m3u8-parser": "^7.2.1",
     "mp4box": "^0.5.4",
-    "mpd-parser": "^1.3.1"
+    "mpd-parser": "^1.4.1"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
-    "vitest": "5.0.3"
+    "vitest": "5.1.1"
   }
 }
