@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "savemedia",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Saves videos and images that are not DRM encrypted, as your browser receives them, and checks each file it downloads itself.",
   "minimum_chrome_version": "114",
   "incognito": "not_allowed",

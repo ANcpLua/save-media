@@ -302,32 +302,6 @@ describe("DetectedItem — progress + error + complete states", () => {
     expect(screen.getByTestId("item-action").textContent).toBe("Retry save");
   });
 
-  describe("a save that is too large for the browser", () => {
-    const GIB = 1024 ** 3;
-    const measured = { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: 2 * GIB + 4096, limitBytes: 2 * GIB, measured: true } as const;
-
-    it("says so without a size that is not the file's, and offers no lower quality for a file that has none", () => {
-      render(<ul><DetectedItem descriptor={directDescriptor()} status={{ phase: "failed", error: measured }} /></ul>);
-      const failure = screen.getByTestId("job-error");
-      expect(within(failure).getByTestId("failure-body").textContent).toBe("This file is larger than the 2.00 GB savemedia can save in the browser.");
-      expect(within(failure).queryByTestId("failure-hint")).toBeNull();
-      expect(failure.textContent).not.toMatch(/lower quality|about 2\.00 GB/);
-      expect(rows(failure)).toMatchObject({ "Received before stopping": `${2 * GIB + 4096} bytes`, "Limit": `${2 * GIB} bytes` });
-      expect(screen.getByTestId("item-action").textContent).toBe("Save");
-    });
-
-    it("offers a lower quality where one is listed, and keeps the quality menu there to choose it", () => {
-      const base = hlsDescriptor().variants[0]!;
-      const variants = [{ ...base, id: "v-1080" as VariantId, estimatedSize: null }, { ...base, id: "v-480" as VariantId, width: 854, height: 480, estimatedSize: null }];
-      render(<ul><DetectedItem descriptor={hlsDescriptor({ variants })} status={{ phase: "failed", error: measured }} /></ul>);
-      expect(within(screen.getByTestId("job-error")).getByTestId("failure-hint").textContent).toBe("Choose a lower quality.");
-      const menu = screen.getByTestId("quality-select") as HTMLSelectElement;
-      expect([...menu.options].map(option => option.value)).toEqual(["v-1080", "v-480"]);
-      // On the lowest quality there is none below it to point at.
-      fireEvent.change(menu, { target: { value: "v-480" } });
-      expect(within(screen.getByTestId("job-error")).queryByTestId("failure-hint")).toBeNull();
-    });
-  });
 
   it("names a quality without a picture height by its bitrate or its place, never by its address", () => {
     const base = hlsDescriptor().variants[0]!;

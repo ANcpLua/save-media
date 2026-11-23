@@ -1,4 +1,4 @@
-import { BROWSER_OUTPUT_LIMIT_BYTES, detectContainerFromBytes, isJobError, type AvMergePlan, type JobError, type MergeTrack } from "@savemedia/core";
+import { detectContainerFromBytes, isJobError, type AvMergePlan, type JobError, type MergeTrack } from "@savemedia/core";
 import { report, type JobResult, type PrepareRequests, type ProgressFn } from "../job";
 import { fetchWithRetry } from "../net/fetch-with-retry";
 import { classifyNetworkFailure } from "../net/error-classification";
@@ -54,14 +54,14 @@ export async function runAvMergeJob(plan: AvMergePlan, options: AvMergeJobOption
   report(onProgress, { kind: "track", track: "video" }, 0, plan.estimatedBytes);
   // After an outage a track goes on with the segment it was reading: what was received stays held.
   const reconnecting = (bytes: number, waitMs: number): void => report(onProgress, { kind: "reconnecting", waitMs }, bytes, plan.estimatedBytes);
-  const video = await fetchTrack(plan.video, "video", { signal, request, keyring }, 0, bytes =>
+  const video = await fetchTrack(plan.video, "video", { signal, request, keyring }, bytes =>
     report(onProgress, { kind: "track", track: "video" }, bytes, plan.estimatedBytes), reconnecting);
 
   signal.throwIfAborted();
   let audio: FetchedTrack | null = null;
   if (plan.audio) {
     report(onProgress, { kind: "track", track: "audio" }, video.size, plan.estimatedBytes);
-    audio = await fetchTrack(plan.audio, "audio", { signal, request, keyring }, video.size, bytes =>
+    audio = await fetchTrack(plan.audio, "audio", { signal, request, keyring }, bytes =>
       report(onProgress, { kind: "track", track: "audio" }, video.size + bytes, plan.estimatedBytes),
     (bytes, waitMs) => reconnecting(video.size + bytes, waitMs));
     signal.throwIfAborted();
@@ -107,12 +107,11 @@ function fetched(blob: Blob, startSeconds: number | null = null): FetchedTrack {
   return { blob, size: blob.size, startSeconds };
 }
 
-/** One track as a Blob. `before`: the bytes the job already holds, which count toward what the browser can hold. */
+/** One track as a Blob. */
 async function fetchTrack(
   track: MergeTrack,
   kind: "video" | "audio",
   { signal, request, keyring }: TrackRequests,
-  before: number,
   onBytes: (bytesSoFar: number) => void,
   onWait: (bytesSoFar: number, waitMs: number) => void,
 ): Promise<FetchedTrack> {
@@ -121,13 +120,6 @@ async function fetchTrack(
     throw { code: "manifest_malformed", severity: "terminal", url: "", parserError: "merge track has no segments" } satisfies JobError;
   }
 
-  const limit = (bytes: number): void => {
-    // No estimate is needed for this limit: the bytes in hand are counted as they arrive.
-    if (before + bytes >= BROWSER_OUTPUT_LIMIT_BYTES) {
-      throw { code: "output_too_large_for_browser", severity: "terminal",
-        estimatedBytes: before + bytes, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true } satisfies JobError;
-    }
-  };
   const failedRead = (err: unknown, index: number, url: string): unknown => {
     if (signal.aborted || isJobError(err)) return err;
     return classifyNetworkFailure(err, "segment", url) ?? {
@@ -148,7 +140,6 @@ async function fetchTrack(
       // A file of bare audio frames has one tag, at its start, which the muxer's reader passes over itself.
       return { container, startSeconds: container === "unknown" && kind === "audio" ? packedAudioHead(head)?.startSeconds ?? null : null };
     }, bytes => {
-      limit(bytes);
       // A report per chunk would flood the popup.
       if (performance.now() - lastReport < 250) return;
       lastReport = performance.now();
@@ -199,7 +190,6 @@ async function fetchTrack(
     if (transport) plain = wholePackets(plain);
     transport?.inspect(plain);
     parts.append(plain);
-    limit(parts.size);
     onBytes(parts.size);
   }
   transport?.finish();

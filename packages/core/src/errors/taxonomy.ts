@@ -63,12 +63,6 @@ export type JobError =
    */
   | { code: "hls_layout_unsupported";     severity: "terminal";    manifestUrl: string;
       layout: "not-transport-stream" | "init-boxes" | "fragment-boxes" | "box-structure" | "byte-ranges" | "init-changes" }
-  /**
-   * `estimatedBytes` is the size the manifest or the server states for the whole save. With `measured` it is
-   * the bytes received when the limit was reached instead: the whole is larger, and how large is not known.
-   * `lowerQuality`: the same video is listed in a smaller quality that the user can choose.
-   */
-  | { code: "output_too_large_for_browser"; severity: "terminal";  estimatedBytes: number; limitBytes: number; measured?: true; lowerQuality?: true }
 
   // Network
   | { code: "range_body_empty"; severity: "terminal"; host: string; rangeStart: number; rangeEnd: number; totalBytes: number;

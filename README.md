@@ -463,8 +463,7 @@ Conventions:
 ## Optional local downloader
 
 For pages the in-browser engine cannot save (HLS or DASH byte ranges that do
-not add up to one file, files above the 2 GiB the browser engine puts
-together, unusual containers), savemedia can hand the page
+not add up to one file, unusual containers), savemedia can hand the page
 address to yt-dlp and ffmpeg that the user installs themselves. It is off by
 default and asks for the `nativeMessaging` permission only when switched on.
 The Alt+S fallback and the offer under a failed save are never made for

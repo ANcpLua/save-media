@@ -277,18 +277,6 @@ describe("dispatch — HLS", () => {
     expect(dispatch(d, originalChoice).kind).toBe("hls-plain");
   });
 
-  it("an HLS size above 2 GiB that a server stated refuses before the save starts", () => {
-    const base = makeHls();
-    // A size without a bit rate is the length a server declared.
-    const huge: StreamDescriptor = {
-      ...base,
-      variants: [variant({ bitrate: null, estimatedSize: 3 * 1024 * 1024 * 1024 })],
-    };
-    const r = dispatch(huge, originalChoice);
-    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
-    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 3 * 1024 ** 3 });
-  });
-
   it("an HLS size worked out from the bit rate never refuses: BANDWIDTH is the peak rate, and the sum leans high", () => {
     const r = dispatch({ ...makeHls(), variants: [variant({ bitrate: 6_000_000, estimatedSize: 3 * 1024 ** 3 })] }, originalChoice);
     // The estimate still tells the progress display what to expect.
@@ -464,36 +452,6 @@ describe("dispatch — demuxed HLS (av-merge)", () => {
     expect(r).toEqual({ kind: "refuse", reason: "cdm_required" });
   });
 
-  it("size cap sums the sizes both tracks state: each under 2 GiB but combined over → refuses", () => {
-    // Each track is one file whose byte ranges state where it ends.
-    const sized = (videoBytes: number | undefined, audioBytes: number | undefined) => makeDemuxedHls({
-      variants: [
-        variant({
-          audioRenditionId: AUDIO_EN,
-          estimatedSize: 1_610_612_736, // 1.5 GiB by its bit rate
-          segmentRef: {
-            kind: "hls-segments",
-            playlistUrl: "https://x/v1080.m3u8",
-            initSegmentUrl: null,
-            segmentUrls: ["https://x/v.mp4"],
-            encryption: null,
-            ...(videoBytes === undefined ? {} : { fileBytes: videoBytes }),
-          },
-        }),
-      ],
-      audioRenditions: [hlsAudioRendition({
-        estimatedSize: 644_245_094, // 0.6 GiB by its bit rate
-        segmentRef: { kind: "hls-segments", playlistUrl: "https://x/audio-en.m3u8", initSegmentUrl: null, segmentUrls: ["https://x/a.mp4"],
-          encryption: null, ...(audioBytes === undefined ? {} : { fileBytes: audioBytes }) },
-      })],
-    });
-    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
-    expect(dispatch(sized(1_610_612_736, 644_245_094), originalChoice))
-      .toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 1_610_612_736 + 644_245_094 });
-    // The same sum from the tracks' bit rates is an estimate that leans high: the save is planned, and counted as it arrives.
-    expect(dispatch(sized(undefined, undefined), originalChoice))
-      .toMatchObject({ kind: "av-merge", estimatedBytes: 1_610_612_736 + 644_245_094 });
-  });
 });
 
 describe("dispatch — DASH", () => {
@@ -542,17 +500,6 @@ describe("dispatch — DASH", () => {
     expect(dispatch({ ...makeDashAv(), presentation: live }, originalChoice)).toEqual({ kind: "refuse", reason: "hls_live_unsupported" });
     expect(dispatch({ ...makeDashAv({ audioRenditions: [] }), presentation: live }, originalChoice))
       .toEqual({ kind: "refuse", reason: "hls_live_unsupported" });
-  });
-
-  it("the size cap also holds for a video saved without audio, on the size a server stated and never on an estimate", () => {
-    const d = makeDashAv({ audioRenditions: [] });
-    // A size without a bit rate is the length a server declared.
-    const r = dispatch({ ...d, variants: [{ ...d.variants[0]!, bitrate: null, estimatedSize: 3 * 1024 ** 3 }] }, originalChoice);
-    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
-    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 3 * 1024 ** 3 });
-    // Bit rate over length: an estimate. The save is planned, and the count of received bytes stops it at the limit.
-    expect(dispatch({ ...d, variants: [{ ...d.variants[0]!, bitrate: 8_000_000, estimatedSize: 3 * 1024 ** 3 }] }, originalChoice))
-      .toMatchObject({ kind: "av-merge", estimatedBytes: 3 * 1024 ** 3 });
   });
 
   it("audio rendition with no materialized media URLs refuses dash_unsupported", () => {
@@ -627,35 +574,6 @@ describe("dispatch — DASH", () => {
     expect(r.audio?.segmentUrls).toEqual(["https://x/lo-1.m4s"]);
   });
 
-  it("size cap sums the sizes both DASH tracks state before emitting a plan", () => {
-    // Two files, each with the length its server declared (a size without a bit rate).
-    const d = makeDashAv({
-      variants: [
-        variant({
-          id: "dash-1080" as VariantId,
-          bitrate: null,
-          estimatedSize: 1_610_612_736, // 1.5 GiB
-          segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: ["https://x/v.mp4"] },
-        }),
-      ],
-      audioRenditions: [dashAudioRendition({ bitrate: null, estimatedSize: 644_245_094,  // 0.6 GiB
-        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: ["https://x/a.mp4"] } })],
-    });
-    const r = dispatch(d, originalChoice);
-    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
-    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 1_610_612_736 + 644_245_094 });
-  });
-
-  it("a representation kept in one file refuses on where its byte ranges end, whatever its bit rate adds up to", () => {
-    const oneFile = (fileBytes: number) => makeDashAv({
-      variants: [variant({ id: "dash-1080" as VariantId, estimatedSize: 50_000_000,
-        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: ["https://x/v.mp4"], fileBytes } })],
-      audioRenditions: [],
-    });
-    expect(dispatch(oneFile(3 * 1024 ** 3), originalChoice))
-      .toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 3 * 1024 ** 3 });
-    expect(dispatch(oneFile(40_000_000), originalChoice)).toMatchObject({ kind: "av-merge" });
-  });
 });
 
 describe("dispatch — progressive containers", () => {

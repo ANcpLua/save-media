@@ -530,21 +530,6 @@ describe("runHlsJob — supported plain VOD boundary", () => {
     }
   });
 
-  it("refuses a stream whose playlist states a size that will not fit, with that size, before any key or segment is requested", async () => {
-    // Byte ranges of one file state where the stream ends: 1.5 GiB twice.
-    const part = 1_610_612_736;
-    const playlist = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-TARGETDURATION:6", "#EXTINF:6.0,", `#EXT-X-BYTERANGE:${part}@0`, "clip.ts",
-      "#EXTINF:6.0,", `#EXT-X-BYTERANGE:${part}`, "clip.ts", "#EXT-X-ENDLIST", ""].join("\n");
-    const requested: string[] = [];
-    patchFetch(async url => {
-      requested.push(url.split("/").at(-1)!);
-      return url.endsWith(".m3u8") ? textResponse(playlist) : new Response("not found", { status: 404 });
-    });
-    await expect(runHlsJob(plainPlan(), hlsDescriptor(), { onProgress: vi.fn(), signal: new AbortController().signal, sink: new CapturingSink() }))
-      .rejects.toEqual({ code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: 2 * part, limitBytes: 2 * 1024 ** 3 });
-    expect(requested).toEqual(["master.m3u8"]);
-  });
-
   // A session that ended while the tab stayed open: the playlist's address now sends the sign-in page, with status 200.
   it("says a playlist address that sends a web page or other data as the save starts is no playlist any more, not a damaged or a live one", async () => {
     const requested: string[] = [];

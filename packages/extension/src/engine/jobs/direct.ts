@@ -1,4 +1,4 @@
-import { BROWSER_OUTPUT_LIMIT_BYTES, isJobError, MAX_AUTOMATIC_WAIT_MS, type DirectPlan, type JobError, type OutputContainer } from "@savemedia/core";
+import { isJobError, MAX_AUTOMATIC_WAIT_MS, type DirectPlan, type JobError, type OutputContainer } from "@savemedia/core";
 import { originalMediaFilename } from "../../util/filename";
 import { directResumeScope } from "../../types/transfer";
 import type { JobResult, ProgressFn, RetainedPartial, TransferStage } from "../job";
@@ -285,7 +285,6 @@ function probeDirectFile(t: Transfer) {
       const probe = await readMediaProbe(response, t.url);
       const container = requireDirectVideo(probe.bytes, probe.headers);
       const size = parseContentRange(probe.headers["content-range"])!.total;
-      checkSize(size);
       if (size === probe.bytes.length) {
         const blob = new Blob([probe.bytes as BlobPart], { type: DIRECT_MEDIA_TYPES[container] });
         return { kind: "file", file: { blob, container, resumed: false } } as const;
@@ -298,7 +297,6 @@ function probeDirectFile(t: Transfer) {
 }
 
 async function downloadWholeFile(t: Transfer, options: WholeFileOptions): Promise<DirectFile> {
-  if (options.known) checkSize(options.known.total);
   const read = await recoverRequest(async (attemptSignal, receivedBytes) => {
     let response: Response;
     try {
@@ -359,7 +357,6 @@ async function readReplacement(t: Transfer, url: string, response: Response, sig
 async function recoverFilePrefix(t: Transfer, url: string, prefix: Blob, reportedTotal: number,
   expected: OutputContainer | undefined, earlier: RangeMetadata | null): Promise<DirectFile> {
   const offset = prefix.size;
-  if (reportedTotal > 0) checkSize(reportedTotal);
   const known: ExpectedRangeFile | undefined = reportedTotal > 0 ? { total: reportedTotal, metadata: earlier } : undefined;
   let emptyByteResponse = false;
   const emptyByte = (address: string, total: number, declaredLength: number | null, emptyBody: EmptyBody) => {
@@ -394,7 +391,6 @@ async function recoverFilePrefix(t: Transfer, url: string, prefix: Blob, reporte
       if (prefix.size >= range.total || (known && known.total !== range.total)) {
         throw new TransferError("changed", { url: address, received: offset, expected: range.total });
       }
-      checkSize(range.total);
       const observed = resumeMetadata(headers, range.total);
       const metadata = earlier && observed?.digest ? { ...earlier, digest: observed.digest } : earlier ?? observed;
       try { validateRange(headers, address, offset, offset, range.total, earlier ?? undefined); }
@@ -698,7 +694,6 @@ async function readWholeFile(t: Transfer, url: string, response: Response, signa
   const replaying = sameFile ? options.replaying : undefined;
   const expected = replaying ? options.expected : undefined;
   const total = stated ?? (sameFile ? known.total : null);
-  if (total !== null) checkSize(total);
   // Folded into Blobs as the body arrives: only the head and the last few chunks stay in the engine document.
   const parts = new BlobParts();
   const head = new Uint8Array(4096);
@@ -746,7 +741,6 @@ async function readWholeFile(t: Transfer, url: string, response: Response, signa
       receivedBytes();
       if (received < head.length) head.set(value.subarray(0, head.length - received), received);
       received += value.byteLength;
-      checkSize(received, true);
       if (total !== null && received > total) throw new TransferError("body-long", { url: source, received, expected: total });
       if (!container && received >= head.length) container = identify();
       parts.append(value);
@@ -802,10 +796,3 @@ async function readWholeFile(t: Transfer, url: string, response: Response, signa
     earlier: sameFile ? known.metadata : null, cause: stop };
 }
 
-/** `measured`: the size is the bytes received so far, not the size the server stated for the file. */
-function checkSize(size: number, measured = false): void {
-  if (size >= BROWSER_OUTPUT_LIMIT_BYTES) {
-    throw { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: size, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES,
-      ...(measured ? { measured: true as const } : {}) } satisfies JobError;
-  }
-}

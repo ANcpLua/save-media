@@ -79,11 +79,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
   const unchecked = descriptor.unchecked === true;
   const isDownloadable = (!!selection || unchecked) && !live;
   const error = status?.phase === "failed" ? status.error : undefined;
-  // "Choose a lower quality" is said only where this card lists one below the quality that was too large.
-  const tooLarge = error?.code === "output_too_large_for_browser";
-  const lowerListed = directChoices.indexOf(descriptor) < directChoices.length - 1
-    || (!!selection?.variant && qualityChoices.indexOf(selection.variant) < qualityChoices.length - 1);
-  const failure = error ? userMessage(error.code === "output_too_large_for_browser" && lowerListed ? { ...error, lowerQuality: true } : error) : null;
+  const failure = error ? userMessage(error) : null;
   const running = status?.phase === "active" ? describeTransfer(status) : null;
 
   function download(allowRepeat: boolean) {
@@ -182,7 +178,7 @@ export function DetectedItem({ descriptor: initialDescriptor, status: initialSta
         </label>
       )}
 
-      {directChoices.length === 1 && qualityChoices.length > 1 && (!status || tooLarge) && (
+      {directChoices.length === 1 && qualityChoices.length > 1 && !status && (
         <label className="mt-2 ml-5 flex items-center gap-2 text-muted">
           {POPUP.quality}
           <select

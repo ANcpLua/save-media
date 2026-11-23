@@ -52,12 +52,6 @@ export const VARIANTS: { readonly [C in JobErrorCode]: readonly Extract<JobError
     { code: "hls_layout_unsupported", severity: "terminal", manifestUrl: PRIVATE, layout: "not-transport-stream" },
     { code: "hls_layout_unsupported", severity: "terminal", manifestUrl: PRIVATE, layout: "init-changes" },
   ],
-  output_too_large_for_browser: [
-    // The stated size of the whole save; the bytes received when the limit was reached; a smaller quality is listed.
-    { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: 3e9, limitBytes: 2 * 1024 ** 3 },
-    { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: 2 * 1024 ** 3 + 2_000_000, limitBytes: 2 * 1024 ** 3, measured: true },
-    { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: 3e9, limitBytes: 2 * 1024 ** 3, lowerQuality: true },
-  ],
   range_body_empty: [{ code: "range_body_empty", severity: "terminal", host: "cdn.example", rangeStart: 10, rangeEnd: 20, totalBytes: 30,
     declaredBytes: null, reconnects: 2, reason: "stream-ended" }],
   transfer_failed: (["ended-early", "resume-refused", "resume-unverifiable", "file-changed", "content-mismatch", "range-mismatch",

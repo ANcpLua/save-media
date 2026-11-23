@@ -36,8 +36,6 @@ and the message says which:
 - the server denies access, limits requests, or is busy after retries;
 - the user's network keeps the browser from the server;
 - a required playlist or media part cannot be fetched;
-- the output would be larger than the 2 GiB savemedia puts together in the
-  browser;
 - the address looks like media but its bytes are not a supported video.
 
 Two paths save a file that savemedia does not verify itself: the browser's
@@ -408,15 +406,13 @@ from Blobs in slices and write the MP4 into Blobs again, with its index at
 the end (`engine/remux/mp4-output.ts`), so the muxer keeps a few 4 MiB chunks
 and the sample tables, not the samples. A checksum the server states is
 computed over 4 MiB windows of the finished Blob (`engine/crypto/sha256.ts`).
-Every job counts the bytes it receives and stops at 2 GiB
-(`BROWSER_OUTPUT_LIMIT_BYTES`). A save is refused before it starts only on a
-size its server or its manifest states: a declared file length, or where the
-byte ranges of a stream kept in one file end. A size worked out from a bit
-rate over the stream's length is an estimate that leans high (HLS
-`BANDWIDTH` is the peak rate): it is shown as an estimate and never refuses
-a save.
-A merge or a remux holds its input and its output as Blobs at the same time.
-Saves near the limit are not covered by a test.
+A save has no size limit of its own: no size, stated or estimated, refuses
+a save, and no count of received bytes stops one. A size worked out from a
+bit rate over the stream's length is an estimate that leans high (HLS
+`BANDWIDTH` is the peak rate) and is only shown. What bounds a save is the
+browser's Blob storage: a merge or a remux holds its input and its output as
+Blobs at the same time, and a save that outgrows that storage fails like any
+other engine failure. Very large saves are not covered by a test.
 
 ### HLS
 
@@ -477,9 +473,6 @@ Refused:
   again as the save starts (`unexpected_media_response` with `atSaveStart`),
   told as "The video's playlist no longer answers", never as a damaged or a
   live playlist;
-- a stream kept in one file whose byte ranges state a size that will not fit
-  in the browser (`output_too_large_for_browser`), before the first segment;
-  any other stream is counted as it arrives and stops at the same limit;
 - a ciphertext segment whose length is not whole AES blocks;
 - a page or data document in place of a segment, reported as such;
 - malformed `EXT-X-MAP` fMP4/CMAF playlists;
@@ -559,9 +552,6 @@ the plain **Save**.
   engine can assemble. `codec_unsupported` is a track whose declared codec
   the MP4 file cannot hold (for example ALAC sound in a demuxed stream); it
   is decided from the manifest, before anything is fetched.
-- `output_too_large_for_browser`: the size the server or the manifest
-  states, or the bytes received so far, exceed what savemedia puts together
-  in the browser.
 - `private_network_target`: a page on the internet names a server inside the
   user's local network that the browser itself was not answered from for that
   tab (not requested; the hint says to start playback, because what the

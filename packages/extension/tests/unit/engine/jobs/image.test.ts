@@ -62,11 +62,6 @@ describe("the image job", () => {
     expect((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1]).not.toHaveProperty("credentials");
   });
 
-  it("stops above the size limit and reports it, instead of holding an endless response", async () => {
-    await expect(runImageJob("https://site.example/huge.png", signal(), respond(new Uint8Array(4096)), 1024))
-      .rejects.toMatchObject({ code: "output_too_large_for_browser", limitBytes: 1024 });
-  });
-
   it("reports a refused request by its status", async () => {
     await expect(runImageJob("https://site.example/gone.png", signal(), respond("gone", { status: 404 })))
       .rejects.toMatchObject({ code: "http_error", httpStatus: 404 });
@@ -100,13 +95,13 @@ describe("the image job", () => {
 
   it("keeps nothing of an image request that a redirect led from a public page into the user's network", async () => {
     const redirected = vi.fn(async () => Object.defineProperty(new Response(PNG), "url", { value: "https://192.168.1.1/status.png" }));
-    await expect(runImageJob("https://cdn.example/go.png", signal(), redirected, undefined, "https://news.example/story"))
+    await expect(runImageJob("https://cdn.example/go.png", signal(), redirected, "https://news.example/story"))
       .rejects.toMatchObject({ code: "private_network_target", host: "192.168.1.1" });
     // The same redirect to a server the browser itself was answered from for this tab is that server's image.
-    await expect(runImageJob("https://cdn.example/go.png", signal(), redirected, undefined, "https://news.example/story",
+    await expect(runImageJob("https://cdn.example/go.png", signal(), redirected, "https://news.example/story",
       url => new URL(url).origin === "https://192.168.1.1")).resolves.toMatchObject({ kind: "image" });
     // A page on the user's own network may show its own images.
-    await expect(runImageJob("https://192.168.1.20/a.png", signal(), redirected, undefined, "https://192.168.1.20/album"))
+    await expect(runImageJob("https://192.168.1.20/a.png", signal(), redirected, "https://192.168.1.20/album"))
       .resolves.toMatchObject({ kind: "image" });
   });
 });

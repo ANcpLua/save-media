@@ -1,7 +1,7 @@
 // One image, fetched once. The bytes that were checked are the bytes that
 // are saved: nothing is requested a second time, so a server cannot show the
 // check one file and the download another.
-import { BROWSER_OUTPUT_LIMIT_BYTES, isJobError, type JobError } from "@savemedia/core";
+import { isJobError, type JobError } from "@savemedia/core";
 import { IMAGE_EXTENSION, IMAGE_MIME, identifyBinaryImage, identifyImage, isText, notImageKind, type ImageType } from "../../util/image-signature";
 import { unobservedLocalTarget, type ObservedLocal } from "../../util/address-space";
 import { checkResponseStatus, rangeFailure, recoverRequest } from "../net/range-recovery";
@@ -43,17 +43,17 @@ const MAX_SVG_BYTES = 16 * 1024 * 1024;
  * every other read of the engine does, so a server that stops answering cannot hold the save for good.
  */
 export async function runImageJob(url: string, signal: AbortSignal, fetchFn: ImageFetch = (input, init) => fetch(input, init),
-  limitBytes: number = BROWSER_OUTPUT_LIMIT_BYTES, pageUrl?: string, observed?: ObservedLocal): Promise<ImageJobResult> {
+  pageUrl?: string, observed?: ObservedLocal): Promise<ImageJobResult> {
   try {
     return await recoverRequest((attemptSignal, receivedBytes) =>
-      readImage(url, attemptSignal, receivedBytes, fetchFn, limitBytes, pageUrl, observed), signal, 1);
+      readImage(url, attemptSignal, receivedBytes, fetchFn, pageUrl, observed), signal, 1);
   } catch (error) {
     signal.throwIfAborted();
     throw rangeFailure(error, url, "direct");
   }
 }
 
-async function readImage(url: string, signal: AbortSignal, receivedBytes: () => void, fetchFn: ImageFetch, limitBytes: number,
+async function readImage(url: string, signal: AbortSignal, receivedBytes: () => void, fetchFn: ImageFetch,
   pageUrl: string | undefined, observed: ObservedLocal | undefined): Promise<ImageJobResult> {
   let response: Response;
   try {
@@ -107,9 +107,6 @@ async function readImage(url: string, signal: AbortSignal, receivedBytes: () => 
         if (done) break;
         take(value);
         receivedBytes();
-        if (received > limitBytes) {
-          throw { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: received, limitBytes, measured: true } satisfies JobError;
-        }
         if (!found && !refused && headLength >= HEAD_BYTES) decide();
         // Text longer than any SVG image is not read to its end.
         if (found === "text" && received > MAX_SVG_BYTES) refused = { kind: "refused", received: "data" };

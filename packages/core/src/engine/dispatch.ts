@@ -17,19 +17,6 @@ import type {
 import type { Variant, SegmentRef, VideoCodecFamily, AudioCodecFamily } from "../types/codec";
 import { declarationOf, planHlsKeys } from "../parser/hls/keys";
 
-/**
- * The most bytes one save puts together in the browser. A save is refused
- * here when the size its server or its manifest states is larger (statedSize),
- * and every engine job counts the bytes it receives against the same limit,
- * so a save without a stated size stops there. An estimate from a bit rate
- * never refuses a save. The engine holds the file as Blobs, which the
- * browser keeps outside the engine document and can move to disk, so the
- * limit is not the document's memory. It bounds what one save asks of the
- * browser's Blob storage: a merge or a remux holds its input and its output
- * there at the same time, about twice this. Larger saves are untested.
- */
-export const BROWSER_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
-
 function asOutputContainer(c: Container): OutputContainer {
   if (c === "mp4" || c === "webm" || c === "mkv") return c;
   return "mp4";
@@ -55,39 +42,6 @@ function estimateSize(variant: Variant | null): number | null {
   if (!variant) return null;
   if (variant.estimatedSize != null) return variant.estimatedSize;
   return null;
-}
-
-function tooLargeForBrowser(stated: number | null): boolean {
-  return stated != null && stated >= BROWSER_OUTPUT_LIMIT_BYTES;
-}
-
-/**
- * The size a track's server or its manifest states: where the byte ranges of
- * a track kept in one file end, or the length a server declared for a file
- * (a track with a size and no bit rate has no other). A size next to a bit
- * rate was worked out from that rate over the track's length. That is an
- * estimate, and it leans high: HLS BANDWIDTH is the peak rate, and DASH
- * bandwidth an upper bound. It is shown as an estimate and never refuses a
- * save.
- */
-function statedSize(track: Variant | null): number | null {
-  if (!track) return null;
-  const ref = track.segmentRef;
-  if ((ref.kind === "hls-segments" || ref.kind === "dash-segments") && ref.fileBytes !== undefined) return ref.fileBytes;
-  return track.bitrate === null ? track.estimatedSize : null;
-}
-
-/**
- * The stated size of a whole save, video and audio together. A save is
- * refused before it starts only on this. Without it, the count of received
- * bytes stops a save at the limit.
- */
-function statedSaveSize(video: Variant, audio: Variant | null): number | null {
-  const v = statedSize(video);
-  const a = statedSize(audio);
-  // One track's stated size is already the least the save will be.
-  if (v === null && a === null) return null;
-  return (v ?? 0) + (a ?? 0);
 }
 
 function resolveOutputContainer(descriptor: StreamDescriptor, choice: UserChoice): OutputContainer {
@@ -275,10 +229,6 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
     if (!variant) return { kind: "refuse", reason: "no_usable_variant" };
     const demuxed = variant.audioRenditionId !== null;
     const audio = demuxed ? pickHlsAudioRendition(descriptor, variant, choice) : null;
-    const stated = statedSaveSize(variant, audio);
-    if (stated != null && tooLargeForBrowser(stated)) {
-      return { kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: stated };
-    }
     const enc = hlsEncryptionFor(descriptor);
     if (enc === "drm-blocked") {
       return { kind: "refuse", reason: "cdm_required" };
@@ -325,10 +275,6 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
     const plan = buildAvMergePlan(variant, audio, choice);
     if (!plan) {
       return { kind: "refuse", reason: "dash_unsupported" };
-    }
-    const stated = statedSaveSize(variant, audio);
-    if (stated != null && tooLargeForBrowser(stated)) {
-      return { kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: stated };
     }
     return plan;
   }

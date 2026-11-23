@@ -212,22 +212,6 @@ describe("server answers", () => {
     expect([page!.tone, data!.tone, unsupported!.tone]).toEqual(["unusable", "unusable", "unusable"]);
   });
 
-  it("states a size for a file that is too large only when it is the file's stated size and reads larger than the limit", () => {
-    const [stated, measured, withLower] = VARIANTS.output_too_large_for_browser.map(userMessage);
-    expect(stated!.body).toBe("This file would be about 2.79 GB, more than the 2.00 GB savemedia can save in the browser.");
-    expect(rowsOf(stated!)).toMatchObject({ "Stated size": "3000000000 bytes", "Limit": `${2 * 1024 ** 3} bytes` });
-    // The bytes received when the limit was reached are not the file's size.
-    expect(measured!.body).toBe("This file is larger than the 2.00 GB savemedia can save in the browser.");
-    expect(rowsOf(measured!)).toMatchObject({ "Received before stopping": `${2 * 1024 ** 3 + 2_000_000} bytes` });
-    expect(rowsOf(measured!)["Stated size"]).toBeUndefined();
-    // A stated size that reads like the limit is not set against it.
-    const close = userMessage({ code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: 2 * 1024 ** 3 + 1000, limitBytes: 2 * 1024 ** 3 });
-    expect(close.body).toBe("This file is larger than the 2.00 GB savemedia can save in the browser.");
-    for (const message of [stated!, measured!, close]) expect(message.body).not.toMatch(/about (\S+ \S+), more than the \1/);
-    // A lower quality is advice only where one is listed.
-    expect([stated!.hint, measured!.hint, withLower!.hint]).toEqual([null, null, "Choose a lower quality."]);
-  });
-
   it("says a codec the MP4 file cannot hold as that, and never sends the user to look at the page again", () => {
     const [sound, picture] = VARIANTS.codec_unsupported.map(userMessage);
     expect(sound).toMatchObject({ title: "Can't save in this format", hint: null, action: null,
@@ -366,9 +350,6 @@ describe("cancel and toast text", () => {
 
   it("a toast names savemedia where the popup's hint points at one of its controls", () => {
     expect(toastDetail(userMessage(VARIANTS.manifest_malformed[0]!))).toBe("The video's playlist can't be used. Open savemedia and press Check page again, then save.");
-    // A lower quality is advice only where one is listed to choose.
-    expect(toastDetail(userMessage({ ...VARIANTS.output_too_large_for_browser[0]!, lowerQuality: true }))).toBe("Too large for the browser. Open savemedia and choose a lower quality.");
-    expect(toastDetail(userMessage(VARIANTS.output_too_large_for_browser[0]!))).toBe("Too large for the browser");
     const refused = VARIANTS.transfer_failed.find(error => error.reason === "resume-refused")!;
     expect(toastDetail(userMessage(refused))).toBe("The download can't continue. Save again to start the file from the beginning.");
   });

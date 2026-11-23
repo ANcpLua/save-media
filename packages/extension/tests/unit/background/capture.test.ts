@@ -150,19 +150,6 @@ describe("capture handler — demuxed pairs", () => {
     );
   });
 
-  it("carries the probe's content-range total so dispatch refuses an over-limit pair up front", async () => {
-    const total = 5 * 1024 ** 3; // past the 2 GiB browser-output limit
-    const { onDescriptor, handle } = harness(async () =>
-      response("video/mp4", FTYP_HEAD, { "content-range": `bytes 0-4095/${total}` }));
-
-    await handle(7, captureMsg(VIDEO_URL, AUDIO_URL));
-
-    const [, d] = onDescriptor.mock.calls[0]!;
-    expect(d.variants[0]!.estimatedSize).toBe(total);
-    // The pair must be refused before fetching, not buffered until OOM.
-    expect(dispatch(d, bestChoice)).toMatchObject({ kind: "refuse", reason: "output_too_large_for_browser" });
-  });
-
   it("falls back to content-length when the server ignores the range probe", async () => {
     const { onDescriptor, handle } = harness(async () =>
       response("video/mp4", FTYP_HEAD, { "content-length": "123456789" }));

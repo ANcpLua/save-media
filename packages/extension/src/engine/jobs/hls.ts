@@ -5,7 +5,7 @@ import type {
   StreamDescriptor,
   Variant,
 } from "@savemedia/core";
-import { BROWSER_OUTPUT_LIMIT_BYTES, isJobError } from "@savemedia/core";
+import { isJobError } from "@savemedia/core";
 import { report, type JobResult, type PrepareRequests, type ProgressFn } from "../job";
 import {
   estimatedTrackBytes,
@@ -96,9 +96,6 @@ export async function runHlsJob(
   // tells the progress display what to expect and never refuses a save. The count of received bytes stops
   // a stream at the limit.
   const statedBytes = typeof media.ranges === "object" ? media.ranges.bytes : null;
-  if (statedBytes !== null && statedBytes >= BROWSER_OUTPUT_LIMIT_BYTES) {
-    throw { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: statedBytes, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES } satisfies JobError;
-  }
   await options.prepareRequests?.(playlistAddresses(media));
   const keyring = playerKeyring(signal, request);
 
@@ -149,10 +146,6 @@ async function fetchOneFile(file: { readonly url: string; readonly bytes: number
       unsupportedLayout(playlistUrl, fragmented ? "init-boxes" : "not-transport-stream", head);
     }
   }, bytes => {
-    if (bytes >= BROWSER_OUTPUT_LIMIT_BYTES) {
-      throw { code: "output_too_large_for_browser", severity: "terminal",
-        estimatedBytes: bytes, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true } satisfies JobError;
-    }
     // A report per chunk would flood the popup.
     if (performance.now() - lastReport < 250) return;
     lastReport = performance.now();
@@ -207,10 +200,6 @@ async function fetchSegments(media: RuntimePlaylist, job: SegmentJob, keyring: H
       if (plain[0] !== 0x47) unsupportedLayout(playlistUrl, "not-transport-stream", plain);
       const bytes = wholePackets(plain);
       total += bytes.byteLength;
-      if (total >= BROWSER_OUTPUT_LIMIT_BYTES) {
-        throw { code: "output_too_large_for_browser", severity: "terminal",
-          estimatedBytes: total, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true } satisfies JobError;
-      }
       transport.inspect(bytes);
       parts.append(bytes);
       report(onProgress, { kind: "segment", index: index + 1, count: segments.length }, total, null);
@@ -308,11 +297,6 @@ async function fetchFmp4Segments(
       assertFmp4MediaSegment(body, playlistUrl);
       await sink.write(body);
       bytesWritten += body.byteLength;
-      // The playlist rarely states sizes, so the bytes in hand are counted as they arrive.
-      if (bytesWritten >= BROWSER_OUTPUT_LIMIT_BYTES) {
-        throw { code: "output_too_large_for_browser", severity: "terminal",
-          estimatedBytes: bytesWritten, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true } satisfies JobError;
-      }
       report(onProgress, { kind: "segment", index: i + 1, count: segments.length }, bytesWritten, null);
     }
 

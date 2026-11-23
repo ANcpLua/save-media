@@ -14,8 +14,6 @@ export interface UserChoice {
 export interface DispatchRefusal {
   readonly kind: "refuse";
   readonly reason: DispatchRefusalReason;
-  /** With output_too_large_for_browser: the stated size that was compared with the limit, video and audio together. */
-  readonly estimatedBytes?: number;
   /** With codec_unsupported: the declared codec the MP4 file cannot hold, and which track declares it. */
   readonly codec?: UnsupportedCodec;
 }
@@ -31,7 +29,6 @@ export type DispatchRefusalReason =
   | "unsupported_output"
   /** A track declares a codec the MP4 muxer does not write. Nothing a new look at the page changes. */
   | "codec_unsupported"
-  | "output_too_large_for_browser"
   | "dash_unsupported"
   | "hls_encryption_unsupported"
   | "hls_live_unsupported";

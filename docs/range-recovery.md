@@ -204,9 +204,8 @@ Transient HTTP responses use exponential backoff. A Retry-After of up to 30
 seconds sets the minimum wait. A longer wait ends the attempt and lets the
 user come back later.
 A server that serves a full response can instead be read as one stream.
-Both paths enforce the engine's 2 GiB output limit, including when the server
-omits a length, and both fold the bytes into Blobs as they arrive, so the file
-is never held whole in the engine's memory. Cancellation discards the result.
+Both paths fold the bytes into Blobs as they arrive, so the file is never held
+whole in the engine's memory, and neither stops at a size. Cancellation discards the result.
 
 If a previously verified direct URL returns HTTP 403 during a save, the
 save stops and the popup says so. Reloading the file page lets the site

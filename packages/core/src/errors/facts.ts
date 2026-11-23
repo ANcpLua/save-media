@@ -28,7 +28,6 @@ const EXPORTED: { readonly [C in JobErrorCode]: readonly Fields<C>[] } = {
   hls_encryption_unsupported: ["method"],
   hls_live_unsupported: [],
   hls_layout_unsupported: ["layout"],
-  output_too_large_for_browser: ["estimatedBytes", "limitBytes", "measured"],
   range_body_empty: ["host", "rangeStart", "rangeEnd", "totalBytes", "declaredBytes", "reconnects", "reason"],
   transfer_failed: ["reason", "host", "receivedBytes", "totalBytes", "httpStatus", "browserDiagnostic"],
   segment_budget_exhausted: ["totalSegments"],

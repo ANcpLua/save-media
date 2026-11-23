@@ -1,5 +1,4 @@
 import {
-  BROWSER_OUTPUT_LIMIT_BYTES,
   type DispatchRefusal,
   type DispatchRefusalReason,
   type JobError,
@@ -8,12 +7,12 @@ import {
 import { sourceAddress } from "./media-address";
 
 /**
- * `details`: what dispatch said with the refusal (DispatchRefusal). With output_too_large_for_browser, the
- * size it compared with the limit; with codec_unsupported, the codec and its track.
+ * `details`: what dispatch said with the refusal (DispatchRefusal): with codec_unsupported, the codec and
+ * its track.
  */
 export function dispatchRefusalToError(reason: DispatchRefusalReason, d: StreamDescriptor,
-  details: Pick<DispatchRefusal, "estimatedBytes" | "codec"> = {}): JobError {
-  const { estimatedBytes, codec } = details;
+  details: Pick<DispatchRefusal, "codec"> = {}): JobError {
+  const { codec } = details;
   switch (reason) {
     case "cdm_required":
       // Where the protection was declared travels with the refusal, so every surface describes it the same way.
@@ -36,14 +35,6 @@ export function dispatchRefusalToError(reason: DispatchRefusalReason, d: StreamD
         from: d.container,
         to: d.container === "webm" || d.container === "mkv" ? d.container : "mp4",
         reason: "conversion-not-implemented",
-      };
-    case "output_too_large_for_browser":
-      return {
-        code: "output_too_large_for_browser",
-        severity: "terminal",
-        // The size of the whole save, video and audio together, as dispatch added it up. Without it, the largest video track.
-        estimatedBytes: estimatedBytes ?? Math.max(...d.variants.map(v => v.estimatedSize ?? 0), 0),
-        limitBytes: BROWSER_OUTPUT_LIMIT_BYTES,
       };
     case "dash_unsupported":
       return {

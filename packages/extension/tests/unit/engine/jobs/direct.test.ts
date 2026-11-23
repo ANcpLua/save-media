@@ -795,16 +795,6 @@ describe("direct download recovery", () => {
     expect(Math.max(...[5, 6, 7, 8, 9].map(part => started.get(part) ?? 0))).toBeGreaterThan(1);
   });
 
-  it("refuses an over-limit file before any chunk request", async () => {
-    const fetchFn = vi.fn(async () => new Response(fixture.slice(0, 4096), { status: 206, headers: {
-      "content-range": `bytes 0-4095/${2 * 1024 ** 3}`, etag: '"v1"',
-    } }));
-    vi.stubGlobal("fetch", fetchFn);
-    await expect(runDirectJob(plan, job(0)))
-      .rejects.toMatchObject({ code: "output_too_large_for_browser" });
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-  });
-
   it.each([false, true])("retries a late 503 using completed ranges only when the strong ETag matches (changed=%s)", async changed => {
     const data = new Uint8Array(CHUNK + fixture.length);
     data.set(fixture);

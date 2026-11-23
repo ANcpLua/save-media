@@ -25,7 +25,6 @@ export const DELEGABLE_ERROR_CODES: ReadonlySet<JobError["code"]> = new Set<JobE
   "codec_unsupported",
   "hls_encryption_unsupported",
   "hls_layout_unsupported",
-  "output_too_large_for_browser",
   "unsupported_output",
   "manifest_malformed",
   "engine_job_failed",

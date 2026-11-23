@@ -242,22 +242,6 @@ function describe(err: JobError): Draft {
         body: `savemedia can't save this ${CONTAINER_NAME[err.from] ?? "video"} file in the browser.`,
         rows: [row("From", err.from), row("To", err.to), row("Reason", err.reason === "container-not-supported" ? "Container not supported" : "No conversion for this pair")],
       };
-    case "output_too_large_for_browser": {
-      const limit = formatBytes(err.limitBytes);
-      const size = formatBytes(err.estimatedBytes);
-      // A size is named only when it is the stated size of the whole file and reads larger than the limit.
-      // The bytes received when the limit was reached are not the file's size, and "2.00 GB, more than 2.00 GB" says nothing.
-      const stated = !err.measured && err.estimatedBytes > err.limitBytes && size !== limit;
-      return {
-        title: "Too large for the browser",
-        body: stated ? `This file would be about ${size}, more than the ${limit} savemedia can save in the browser.`
-          : `This file is larger than the ${limit} savemedia can save in the browser.`,
-        // A lower quality is advice only where one is listed to choose.
-        ...(err.lowerQuality ? { hint: "Choose a lower quality.", toastHint: "Open savemedia and choose a lower quality." } : {}),
-        rows: [row(err.measured ? "Received before stopping" : "Stated size", `${err.estimatedBytes} bytes`), row("Limit", `${err.limitBytes} bytes`)],
-      };
-    }
-
     // ---- server and network ----
     case "rate_limited":
       return {

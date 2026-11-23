@@ -1275,23 +1275,6 @@ describe("dispatchRefusalToError", () => {
     expect(err.keySystem).toBe("unknown");
   });
 
-  it("states the size of the whole save for a refusal by size: video and audio together, as dispatch added them up", () => {
-    // A video file of 1.95 GiB with an audio file of 0.1 GiB, each the length its server declared (a size
-    // without a bit rate): either track fits, the save does not.
-    const GIB = 1024 ** 3;
-    const row = dashDescriptor();
-    const large = dashDescriptor({ variants: [{ ...row.variants[0]!, bitrate: null, estimatedSize: 1.95 * GIB }],
-      audioRenditions: [{ ...row.variants[0]!, id: "audio" as never, width: null, height: null, videoCodec: null, bitrate: null, estimatedSize: 0.1 * GIB,
-        audioRenditionId: "en" as never, segmentRef: { kind: "dash-segments", initUrl: "https://example.com/dash/a-init.m4s", mediaUrls: ["https://example.com/dash/a-1.m4s"] } }] });
-    const plan = dispatch(large, { outputMode: "Original", filename: "movie.mp4", variantId: null, audioRenditionId: null });
-    expect(plan).toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 2.05 * GIB });
-    if (plan.kind !== "refuse") throw new Error("expected a refusal");
-    const error = dispatchRefusalToError(plan.reason, large, plan);
-    expect(error).toEqual({ code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: 2.05 * GIB, limitBytes: 2 * GIB });
-    // The text never sets a size below the limit against the limit.
-    expect(userMessage(error).body).toBe("This file would be about 2.05 GB, more than the 2.00 GB savemedia can save in the browser.");
-  });
-
   it("says a demuxed stream whose sound the MP4 file cannot hold as a format limit, never as a playlist to check again", () => {
     const row = hlsDescriptor();
     const lossless = hlsDescriptor({

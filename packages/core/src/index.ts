@@ -30,7 +30,7 @@ export { parseDash } from "./parser/dash/adapter";
 export { coveredFileEnd, coveredFileWithGaps } from "./parser/byte-ranges";
 export type { FileRange } from "./parser/byte-ranges";
 export type { DashParseResult } from "./parser/dash/adapter";
-export { dispatch, compareVideoQuality, pickVariant, pickHlsAudioRendition, hasPendingHlsPair, BROWSER_OUTPUT_LIMIT_BYTES } from "./engine/dispatch";
+export { dispatch, compareVideoQuality, pickVariant, pickHlsAudioRendition, hasPendingHlsPair } from "./engine/dispatch";
 export { verify } from "./engine/verify";
 export { userMessage, toastDetail, technicalText } from "./errors/messages";
 export { BROWSER_ERROR_CODE, isCertificateError, networkBlock, networkBlockText } from "./errors/network-block";

@@ -56,7 +56,7 @@ export function createInProcessEngineHost(deps: InProcessEngineHostDeps): InProc
     const controller = new AbortController();
     images.set(streamId, controller);
     try {
-      const run = deps.imageJob ?? ((address, signal, page, origins) => runImageJob(address, signal, undefined, undefined, page, observedAmong(origins)));
+      const run = deps.imageJob ?? ((address, signal, page, origins) => runImageJob(address, signal, undefined, page, observedAmong(origins)));
       const result = await run(url, controller.signal, pageUrl, localOrigins);
       if (result.kind === "refused") {
         deps.sendToBackground({ type: "image-refused", streamId, received: result.received });

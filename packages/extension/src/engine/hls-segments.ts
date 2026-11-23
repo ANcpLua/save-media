@@ -1,4 +1,4 @@
-import { AES_128_KEY_BYTES, BROWSER_OUTPUT_LIMIT_BYTES, isDecryptableLength, segmentIv, type HlsSegmentKey, type JobError } from "@savemedia/core";
+import { AES_128_KEY_BYTES, isDecryptableLength, segmentIv, type HlsSegmentKey, type JobError } from "@savemedia/core";
 import { HlsKeyring, KeyMaterialError, decryptSegment } from "./crypto/hls-aes";
 import { fetchWithRetry } from "./net/fetch-with-retry";
 import { classifyNetworkFailure } from "./net/error-classification";
@@ -43,8 +43,6 @@ async function readBody(url: string, attemptSignal: AbortSignal, request: Reques
       catch (error) { throw transportFailure(error, url, "body", size); }
       if (next.done) break;
       size += next.value.byteLength;
-      if (size >= BROWSER_OUTPUT_LIMIT_BYTES) throw {code: "output_too_large_for_browser", severity: "terminal",
-        estimatedBytes: size, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true} satisfies JobError;
       take(next.value);
       receivedBytes();
     }
@@ -96,13 +94,16 @@ function stallOf(error: unknown, attemptSignal: AbortSignal, url: string): Trans
  * arrives, so a segment as long as the video is held once, not once as chunks and again joined. Without
  * a stated length the chunks are joined at the end.
  */
+/** Above this, a file's chunks are joined at the end instead of being written into one buffer. */
+const ONE_BUFFER_LIMIT_BYTES = 1024 * 1024 * 1024;
+
 class SegmentBytes {
   private whole: Uint8Array | null = null;
   private used = 0;
   private chunks: Uint8Array[] = [];
 
   expect(statedBytes: number | null): void {
-    if (statedBytes === null || statedBytes >= BROWSER_OUTPUT_LIMIT_BYTES) return;
+    if (statedBytes === null || statedBytes >= ONE_BUFFER_LIMIT_BYTES) return;
     try { this.whole = new Uint8Array(statedBytes); } catch { /* no room for one buffer: joined at the end */ }
   }
 
