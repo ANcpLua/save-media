@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

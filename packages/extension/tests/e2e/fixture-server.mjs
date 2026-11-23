@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Minimal HTTP fixture server for Playwright e2e tests.
  *
@@ -251,11 +251,11 @@ const routes = {
   "/direct/clip.mp4":  { type: "video/mp4", body: fixture("direct/clip.mp4") },
   "/direct/clip.webm": { type: "video/webm", body: fixture("direct/clip.webm") },
   "/direct/clip.mkv":  { type: "video/x-matroska", body: fixture("direct/clip.mkv") },
-  // One fragmented MP4 file under the "dash" brand. Regenerate with `node scripts/generate-dash-fixtures.mjs brand-file`.
+  // One fragmented MP4 file under the "dash" brand. Regenerate with `bun scripts/generate-dash-fixtures.mjs brand-file`.
   "/direct/clip-dash-brand.mp4": { type: "video/mp4", body: fixture("direct/clip-dash-brand.mp4") },
   "/low/clip.mp4":     { type: "video/mp4", body: fixture("low/clip.mp4") },
   // WebM clips the main-video suite plays: the headless browser has no H.264
-  // decoder. Regenerate with `node scripts/generate-webm-fixtures.mjs`.
+  // decoder. Regenerate with `bun scripts/generate-webm-fixtures.mjs`.
   "/low/clip.webm":    { type: "video/webm", body: fixture("low/clip.webm") },
   "/ads/creative.webm": { type: "video/webm", body: fixture("ads/creative.webm") },
   "/mse/clip.webm":    { type: "video/webm", body: fixture("mse/clip.webm") },

@@ -119,7 +119,7 @@ Reloading the extension releases the retained bytes. The engine document
 closes when no save is running and no bytes are kept, and opens again for the
 next save.
 To reproduce a late HTTP 503 and a changed ETag with owned bytes, run
-`bun x vitest run tests/unit/engine/jobs/direct.test.ts -t 'late 503'`
+`bunx --bun vitest run tests/unit/engine/jobs/direct.test.ts -t 'late 503'`
 from `packages/extension`.
 
 Chrome writes the verified file under the original name and confirms the save.
@@ -394,7 +394,7 @@ After building the extension, run the isolated Chrome recovery fixtures from
 `packages/extension`.
 
 ```sh
-bun x playwright test --project=chromium tests/e2e/range-recovery.spec.ts tests/e2e/interrupted-download.spec.ts
+bunx --bun playwright test --project=chromium tests/e2e/range-recovery.spec.ts tests/e2e/interrupted-download.spec.ts
 ```
 
 To reproduce the movable Chrome preview, run
@@ -419,7 +419,7 @@ the focused check.
 
 ```sh
 bun install --frozen-lockfile
-(cd packages/extension && bunx playwright install chromium)
+(cd packages/extension && bunx --bun playwright install chromium)
 bun run build
 bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'file link a named page declares|reports certificate failures'
 bun run --filter @savemedia/extension test:e2e:chromium tests/e2e/classification.spec.ts -g 'after rotation'

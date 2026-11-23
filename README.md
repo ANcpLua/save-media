@@ -85,9 +85,9 @@ remain independent, so a successful submission is not proof that it is live.
 # 2. check everything locally
 bun install                       # refresh bun.lock after the version bump
 bun run verify
-bunx store-publish lint            # listing, manifest and UI text: no forbidden words, brand names, dashes, emojis or comma chains
-bunx store-publish readme --check  # README store table matches store.config.json
-release_version=$(bunx store-publish version)
+bunx --bun store-publish lint            # listing, manifest and UI text: no forbidden words, brand names, dashes, emojis or comma chains
+bunx --bun store-publish readme --check  # README store table matches store.config.json
+release_version=$(bunx --bun store-publish version)
 # 3. stage the reviewed release changes, commit, push main, and wait for ci.yml
 git add -p
 git commit -m "Release $release_version"
@@ -152,7 +152,7 @@ the target with `store-publish chrome status --item "$SAVEMEDIA_BETA_ITEM_ID"`,
 and use the explicit beta ID and ZIP for an authorized submission.
 
 ```sh
-bunx store-publish chrome release --item "$SAVEMEDIA_BETA_ITEM_ID" --zip "$SAVEMEDIA_BETA_ZIP"
+bunx --bun store-publish chrome release --item "$SAVEMEDIA_BETA_ITEM_ID" --zip "$SAVEMEDIA_BETA_ZIP"
 ```
 
 ### Retrying a partial release
@@ -165,7 +165,7 @@ or reuse an existing version blindly.
   and dispatch only that store.
 - If Chrome or Edge already accepted the upload but submission failed, finish
   the listing/privacy fields and submit the existing draft in its dashboard,
-  or run `bunx store-publish chrome publish` / `bunx store-publish edge publish`
+  or run `bunx --bun store-publish chrome publish` / `bunx --bun store-publish edge publish`
   from this repository with that store's credentials. These commands skip upload.
 - If Firefox already has the version, complete any missing source upload or
   review information on that version instead of creating it again.
@@ -273,15 +273,16 @@ gh run watch -R ANcpLua/save-media
 ```
 
 Locally, with the credentials in the environment, the same commands are
-`bunx store-publish chrome status`, `edge status`, `firefox status` and
+`bunx --bun store-publish chrome status`, `edge status`, `firefox status` and
 `amo-listing diff`.
 
 ## Development
 
 Bun workspace. Bun (`packageManager` in `package.json`, 1.4 or newer) installs
-and runs scripts; Node (`.nvmrc`) still executes Vite, Vitest and Playwright,
-because MV3 needs Vite's output and the popup tests need jsdom. Bun replaces
-the package manager only, not the bundler and not the unit test runner.
+the packages and runs everything: the scripts, Vite, Vitest and Playwright.
+Node is not needed. The package scripts start tools with `bun --bun`, and the
+commands below use `bunx --bun`, because a tool whose launcher names `node`
+would otherwise run on Node wherever Node is installed, as on CI runners.
 
 - `packages/core`: media classification, HLS and DASH parsing, verification,
   dispatch. Pure TypeScript, no browser APIs. Must be built before the
@@ -331,11 +332,11 @@ keeps answering 522, run the following after building the extension.
 
 ```sh
 cd packages/extension
-bunx playwright test --project=chromium -g 'transport stream|manifest 522'
+bunx --bun playwright test --project=chromium -g 'transport stream|manifest 522'
 ```
 
 Regenerate the timed ID3 fixture with
-`node packages/extension/scripts/generate-transport-fixture.mjs`. Without
+`bun packages/extension/scripts/generate-transport-fixture.mjs`. Without
 arguments it writes to a temporary directory and compares the result with the
 committed file; `--write` replaces the committed file.
 
@@ -361,7 +362,7 @@ explanations for a server the network blocks:
 
 ```sh
 cd packages/extension
-bunx playwright test --project=chromium tests/e2e/popup-ux.spec.ts tests/e2e/network-block.spec.ts
+bunx --bun playwright test --project=chromium tests/e2e/popup-ux.spec.ts tests/e2e/network-block.spec.ts
 ```
 
 Alt+S saves the video or image under the pointer. Every frame reports what
@@ -378,7 +379,7 @@ button, and an image:
 
 ```sh
 cd packages/extension
-bunx playwright test --project=chromium -g 'under the pointer'
+bunx --bun playwright test --project=chromium -g 'under the pointer'
 ```
 
 What a page's ad responses name is never the main video and is never
@@ -391,7 +392,7 @@ changes, key use, gates and disguised bytes:
 
 ```sh
 cd packages/extension
-bunx playwright test --project=chromium tests/e2e/main-video.spec.ts
+bunx --bun playwright test --project=chromium tests/e2e/main-video.spec.ts
 ```
 
 Alt+S in the end-to-end suites is a key event the page receives. The
@@ -403,9 +404,11 @@ loads the extension without opening a window. Set `SAVEMEDIA_HEADED=1`, or use
 `bun run --filter @savemedia/extension test:e2e:headed`, to watch the browser.
 
 Toolchain decision, shared with the other extension repository so a third
-extension can copy either as a template: bun is the package manager, Vitest
-is the unit test runner (invoked through bun, running on Node), Playwright is
-the end-to-end runner. `bun test` was not adopted: it is a third runner with
+extension can copy either as a template: Bun is the package manager and the
+runtime, Vitest is the unit test runner and Playwright the end-to-end runner,
+both running on Bun. Vitest runs the test files in worker threads, because
+Bun's child processes lack what Vitest's default process pool needs. `bun test`
+was not adopted: it is a third runner with
 its own mock and snapshot API, and the popup tests depend on jsdom and
 testing-library, which Vitest handles and `bun test` does not. Google Chrome 137 and newer ignores
 `--load-extension`, so the e2e suite uses Playwright's Chromium; with a custom

@@ -29,3 +29,6 @@ access only the owner can provide.
   and [Releasing](README.md#releasing). Report each store's result separately.
   Keep store IDs and version paths in `store.config.json` and workflow inputs
   in `.github/workflows/`. Regenerate the README store table when its source changes.
+- Bun is the only JavaScript runtime here. Scripts start tools with `bun --bun`
+  or `bunx --bun`, never with `node`, `npm` or `npx`; CI fails on any call to
+  node.

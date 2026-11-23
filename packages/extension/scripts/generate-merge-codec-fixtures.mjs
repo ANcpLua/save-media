@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Regenerates the committed VP9 and Opus inputs of the merge engine's unit
  * tests in tests/unit/engine/fixtures/: one second of video without audio and

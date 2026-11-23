@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Derive the manifest icons from the designed logo master
  * (store-assets/logo/logo-1024-transparent.png), composited on the brand

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Regenerates the committed multi-segment HLS e2e fixtures:
  *

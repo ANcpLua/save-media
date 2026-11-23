@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Says how the oldest committed media fixtures are made, and makes them
  * again. They came into the repository before the other generators and had

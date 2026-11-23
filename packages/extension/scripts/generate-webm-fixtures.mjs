@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Regenerates the committed WebM e2e fixtures the main-video suite plays.
  *
@@ -10,7 +10,7 @@
  *   tests/e2e/media-fixtures/mse/clip.webm      video only, clustered for MediaSource appendBuffer
  *
  * The fixtures are committed so tests never depend on ffmpeg. Run this
- * script only when their shape must change: `node scripts/generate-webm-fixtures.mjs`.
+ * script only when their shape must change: `bun scripts/generate-webm-fixtures.mjs`.
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";

@@ -1,13 +1,13 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 
 const steps = [
   ["bun", ["run", "typecheck"]],
   ["bun", ["run", "test"]],
   ["bun", ["run", "build:all"]],
-  ["bunx", ["store-publish", "lint"]],
-  ["bunx", ["store-publish", "readme", "--check"]],
-  ["bunx", ["store-publish", "version"]],
+  ["bunx", ["--bun", "store-publish", "lint"]],
+  ["bunx", ["--bun", "store-publish", "readme", "--check"]],
+  ["bunx", ["--bun", "store-publish", "version"]],
   ["bun", ["run", "--filter", "@savemedia/extension", "screenshots"]],
   ["bun", ["run", "--filter", "@savemedia/extension", "test:e2e"]],
 ];

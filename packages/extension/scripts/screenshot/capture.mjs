@@ -1,8 +1,8 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Build the screenshot harness, then drive headless Chromium over each scene
 // and write exact 1280x800 PNGs into store-assets/screenshots/.
 //
-//   node scripts/screenshot/capture.mjs
+//   bun scripts/screenshot/capture.mjs
 //
 // The harness mounts the real popup <App/>, so these PNGs always depict the
 // shipping UI. Output filenames match the existing store-listing slots.
@@ -26,7 +26,7 @@ const manifestVersion = JSON.parse(await readFile(resolve(ext, "manifest.json"),
 
 const build = spawnSync(
   "bunx",
-  ["vite", "build", "--config", resolve(here, "vite.config.ts")],
+  ["--bun", "vite", "build", "--config", resolve(here, "vite.config.ts")],
   { cwd: ext, stdio: "inherit" },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);

@@ -12,13 +12,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-      # bun installs the workspace; Node still runs Vite, Vitest and Playwright.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: package.json
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
+      # Bun runs everything. The runner has a Node of its own, so package scripts start tools with
+      # --bun, and a node first on PATH that only fails turns any call to Node into a failed job.
+      - name: Fail on any call to node
+        run: |
+          mkdir -p "$RUNNER_TEMP/no-node"
+          printf '#!/bin/sh\necho "node was called: node $*" >&2\nexit 1\n' > "$RUNNER_TEMP/no-node/node"
+          chmod +x "$RUNNER_TEMP/no-node/node"
+          echo "$RUNNER_TEMP/no-node" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
       # @savemedia/core's dist/ is gitignored. The extension imports its
       # .d.ts at typecheck time, so core must be built first.
@@ -26,8 +30,8 @@ jobs:
       - run: bun run --filter './packages/*' typecheck
       - run: bun run --filter './packages/*' test
       # Store text and the README table are checked like code.
-      - run: bunx store-publish lint
-      - run: bunx store-publish readme --check
+      - run: bunx --bun store-publish lint
+      - run: bunx --bun store-publish readme --check
 
   build-extension:
     name: Build extension (${{ matrix.target }})
@@ -38,13 +42,17 @@ jobs:
         target: [chrome, firefox]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-      # bun installs the workspace; Node still runs Vite, Vitest and Playwright.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: package.json
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
+      # Bun runs everything. The runner has a Node of its own, so package scripts start tools with
+      # --bun, and a node first on PATH that only fails turns any call to Node into a failed job.
+      - name: Fail on any call to node
+        run: |
+          mkdir -p "$RUNNER_TEMP/no-node"
+          printf '#!/bin/sh\necho "node was called: node $*" >&2\nexit 1\n' > "$RUNNER_TEMP/no-node/node"
+          chmod +x "$RUNNER_TEMP/no-node/node"
+          echo "$RUNNER_TEMP/no-node" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
       - run: bun run --filter @savemedia/core build
       - run: bun run --filter @savemedia/extension build:${{ matrix.target }}
@@ -74,22 +82,26 @@ jobs:
             project: firefox-fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-      # bun installs the workspace; Node still runs Vite, Vitest and Playwright.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: package.json
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
+      # Bun runs everything. The runner has a Node of its own, so package scripts start tools with
+      # --bun, and a node first on PATH that only fails turns any call to Node into a failed job.
+      - name: Fail on any call to node
+        run: |
+          mkdir -p "$RUNNER_TEMP/no-node"
+          printf '#!/bin/sh\necho "node was called: node $*" >&2\nexit 1\n' > "$RUNNER_TEMP/no-node/node"
+          chmod +x "$RUNNER_TEMP/no-node/node"
+          echo "$RUNNER_TEMP/no-node" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
       - run: bun run --filter @savemedia/core build
-      - run: bunx playwright install --with-deps ${{ matrix.browser }}
+      - run: bunx --bun playwright install --with-deps ${{ matrix.browser }}
         working-directory: packages/extension
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: bun run --filter @savemedia/extension build:chrome
       # Playwright's Chromium loads the unpacked extension in headless mode
       # (tests/e2e/extension-browser.ts), so no display is needed.
-      - run: bunx playwright test --project=${{ matrix.project }}
+      - run: bunx --bun playwright test --project=${{ matrix.project }}
         working-directory: packages/extension
       - name: Install the pinned yt-dlp
         if: matrix.project == 'chromium'
@@ -113,7 +125,7 @@ jobs:
         if: matrix.project == 'chromium'
         run: |
           yt-dlp --version
-          node packages/extension/scripts/smoke-native.mjs
+          bun packages/extension/scripts/smoke-native.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

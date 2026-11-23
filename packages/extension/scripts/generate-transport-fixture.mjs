@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Regenerates the transport stream e2e fixture
  * tests/e2e/media-fixtures/transport/timed-id3.ts: one second of H.264 video

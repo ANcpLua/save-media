@@ -20,7 +20,7 @@ a third-party site, not even to check.
 bun install
 bun run --filter @savemedia/core build
 bun run --filter @savemedia/extension build:all      # dist-chrome + dist-firefox
-node packages/extension/tests/e2e/fixture-server.mjs # serves http://127.0.0.1:5174
+bun packages/extension/tests/e2e/fixture-server.mjs  # serves http://127.0.0.1:5174
 ```
 
 Keep the fixture server running in its own terminal for the whole session.

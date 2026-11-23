@@ -19,7 +19,7 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   webServer: {
-    command: "node tests/e2e/fixture-server.mjs",
+    command: "bun tests/e2e/fixture-server.mjs",
     port: Number(process.env.SAVEMEDIA_FIXTURE_PORT ?? 5174),
     reuseExistingServer: !process.env.CI,
     cwd: here,

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { mkdir, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -12,7 +12,7 @@ const buildDir = resolve(root, "dist-build");
 const preview = process.argv.includes("--preview");
 const out = resolve(root, preview ? "dist-preview" : "dist-chrome");
 
-const vite = spawnSync("bunx", ["vite", "build"], {
+const vite = spawnSync("bunx", ["--bun", "vite", "build"], {
   cwd: root,
   env: { ...process.env, SAVEMEDIA_BROWSER: "chromium" },
   stdio: "inherit",

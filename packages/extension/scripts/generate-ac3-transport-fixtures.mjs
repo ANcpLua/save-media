@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Regenerates the two transport stream fixtures with AC-3 family sound in
  * tests/e2e/media-fixtures/transport/:

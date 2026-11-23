@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Regenerates the committed demuxed-HLS e2e fixtures in
  * tests/e2e/media-fixtures/av-merge/ — the golden inputs for the

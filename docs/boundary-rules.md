@@ -26,7 +26,7 @@ Save only what you have the right to keep.
 - **Verification.** Video bytes are checked in `packages/extension/src/engine/verify-direct.ts` and `packages/core/src/engine/verify.ts`, image bytes in `packages/extension/src/engine/jobs/image.ts`, before a file reaches the browser's download manager.
 - **Plain words.** The texts of save failures (`JobError`) live in `packages/core/src/errors/messages.ts` and `packages/core/src/errors/network-block.ts`. Everything else, including Local downloader failures and image refusals, lives in `packages/extension/src/ui/text.ts`, `ui/toast-text.ts` and `util/transfer-progress.ts`. Codes and HTTP details appear only under Technical details.
 - **Local downloader.** It runs only the yt-dlp and ffmpeg you installed (`packages/native-host/host.py`) and reports a protected video when yt-dlp's own format data marks every video format as DRM protected. The Alt+S fallback and the offer under a failed save are never made for protected media (`DELEGABLE_ERROR_CODES` in `packages/extension/src/native/local-downloader.ts`).
-- **Public text.** No site or brand names, no em dashes, no emojis. `bunx store-publish lint` checks the listing, the manifest and the text catalogues in CI.
+- **Public text.** No site or brand names, no em dashes, no emojis. `bunx --bun store-publish lint` checks the listing, the manifest and the text catalogues in CI.
 
 ## Where the code differs from the policy today
 

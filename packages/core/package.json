@@ -23,11 +23,11 @@
     "dist/"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "bun --bun tsc -p tsconfig.build.json",
     "lint": "bun run typecheck",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json"
+    "test": "bun --bun vitest run",
+    "test:watch": "bun --bun vitest",
+    "typecheck": "bun --bun tsc -p tsconfig.json"
   },
   "dependencies": {
     "m3u8-parser": "^7.2.1",

@@ -26,7 +26,6 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22.12.0",
     "bun": ">=1.4.0"
   },
   "packageManager": "bun@1.4.2",
@@ -44,7 +43,7 @@
     "smoke:edge": "bun run --filter @savemedia/extension smoke:edge",
     "smoke:firefox": "bun run --filter @savemedia/extension smoke:firefox",
     "smoke:native": "bun run --filter @savemedia/extension smoke:native",
-    "verify": "node scripts/verify.mjs"
+    "verify": "bun scripts/verify.mjs"
   },
   "devDependencies": {
     "@ancplua/store-publish": "github:ANcpLua/store-publish#v1.6.1",

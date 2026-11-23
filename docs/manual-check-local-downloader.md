@@ -18,7 +18,7 @@ Have `yt-dlp` and `ffmpeg` installed (`brew install yt-dlp ffmpeg`), and start
 the fixture server in a second terminal so no third-party site is involved:
 
 ```sh
-node packages/extension/tests/e2e/fixture-server.mjs
+bun packages/extension/tests/e2e/fixture-server.mjs
 ```
 
 It serves `http://127.0.0.1:5174/` with fixture pages: `/page/direct.html`

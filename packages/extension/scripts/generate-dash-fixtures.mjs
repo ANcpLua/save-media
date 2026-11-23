@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Regenerates the committed clear-DASH e2e fixtures: real DASH packagings
  * produced by ffmpeg's dash muxer, each with its manifest and the actual

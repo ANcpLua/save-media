@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Pack chrome + firefox + edge release zips from the already-built dist
  * directories. Run `bun run build:all` first so dist-chrome and dist-firefox

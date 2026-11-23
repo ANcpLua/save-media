@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Real popup, native messaging, yt-dlp and ffmpeg, isolated from the user's
 // cookie profiles, download archive, configuration, logs and Downloads.
 import assert from "node:assert/strict";

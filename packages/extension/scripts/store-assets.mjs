@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Derive store-listing image assets from the designed logo
  * (public/icons/icon-128.png, produced by generate-icons.mjs from the logo
@@ -27,7 +27,7 @@ if (!magick) {
   process.exit(1);
 }
 if (!existsSync(SRC)) {
-  console.error(`✘ source logo missing: ${SRC} (run \`pnpm icons\` first?)`);
+  console.error(`✘ source logo missing: ${SRC} (run \`bun run icons\` first?)`);
   process.exit(1);
 }
 

@@ -6,8 +6,8 @@ import { parseVideoCodec, parseAudioCodec } from "../../classifier/codec-registr
 // `window` is undefined — a top-level import would crash the SW with
 // `ReferenceError: window is not defined` before any handler runs.
 // Lazy-loading defers the module evaluation to the only context that
-// actually calls probeInitSegment (the offscreen engine document or a
-// node test runner), neither of which lacks `window`/`globalThis`.
+// actually calls probeInitSegment (the offscreen engine document or the
+// unit tests), neither of which lacks `window`/`globalThis`.
 
 export interface InitProbeResult {
   readonly videoCodec: VideoCodec | null;

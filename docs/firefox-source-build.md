@@ -1,7 +1,7 @@
 # Firefox source build
 
-Use Node from `.nvmrc` and Bun from `package.json`. From the extracted source
-archive root, run:
+Use Bun from `package.json` (`packageManager`). Bun runs every step; Node is
+not needed. From the extracted source archive root, run:
 
 ```sh
 bun install --frozen-lockfile
