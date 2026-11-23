@@ -20,7 +20,10 @@ What savemedia does and does not do is in
 overrides every other document here; read it before changing capture,
 parsing, download behaviour or user-facing text. What is supported in detail
 is in [`docs/design.md`](docs/design.md). The privacy policy is
-[`docs/privacy-policy.md`](docs/privacy-policy.md).
+[`docs/privacy-policy.md`](docs/privacy-policy.md). GitHub Pages serves the `docs`
+folder, so the store listings link to
+https://ancplua.github.io/save-media/privacy-policy.html: a GitHub file page
+can answer a store's check with 429 or 503.
 Direct-file probe retries and checked chunk recovery are described in
 [`docs/range-recovery.md`](docs/range-recovery.md), including browser size and
 validation limits.
