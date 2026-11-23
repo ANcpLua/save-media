@@ -1,86 +1,38 @@
-# Boundary rules
+# savemedia policy
 
-What this project may do under US and EU law, written as rules an engineer
-applies before writing code. Applies to the extension, the local downloader
-host in `packages/native-host`, and any wrapper around yt-dlp or ffmpeg.
+savemedia is a file downloading extension that saves videos and images that are not DRM encrypted.
 
-This is an engineering summary, not legal advice. The two hard limits are the
-same everywhere: do not circumvent technical protection, and do not build or
-market for infringing use.
+This is the owner's policy. It overrides every other document in this repository.
 
-## The one principle
+1. savemedia saves the videos and images your browser receives during normal playback and browsing.
+2. It never touches encryption: DRM such as Widevine, PlayReady and FairPlay, and privacy encryption, where a page decrypts media with its own code. DRM-protected media (Widevine, FairPlay, PlayReady) is never decrypted, bypassed or exploited, including weak or vulnerable implementations such as L3.
+3. Standard HLS AES-128, where the player loads the key over the same connection as the video, is not protection. savemedia uses that key as the player does.
+4. Encryption is the only reason savemedia refuses a video your browser has received. A price, a "premium" or "preview" label, an overlay or a click-through gate proves nothing. Only the technology decides.
+5. It never makes a server hand out what it withholds. It uses your browser's own connection, session and network settings: no forged tokens, no guessed addresses, no other DNS servers or proxies.
+6. It never clicks anything for you and never skips or mutes ads. It requests an ad only when you choose to save it.
+7. It works from what your browser receives, never from a site's own buttons or controls. The same page gives the same result every time.
+8. Every file is verified before it reaches the Downloads folder. Web pages, scripts and programs are refused.
+9. When something can't be saved, savemedia says why in plain words, and what you can do.
+10. The test: if you can find the media in your browser's developer tools during normal playback, and it has no DRM, savemedia finds and saves it.
 
-**Observe, do not defeat.** The tool may capture, parse, and save anything the
-browser is already given in the clear to play the video. It may not compute,
-extract, or reconstruct anything the site deliberately withholds from the
-player's normal operation.
+Save only what you have the right to keep.
 
-- Manifest, segments, and an AES-128 key fetched over plain HTTP: observed. Allowed.
-- Key delivered through a CDM (Widevine, PlayReady, FairPlay): never reached the page. Extracting it is defeating. Never.
-- Final URL produced by obfuscated player JavaScript and visible on the network: capturing that request is observed. Re-implementing the obfuscated algorithm so the page is not needed is defeating.
+## How the code enforces it
 
-## Rules
+- **Encryption.** HLS: only `METHOD=AES-128` with an identity `KEYFORMAT` is decrypted (`packages/core/src/parser/hls/keys.ts`). A key address that answers 401, 402 or 403 to a request made like the player's is a licence server and is refused (`packages/extension/src/engine/hls-segments.ts`). DASH `ContentProtection` of any scheme, Common Encryption in MP4, encrypted WebM and Matroska tracks and scrambled MPEG-TS packets stop the save (`packages/core/src/parser/dash/content-protection.ts`, `packages/core/src/classifier/protected-mp4.ts`, `packages/core/src/classifier/protected-matroska.ts`, `packages/extension/src/engine/mpeg-ts.ts`). In the page only real key use counts: an `encrypted` event or a licence request (`packages/extension/src/content/page/eme-proof.ts`).
+- **Network.** Requests use your browser's own network stack, with the Referer and Origin of the frame that loaded the media (`packages/extension/src/background/referer-rules.ts`). A blocked server is explained from what the browser reported, never reached another way (`packages/extension/src/background/request-outcomes.ts`, `packages/core/src/errors/network-block.ts`). `packages/extension/tests/unit/policy/no-bypass.test.ts` fails on a resolver, a proxy switch or a skipped certificate check anywhere in the source.
+- **No clicks.** Page code only reads. `packages/extension/tests/unit/policy/observe-only.test.ts` fails on a click, a made-up input event, playback control, a new frame or a new window.
+- **Ads.** An address a page's ad response names is never the main video and never what Alt+S or Save picks. When your browser loaded it, it is listed last, under Ads, from the browser's own answer, and it is not counted on the toolbar button; savemedia requests it only when you press Save on that row (`packages/extension/src/background/capture.ts`, `packages/extension/src/selection/main-video.ts`). An ad mark only moves a row there and never removes one, so a page cannot hide its own video by naming it in an ad response.
+- **Verification.** Video bytes are checked in `packages/extension/src/engine/verify-direct.ts` and `packages/core/src/engine/verify.ts`, image bytes in `packages/extension/src/engine/jobs/image.ts`, before a file reaches the browser's download manager.
+- **Plain words.** The texts of save failures (`JobError`) live in `packages/core/src/errors/messages.ts` and `packages/core/src/errors/network-block.ts`. Everything else, including Local downloader failures and image refusals, lives in `packages/extension/src/ui/text.ts`, `ui/toast-text.ts` and `util/transfer-progress.ts`. Codes and HTTP details appear only under Technical details.
+- **Local downloader.** It runs only the yt-dlp and ffmpeg you installed (`packages/native-host/host.py`) and reports a protected video when yt-dlp's own format data marks every video format as DRM protected. The Alt+S fallback and the offer under a failed save are never made for protected media (`DELEGABLE_ERROR_CODES` in `packages/extension/src/native/local-downloader.ts`).
+- **Public text.** No site or brand names, no em dashes, no emojis. `bunx store-publish lint` checks the listing, the manifest and the text catalogues in CI.
 
-Tiers: **G** allowed in any build. **A** allowed only in personal or unlisted
-builds, or with conditions. **R** never.
+## Where the code differs from the policy today
 
-| Id | Rule |
-| --- | --- |
-| G1 | Progressive files and plain manifests (MP4, WebM, HLS, DASH) without encryption or with AES-128 keys fetched in the clear. Remux and merge with ffmpeg. |
-| G2 | Network observation: webRequest, fetch/XHR hooks, MSE capture of what the player already receives, with the same Referer, Origin, and User-Agent the browser sent. |
-| G3 | Follow HTTP redirects, meta refresh, and JavaScript redirects the page performs by itself. Forwarding chains are transport, not protection. |
-| G4 | Use the user's own session cookies. The tool adds no access. |
-| G5 | Delegate to yt-dlp or ffmpeg the user installed. Never bundle or auto-install them. |
-| G6 | Read the page's own API responses in the MAIN world. Do not call undocumented endpoints with tokens the page did not issue. |
-| G7 | Refuse loudly: detect EME, any non-AES-128 key method, and any KEYFORMAT other than identity, and stop with visible feedback. A key URI that answers 401, 402 or 403 is a licence server, not a key in the clear: refuse, never retry. Keep the refusal tests. |
-| A1 | Site adapters for platforms whose terms forbid downloading: legal in principle, but store policies are stricter. Keep such adapters in unlisted builds. No platform names in listings or the README. |
-| A2 | Solving signature or "n" ciphers in your own code: contested in the US, treated as circumvention by a German court in 2023. Red for EU distribution. |
-| A3 | Static deobfuscation of player JavaScript to find a hidden URL: if the URL reaches the network during playback, capture it there instead. |
-| A4 | Low-level parsers for unusual containers are fine unless the format's difficulty is itself the protection. Test: could ffmpeg play this from the same inputs? |
-| A5 | Nominative use of brand names is legal but triggers automated enforcement. Zero brand names in the extension name, listing, screenshots, or public README. |
-| R1 | DRM in any form: no CDM key extraction, no third-party decryptors, no PSSH handling that leads to decryption. |
-| R2 | Bypassing authentication, paywalls, or geo restrictions. This reaches computer-misuse law, not only copyright. |
-| R3 | Pre-wiring the tool to unlicensed sources. A curated site list or special handling for unlicensed streaming hosts makes the maker liable (CJEU Filmspeler). |
-| R4 | Marketing for infringement: no "any site", no site lists, no "bypass" wording, no examples showing protected content. |
-| R5 | Hosting or redistributing downloaded content. Saves to the user's disk only. |
-
-## Policy decisions
-
-| Id | Decision |
-| --- | --- |
-| P1 | A site works hard to make downloading difficult: effort is evidence of an intended protection measure. Difficulty triggers refusal, not escalation. If the media URL is not observable on the network during normal playback, stop. |
-| P2 | The site is itself unlicensed, or charges for stolen content: this gives the user no rights. EU law excludes unlawful sources from private copying (ACI Adam) and makes a tool aimed at them the maker's liability (Filmspeler). Do not target such sources. |
-| P3 | Mixed-licensing or user-upload hosts as test targets: never in tests, fixtures, CI, screenshots, commits, or docs. Use local fixtures under `tests/`, Creative Commons assets such as the Blender Foundation films, and your own uploads on lawful platforms. |
-
-## Legal basis
-
-United States: 17 U.S.C. 1201(a)(1) and (a)(2)/(b); Sony v. Universal (1984);
-MGM v. Grokster (2005); 18 U.S.C. 1030 with Van Buren (2021) and hiQ v.
-LinkedIn (2022); the 2020 youtube-dl DMCA notice and its withdrawal; Lanham
-Act nominative fair use.
-
-European Union and Austria: Directive 2001/29 Art. 6(1), 6(2), 5(1), 5(2)(b);
-CJEU C-355/12 Nintendo v. PC Box; C-435/12 ACI Adam; C-527/15 Stichting Brein
-v. Wullems (Filmspeler); LG Hamburg 2023 (youtube-dl hosting); Directive
-2013/40; Austria UrhG 42 and 90c, StGB 118a; Directive (EU) 2015/2436 Art. 14.
-
-## How the rules map to the code
-
-| Component | Rules | Status |
-| --- | --- | --- |
-| `packages/core` HLS parser and dispatch | G1, G7 | Refuses every EXT-X-KEY method except AES-128. |
-| `background/network-capture.ts` | G2 | Passive webRequest observation of manifests. The extension's own requests to a captured media host carry the page origin as Referer, as the browser's do. |
-| `content/sites/*` | G6, A1 | Reads the page's own API responses. Names stay out of public text. |
-| `native/local-downloader.ts` | G5, P1 | Delegates page URLs to a user-installed host. `DELEGABLE_ERROR_CODES` is an allowlist that excludes every protected-media code. |
-| `packages/native-host` | G4, G5, R1 | Runs the user's yt-dlp with the user's cookies, reports DRM as `drm_protected`, never installs tools. |
-| Store listing, README, screenshots | A5, R4 | Protocol names only. |
-
-## Before adding a site or format
-
-- Does the final media URL appear on the network when the page plays normally? If yes, capture it there. If no, stop (P1).
-- Is any key delivered through a CDM or a license server? If yes, refuse.
-- Would the download work for a logged-out user, or only with the user's own existing session? Either is fine. Credentials the user does not have are out.
-- Is the site a licensed platform? If it is a known unlicensed host, do not add an adapter.
-- Could ffmpeg or yt-dlp already do this from the same inputs? If yes, delegate rather than reimplement.
-- Does the change require a brand name anywhere public? Rename it to the protocol or the pattern.
-- Does the commit message, docs, or listing describe it as "bypass", "unlock", or "circumvent"? Rewrite.
+- **Local network.** For a page on the internet, savemedia requests a server inside your network (this computer, a private or link-local address, or a name that only your own network answers: one label such as "nas", or a name under .local, .localhost, .home.arpa or .internal) only when your browser itself received an answer from that same server (scheme, host and port) at a local address, in the same tab. Then it saves what your browser received. A local server the page only names is not requested: whether a page may reach your local network is your browser's permission to give, and savemedia does not go around it. A public name that leads there on savemedia's own request is requested once, and its answer is not used, in a check and in a save alike (`packages/extension/src/util/address-space.ts`, which reads addresses and local names with `packages/core/src/net/address.ts`; the browser's answers are noted in `packages/extension/src/background/network-capture.ts`; a save looks at where each of its answers came from in `packages/extension/src/engine/download.ts`). The popup says so in both cases, and what to do. The browser's answers that count are those for media, for data a page fetches, and for the page and its frames themselves. So a page your network serves under a name of its own, such as a company wiki, is known as a page inside your network, and a file it offers on its own server is saved. The same holds when your browser reaches the internet through a proxy inside your network: the browser then reports the proxy's address for every server, so for such a tab that address decides nothing, and only an address that is itself local still waits until your browser was answered from it. Image requests are not noted this way. For Alt+S on an image, the picture the page shows counts as the browser's answer from that server: savemedia's own page script reads that the image element has loaded, where page code cannot change the reading (`packages/extension/src/content/pointer-media.ts`, `packages/extension/src/background/image-save.ts`). A local image the page shows is saved; a broken image, and a background image, is not requested.
+- **Unsecured redirect.** A file that is requested over HTTPS and answered over plain HTTP after a redirect is not saved (`packages/extension/src/engine/net/range-recovery.ts`). The popup says so.
+- **Limits of the code.** Live streams without an end, HLS and DASH whose byte ranges do not add up to one whole file (ranges in several files, ranges encrypted one by one, or ranges that leave media out; a fragmented MP4 whose ranges leave out only its index is saved), fragmented MP4 HLS that changes its header part-way, DASH manifests of several periods (each period has its own header and timeline, and one is often an ad placed before the video), and files larger than the 2 GiB savemedia puts together in the browser are not saved in the browser. A transport stream whose clock starts again part-way (a clip joined in on the server) is saved as the transport stream it is (`.ts`), not as an MP4. That is a limit of the code, not a decision about what you may save. The message says which limit it is.
+- **The browser's own resume.** When your browser holds an interrupted download of the same file, savemedia lets the browser continue it. savemedia cannot read that file: it is accepted by the video type its server declared, when the download began and again when it ends, and its bytes are not verified. A resume that the server answers with something else, such as the web page of an expired link, is not kept: the file is removed and the popup says what the server sent. When savemedia's own look at the link was already answered that way, the browser's download is left alone and the file is downloaded afresh and verified (`packages/extension/src/background/interrupted-download.ts`). The store text and the README name this exception.
+- **Local downloader.** yt-dlp writes its file straight into the Downloads folder. savemedia checks only that the file is there and not empty. yt-dlp makes its own requests with its own network settings and your yt-dlp configuration, not through your browser. The helper turns off yt-dlp's geographic bypass, which would send a made-up address to a site limited to some countries, so such a video fails with the site's own answer. Save this page with yt-dlp hands over the page address whatever savemedia found on the page. Protection is then decided by yt-dlp's own format data.
+- **Site readers.** `packages/extension/src/content/sites/` holds three site readers. On those sites' pages they read the player data your browser received from the site, to name the files with picture and sound; the files are then checked like any other. They are code for one site each, so whether they stay is an open owner decision. Store packages (`bun run zip`) carry two of them: the Chrome Web Store does not accept extensions that save from the third reader's site, so store packages leave that reader out and do not offer that site's media in the browser, also not from the addresses its pages declare or its players hold. On that site a store package says "savemedia does not save videos from this site.", and never advises to start playback (`packages/extension/src/content/sites/registry.ts`, `onStoreExcludedSite` and `managedSite` in `packages/extension/src/background/network-capture.ts`, checked by `packages/extension/scripts/package.mjs`). On a site with a reader, savemedia lists what the reader names and does not list what the browser itself loads there, because those requests carry picture and sound apart. When the reader names nothing, savemedia says "savemedia found no file it can save in this page's player data." instead of "No media detected". The Local downloader is not part of this: it is off until you turn it on and install the helper, and then Save this page with yt-dlp, and Alt+S when savemedia found nothing, hand that site's pages to your own yt-dlp like any other page, in store packages too. Refusing a page by its site would be a refusal that is not about encryption, so whether store packages should do it is an open owner decision, and a risk in a store review.

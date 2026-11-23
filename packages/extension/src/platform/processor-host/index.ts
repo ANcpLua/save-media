@@ -26,5 +26,9 @@ const impl = (typeof __BROWSER__ !== "undefined" && __BROWSER__ === "firefox")
   ? firefox
   : chromium;
 
-export const ensureEngineHost = impl.ensureEngineHost;
-export const closeEngineHost = impl.closeEngineHost;
+/** The engine document's primitives for the engine channel. */
+export const engineDocument = {
+  exists: impl.engineDocumentExists,
+  create: impl.createEngineDocument,
+  close: impl.closeEngineDocument,
+};

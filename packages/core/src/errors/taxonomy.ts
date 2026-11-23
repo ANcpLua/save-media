@@ -1,58 +1,101 @@
 import type { DrmSignalSource, OutputContainer, Container } from "../types/stream";
-import type { VideoCodec, AudioCodec } from "../types/codec";
 
-export type JobErrorSeverity = "terminal" | "recoverable";
+/** Every reported error ends its job. The field stays so stored and exported records keep their shape. */
+export type JobErrorSeverity = "terminal";
 
+/**
+ * What the browser reported about one request savemedia made itself. It is
+ * read from the browser's request events only; nothing here is asked of the
+ * network. It explains a failure and never changes a request or a retry.
+ */
 export interface BrowserRequestDiagnostic {
-  readonly code: string;
+  /** Host (with a port that is not the default) of the address savemedia requested. */
   readonly host: string;
-}
-
-export function isCertificateError(code: string): boolean {
-  return code.startsWith("net::ERR_CERT_") || code === "net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN";
+  /** The browser's error code for the request; null when a server answered. */
+  readonly code: string | null;
+  /** The address of the server that answered or was tried last. */
+  readonly ip: string | null;
+  /** The host that answered last, when a redirect led away from `host`. */
+  readonly finalHost: string | null;
+  /** The first redirect to another host. */
+  readonly redirect: { readonly toHost: string; readonly status: number; readonly fromIp: string | null } | null;
 }
 
 export type JobError =
   // DRM / CDM-bound encryption
   | { code: "encrypted_media_detected";   severity: "terminal";    detectedVia: readonly DrmSignalSource[]; keySystem: string | null }
-  | { code: "cdm_required";               severity: "terminal";    keySystem: string }
-  | { code: "clear_segments_unavailable"; severity: "terminal";    manifestUrl: string }
+  /** `detectedVia` is where the protection was declared, when the refusal comes from a listed stream. */
+  | { code: "cdm_required";               severity: "terminal";    keySystem: string; detectedVia?: readonly DrmSignalSource[] }
   | { code: "license_bound_stream";       severity: "terminal";    keyUri: string; httpStatus: number }
-  | { code: "clearkey_deferred";          severity: "terminal";    manifestUrl: string }
+  | { code: "clearkey_deferred";          severity: "terminal";    manifestUrl: string; detectedVia?: readonly DrmSignalSource[] }
+  /**
+   * A clear AES-128 key URI answered, but its answer cannot decrypt the stream: a page, a data document, bytes
+   * that are not a 16-byte key (binary), or a 16-byte key the segments do not decrypt with (rejected).
+   * Never handed to another downloader.
+   */
+  | { code: "hls_key_unusable";           severity: "terminal";    keyUri: string; response: "page" | "data" | "binary" | "rejected"; byteLength: number;
+      browserDiagnostic?: BrowserRequestDiagnostic }
 
   // Source availability
-  | { code: "live_window_expired";        severity: "terminal";    missingSegmentsFromStart: number; manifestRefreshAt: number }
-  | { code: "manifest_404";               severity: "terminal";    url: string; httpStatus: number }
   | { code: "manifest_malformed";         severity: "terminal";    url: string; parserError: string }
+  /** The playlist or manifest is larger, or declares more segments, than is read. */
+  | { code: "manifest_too_large";         severity: "terminal";    url: string; limit: "bytes" | "segments" }
+  /**
+   * A page on the public internet points at a server inside the user's network, and the browser itself was
+   * not answered from that server for this page. Without `ip` the address itself names that server and
+   * nothing was requested. With `ip`, a public name led there: the browser reported that address for the one
+   * request made, and its answer was not used.
+   */
+  | { code: "private_network_target";     severity: "terminal";    host: string; ip?: string }
 
-  // Track availability
-  | { code: "missing_video_track";        severity: "terminal";    declaredIn: "manifest" | "init-segment" }
-  | { code: "no_variant_meets_minimum";   severity: "terminal";    minHeightRequired: 720; maxAvailableHeight: number }
-
-  // Codec compatibility
-  | { code: "unsupported_codec";          severity: "terminal";    codec: VideoCodec | AudioCodec; where: "source" | "target" }
-  | { code: "no_remux_path";              severity: "terminal";    from: Container; to: OutputContainer; reason: "container-not-supported-by-engine" | "codec-incompatible-with-target" }
+  // Output
   | { code: "unsupported_output";         severity: "terminal";    from: Container; to: OutputContainer; reason: "conversion-not-implemented" | "container-not-supported" }
+  /** A track declares a codec the MP4 file savemedia writes cannot hold. `codec` is the codec's family, a closed set. */
+  | { code: "codec_unsupported";          severity: "terminal";    manifestUrl: string; track: "video" | "audio"; codec: string }
   | { code: "dash_unsupported";           severity: "terminal";    manifestUrl: string }
   | { code: "hls_encryption_unsupported"; severity: "terminal";    manifestUrl: string; method: string }
   | { code: "hls_live_unsupported";       severity: "terminal";    manifestUrl: string }
-  | { code: "hls_layout_unsupported";     severity: "terminal";    manifestUrl: string; detail: string }
-  | { code: "output_too_large_for_browser"; severity: "terminal";  estimatedBytes: number; limitBytes: number }
+  /**
+   * not-transport-stream: a segment is not MPEG-TS; init-boxes / fragment-boxes: required fMP4 boxes are missing;
+   * box-structure: an fMP4 box is cut or mis-sized; byte-ranges: the parts are byte ranges that do not add up to
+   * one whole file, or are encrypted range by range; init-changes: a fragmented MP4 playlist names another
+   * header (EXT-X-MAP) part-way, so its parts are not one MP4.
+   */
+  | { code: "hls_layout_unsupported";     severity: "terminal";    manifestUrl: string;
+      layout: "not-transport-stream" | "init-boxes" | "fragment-boxes" | "box-structure" | "byte-ranges" | "init-changes" }
+  /**
+   * `estimatedBytes` is the size the manifest or the server states for the whole save. With `measured` it is
+   * the bytes received when the limit was reached instead: the whole is larger, and how large is not known.
+   * `lowerQuality`: the same video is listed in a smaller quality that the user can choose.
+   */
+  | { code: "output_too_large_for_browser"; severity: "terminal";  estimatedBytes: number; limitBytes: number; measured?: true; lowerQuality?: true }
 
   // Network
-  | { code: "segment_fetch_failed";       severity: "recoverable"; segmentIndex: number; url: string; httpStatus: number | "network-error"; attemptsRemaining: number }
+  | { code: "range_body_empty"; severity: "terminal"; host: string; rangeStart: number; rangeEnd: number; totalBytes: number;
+      declaredBytes: number | null; reconnects: number; reason: "declared-empty" | "stream-ended" | "read-error" | "timeout" }
+  /** A direct file transfer stopped for a reason in TransferFailureReason; the text is written by userMessage. */
+  | { code: "transfer_failed"; severity: "terminal"; reason: TransferFailureReason; host: string;
+      receivedBytes: number | null; totalBytes: number | null; httpStatus: number | null; browserDiagnostic?: BrowserRequestDiagnostic }
   | { code: "segment_budget_exhausted";   severity: "terminal";    failedSegments: readonly number[]; totalSegments: number }
-  | { code: "manifest_refresh_failed";    severity: "recoverable"; url: string; httpStatus: number | "network-error"; attemptsRemaining: number }
   | { code: "rate_limited";               severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 429; retryAfterSeconds: number | null }
-  | { code: "server_busy";                severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: number }
-  | { code: "access_denied";              severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 401 | 402 | 403 | 451; explanation: "login-or-cookie" | "payment-or-entitlement" | "forbidden-or-expired-url" | "legal-restriction" }
-  | { code: "network_unreachable";        severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; detail: string; browserDiagnostic?: BrowserRequestDiagnostic }
+  | { code: "server_busy";                severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: number;
+      browserDiagnostic?: BrowserRequestDiagnostic }
+  /**
+   * `atSaveStart` (on this and on access_denied): the request was for the video's playlist or manifest, read
+   * again as the save started. The video was listed from an answer the same playlist gave before.
+   */
+  | { code: "http_error";                 severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: number;
+      atSaveStart?: true; browserDiagnostic?: BrowserRequestDiagnostic }
+  | { code: "access_denied";              severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string; httpStatus: 401 | 402 | 403 | 451;
+      explanation: "login-or-cookie" | "payment-or-entitlement" | "forbidden-or-expired-url" | "legal-restriction"; atSaveStart?: true;
+      browserDiagnostic?: BrowserRequestDiagnostic }
+  | { code: "network_unreachable";        severity: "terminal";    phase: "manifest" | "segment" | "direct"; url: string;
+      /** request: no response arrived; transfer: the connection dropped during the body; timeout: data stopped arriving. */
+      during: "request" | "transfer" | "timeout"; receivedBytes?: number; totalBytes?: number | null; browserDiagnostic?: BrowserRequestDiagnostic }
 
   // Browser security
   | { code: "tls_certificate_rejected"; severity: "terminal"; phase: "manifest" | "segment" | "direct"; browserDiagnostic: BrowserRequestDiagnostic }
   | { code: "insecure_media_redirect"; severity: "terminal" }
-  | { code: "cors_blocked";               severity: "terminal";    url: string; blockedHeader: "Access-Control-Allow-Origin" | "Access-Control-Allow-Headers" | "credentials" }
-  | { code: "mixed_content_blocked";      severity: "terminal";    pageProtocol: "https"; resourceProtocol: "http"; url: string }
 
   // Verification
   | { code: "verification_segment_count"; severity: "terminal";    expected: number; got: number }
@@ -61,20 +104,47 @@ export type JobError =
   | { code: "verification_container";     severity: "terminal";    probeError: string }
 
   // Engine
-  | { code: "engine_job_failed";          severity: "terminal";    at: "manifest" | "init" | "segment" | "finalize"; detail: string }
-  | { code: "engine_oom";                 severity: "terminal";    workerMemoryMb: number; budgetMb: 64 }
-  | { code: "unexpected_media_response"; severity: "terminal"; response: "page" | "data" | "unsupported" }
+  /**
+   * `cause` names what stopped the job in closed words: browser-resume is Chrome's own resume of its
+   * interrupted download; anything else is unexpected. `detail` is a technical note, never main text.
+   */
+  | { code: "engine_job_failed";          severity: "terminal";    at: "manifest" | "init" | "segment" | "direct" | "finalize"; detail: string;
+      cause?: "unexpected" | "browser-resume" }
+  /**
+   * The browser ended the process that was saving the file. start: it never opened; running: it closed
+   * during the save; restart: the browser paused the extension and the save did not survive it.
+   */
+  | { code: "engine_stopped";             severity: "terminal";    when: "start" | "running" | "restart" }
+  /**
+   * The answer is a web page, a data document, or bytes of no supported video format. `host` is the server asked.
+   * `atSaveStart`: the request was for the video's playlist or manifest, read again as the save started. It was a
+   * playlist when the video was found, and the same address now sends something that is none.
+   */
+  | { code: "unexpected_media_response"; severity: "terminal"; response: "page" | "data" | "unsupported"; host?: string;
+      atSaveStart?: true; browserDiagnostic?: BrowserRequestDiagnostic }
   | { code: "browser_download_failed";    severity: "terminal";    reason: string; filename: string }
 
   // Cancellation
-  | { code: "user_cancelled";             severity: "terminal";    bytesDiscarded: number };
+  /** The user stopped the save. Shown as a neutral state, never as a failure. */
+  | { code: "user_cancelled";             severity: "terminal" };
+
+/**
+ * Why a direct file transfer stopped, when the server answered but its
+ * answer cannot become a verified file:
+ * ended-early: the body ended before its announced length and could not continue;
+ * resume-refused: the server would not send the rest (HTTP 200, 400, 416 or 501 to a Range request);
+ * resume-unverifiable: no ETag, Last-Modified date or checksum proves the rest belongs to the same file;
+ * file-changed / content-mismatch: the file on the server is no longer the one partly saved;
+ * range-mismatch / range-length / range-slices / range-encoded / body-long: byte ranges that do not fit together;
+ * link-changed: the link now leads to another resource.
+ */
+export type TransferFailureReason =
+  | "ended-early" | "resume-refused" | "resume-unverifiable" | "file-changed" | "content-mismatch"
+  | "range-mismatch" | "range-length" | "range-slices" | "range-encoded" | "body-long" | "link-changed";
 
 export type JobErrorCode = JobError["code"];
 
-export function isTerminal(err: JobError): boolean {
-  return err.severity === "terminal";
-}
-
-export function isRecoverable(err: JobError): boolean {
-  return err.severity === "recoverable";
+/** The one structural test for a JobError thrown or passed around as a plain object. */
+export function isJobError(value: unknown): value is JobError {
+  return !!value && typeof value === "object" && "code" in value && "severity" in value;
 }

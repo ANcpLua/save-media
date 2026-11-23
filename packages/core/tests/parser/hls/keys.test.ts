@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   AES_128_KEY_BYTES,
+  declarationOf,
+  hlsEncryptionOf,
+  hlsKeyDrm,
   isClearAes128,
   isDecryptableLength,
   parseHlsKeyDeclarations,
+  parseHlsSessionKeys,
   planHlsKeys,
   segmentIv,
 } from "../../../src/parser/hls/keys";
@@ -110,7 +114,37 @@ describe("key plan", () => {
   });
 
   it("a key tag without URI cannot be fetched, so it is not decryptable", () => {
-    expect(planHlsKeys([decl({ keyUri: null })])).toEqual({ kind: "drm", keySystem: "identity" });
+    expect(planHlsKeys([decl({ keyUri: null })])).toEqual({ kind: "drm", keySystem: "AES-128" });
+  });
+
+  it("names the declared key format of a SAMPLE-AES key, else its method", () => {
+    expect(planHlsKeys([decl({ method: "SAMPLE-AES", keyFormat: "com.apple.streamingkeydelivery" })]))
+      .toEqual({ kind: "drm", keySystem: "com.apple.streamingkeydelivery" });
+  });
+
+  it("reports a decryptable playlist's first key with its KEYFORMAT, and back as a declaration", () => {
+    const keys = [decl({ method: "NONE", keyUri: null }), decl({ keyUri: "https://x.test/k1" }), decl({ keyUri: "https://x.test/k2" })];
+    const encryption = hlsEncryptionOf(keys);
+    expect(encryption).toEqual({ method: "AES-128", keyUri: "https://x.test/k1", iv: null, keyFormat: "identity" });
+    expect(declarationOf(encryption!)).toEqual(keys[1]);
+    expect(declarationOf({ method: "AES-128", keyUri: "https://x.test/k", iv: null }).keyFormat).toBe("identity");
+    expect(hlsKeyDrm(planHlsKeys(keys))).toBeNull();
+    expect(hlsKeyDrm({ kind: "drm", keySystem: "SAMPLE-AES" }))
+      .toEqual({ reason: "cdm_required", detectedVia: ["hls-ext-x-key"], keySystem: "SAMPLE-AES" });
+  });
+});
+
+describe("EXT-X-SESSION-KEY", () => {
+  it("reads session keys from a master and nothing from EXT-X-KEY there", () => {
+    const master = `#EXTM3U
+#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES,URI="skd://k",KEYFORMAT="com.apple.streamingkeydelivery",KEYFORMATVERSIONS="1"
+#EXT-X-STREAM-INF:BANDWIDTH=1000000
+v.m3u8
+`;
+    expect(parseHlsSessionKeys(master, base)).toEqual([
+      { method: "SAMPLE-AES", keyUri: "skd://k", keyFormat: "com.apple.streamingkeydelivery", iv: null },
+    ]);
+    expect(parseHlsKeyDeclarations(master, base)).toEqual([]);
   });
 });
 

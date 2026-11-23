@@ -1,18 +1,13 @@
-import { RETRY_POLICY, computeBackoffMs, isRetryableStatus, type RetryClass } from "@savemedia/core";
-
-export interface RetryableHttpError {
-  readonly url: string;
-  readonly status: number | "network-error";
-  readonly attemptsRemaining: number;
-  readonly retryAfterSeconds: number | null;
-  readonly detail: string;
-}
+import { MAX_AUTOMATIC_WAIT_MS, RETRY_POLICY, computeBackoffMs, isJobError, isRetryableStatus, retryAfterMs, type RetryClass } from "@savemedia/core";
+import { delay } from "./retry-delay";
+import { TransferError, transportFailure } from "./transfer-error";
 
 /**
  * fetch wrapper that retries network / 5xx / 429-style failures using the
- * retry-policy table from @savemedia/core. Non-retryable HTTP statuses
- * fast-fail with a RetryableHttpError. Final attempt failures throw the
- * same shape so callers can build a JobError with the right code.
+ * retry-policy table from @savemedia/core. A non-retryable HTTP status fails
+ * at once; the last failure is thrown as the same TransferError the direct
+ * engine uses (http-status with its Retry-After, or network), so one
+ * classifier turns every job's failure into its JobError.
  */
 export async function fetchWithRetry(
   url: string,
@@ -21,64 +16,41 @@ export async function fetchWithRetry(
   init: RequestInit = {},
   fetchFile: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ): Promise<Response> {
-  const policy = RETRY_POLICY[cls];
-  const maxAttempts = "maxAttempts" in policy ? policy.maxAttempts : 1;
-  let lastStatus: number | "network-error" = "network-error";
-  let lastDetail = "network error";
-  let retryAfterSeconds: number | null = null;
+  const maxAttempts = RETRY_POLICY[cls].maxAttempts;
+  let failure = new TransferError("network", { url, during: "request" });
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
-
+    signal.throwIfAborted();
+    let wait = 0;
     let response: Response | undefined;
     try {
       response = await fetchFile(url, { ...init, signal });
     } catch (err) {
+      signal.throwIfAborted();
       if (err instanceof DOMException && err.name === "AbortError") throw err;
-      lastStatus = "network-error";
-      lastDetail = err instanceof Error ? err.message : String(err);
-      // Network error — fall through to the retry/exit branch below.
+      // A refusal of the answer itself (where a redirect led) is final: asking again changes nothing.
+      if (isJobError(err)) throw err;
+      const transport = transportFailure(err, url, "request");
+      // No response arrived. A certificate the browser rejected stays rejected.
+      failure = transport instanceof TransferError ? transport : new TransferError("network", { url, during: "request" });
+      if (!failure.retryable) break;
     }
 
     if (response) {
       if (response.ok) return response;
-      lastStatus = response.status;
       await response.body?.cancel().catch(() => undefined);
-      lastDetail = response.statusText || `HTTP ${response.status}`;
-      retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
-      if (!isRetryableStatus(cls, response.status)) {
-        throw { url, status: response.status, attemptsRemaining: 0, retryAfterSeconds, detail: lastDetail } satisfies RetryableHttpError;
-      }
+      const retryAfter = retryAfterMs(response.headers.get("retry-after"));
+      const retryable = isRetryableStatus(cls, response.status) && (retryAfter ?? 0) <= MAX_AUTOMATIC_WAIT_MS;
+      failure = new TransferError("http-status", { url: response.url || url, status: response.status, retryAfterMs: retryAfter }, retryable);
+      if (!retryable) break;
+      wait = retryAfter ?? 0;
     }
 
-    const isLast = attempt === maxAttempts - 1;
-    if (isLast) break;
-    const backoff = computeBackoffMs(cls, attempt + 1, Math.random());
-    await sleep(backoff, signal);
+    if (attempt === maxAttempts - 1) break;
+    await delay(Math.max(computeBackoffMs(cls, attempt, Math.random()), wait), signal);
   }
 
-  throw { url, status: lastStatus, attemptsRemaining: 0, retryAfterSeconds, detail: lastDetail } satisfies RetryableHttpError;
-}
-
-function parseRetryAfter(value: string | null): number | null {
-  if (!value) return null;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
-  const dateMs = Date.parse(value);
-  if (!Number.isFinite(dateMs)) return null;
-  return Math.max(0, Math.ceil((dateMs - Date.now()) / 1000));
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        reject(new DOMException("user-cancelled", "AbortError"));
-      },
-      { once: true },
-    );
-  });
+  // The retries are spent: a caller that retries whole operations must not repeat this one at once. A failure
+  // that could still be retried says so, for a caller that waits out an outage before it asks again.
+  throw failure.with(failure.retryable ? { retriesSpent: true } : {}, false);
 }

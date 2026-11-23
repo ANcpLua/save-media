@@ -12,11 +12,23 @@ import type {
   HlsPlainPlan,
   AvMergePlan,
   MergeTrack,
+  UnsupportedCodec,
 } from "../types/job";
-import type { Variant, HlsEncryption, SegmentRef, VideoCodecFamily, AudioCodecFamily } from "../types/codec";
-import { interpretHlsEncryption } from "../parser/hls/encryption";
+import type { Variant, SegmentRef, VideoCodecFamily, AudioCodecFamily } from "../types/codec";
+import { declarationOf, planHlsKeys } from "../parser/hls/keys";
 
-export const BROWSER_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024; // Blob URLs become unreliable above this.
+/**
+ * The most bytes one save puts together in the browser. A save is refused
+ * here when the size its server or its manifest states is larger (statedSize),
+ * and every engine job counts the bytes it receives against the same limit,
+ * so a save without a stated size stops there. An estimate from a bit rate
+ * never refuses a save. The engine holds the file as Blobs, which the
+ * browser keeps outside the engine document and can move to disk, so the
+ * limit is not the document's memory. It bounds what one save asks of the
+ * browser's Blob storage: a merge or a remux holds its input and its output
+ * there at the same time, about twice this. Larger saves are untested.
+ */
+export const BROWSER_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 
 function asOutputContainer(c: Container): OutputContainer {
   if (c === "mp4" || c === "webm" || c === "mkv") return c;
@@ -45,8 +57,37 @@ function estimateSize(variant: Variant | null): number | null {
   return null;
 }
 
-function tooLargeForBrowser(estimated: number | null): boolean {
-  return estimated != null && estimated >= BROWSER_OUTPUT_LIMIT_BYTES;
+function tooLargeForBrowser(stated: number | null): boolean {
+  return stated != null && stated >= BROWSER_OUTPUT_LIMIT_BYTES;
+}
+
+/**
+ * The size a track's server or its manifest states: where the byte ranges of
+ * a track kept in one file end, or the length a server declared for a file
+ * (a track with a size and no bit rate has no other). A size next to a bit
+ * rate was worked out from that rate over the track's length. That is an
+ * estimate, and it leans high: HLS BANDWIDTH is the peak rate, and DASH
+ * bandwidth an upper bound. It is shown as an estimate and never refuses a
+ * save.
+ */
+function statedSize(track: Variant | null): number | null {
+  if (!track) return null;
+  const ref = track.segmentRef;
+  if ((ref.kind === "hls-segments" || ref.kind === "dash-segments") && ref.fileBytes !== undefined) return ref.fileBytes;
+  return track.bitrate === null ? track.estimatedSize : null;
+}
+
+/**
+ * The stated size of a whole save, video and audio together. A save is
+ * refused before it starts only on this. Without it, the count of received
+ * bytes stops a save at the limit.
+ */
+function statedSaveSize(video: Variant, audio: Variant | null): number | null {
+  const v = statedSize(video);
+  const a = statedSize(audio);
+  // One track's stated size is already the least the save will be.
+  if (v === null && a === null) return null;
+  return (v ?? 0) + (a ?? 0);
 }
 
 function resolveOutputContainer(descriptor: StreamDescriptor, choice: UserChoice): OutputContainer {
@@ -58,23 +99,16 @@ function audioRenditionsOf(descriptor: StreamDescriptor): readonly Variant[] {
   return descriptor.audioRenditions ?? [];
 }
 
-function hlsEncryptionFor(descriptor: StreamDescriptor): { kind: "clear" | "encrypted" | "drm-blocked"; encryption: HlsEncryption | null } {
-  // Encryption may be carried on the variant segment-ref or surfaced via
-  // descriptor.drm. We only reach this branch when descriptor.drm is null
-  // (otherwise dispatch returns refuse before us).
-  for (const v of [...descriptor.variants, ...audioRenditionsOf(descriptor)]) {
-    if (v.segmentRef.kind === "hls-segments" && v.segmentRef.encryption) {
-      const enc = v.segmentRef.encryption;
-      const verdict = interpretHlsEncryption({ method: enc.method, uri: enc.keyUri, iv: enc.iv });
-      if (verdict.treatedAs === "decryptable" && verdict.encryption) {
-        return { kind: "encrypted", encryption: verdict.encryption };
-      }
-      if (verdict.treatedAs === "drm-blocked") {
-        return { kind: "drm-blocked", encryption: null };
-      }
-    }
-  }
-  return { kind: "clear", encryption: null };
+/**
+ * The key policy over every key the variants and renditions carry. Their
+ * KEYFORMAT travels with them, so a CDM key system is never mistaken for a
+ * key served in the clear. Descriptor-level DRM was refused before this.
+ */
+function hlsEncryptionFor(descriptor: StreamDescriptor): "clear" | "encrypted" | "drm-blocked" {
+  const declarations = [...descriptor.variants, ...audioRenditionsOf(descriptor)].flatMap(v =>
+    v.segmentRef.kind === "hls-segments" && v.segmentRef.encryption ? [declarationOf(v.segmentRef.encryption)] : []);
+  const plan = planHlsKeys(declarations);
+  return plan.kind === "drm" ? "drm-blocked" : plan.kind === "aes-128" ? "encrypted" : "clear";
 }
 
 function buildHlsPlainPlan(
@@ -122,36 +156,57 @@ function mergeTrackFrom(ref: SegmentRef): MergeTrack | null {
       return { initUrl: null, segmentUrls: [ref.url] };
     case "hls-segments":
       if (ref.segmentUrls.length === 0) return null;
-      return { initUrl: ref.initSegmentUrl, segmentUrls: ref.segmentUrls };
+      return { initUrl: ref.initSegmentUrl, segmentUrls: ref.segmentUrls,
+        ...(ref.segmentKeys ? { segmentKeys: ref.segmentKeys } : {}), ...(ref.initKey ? { initKey: ref.initKey } : {}),
+        ...(ref.fileBytes !== undefined ? { fileBytes: ref.fileBytes } : {}), ...(ref.fileGaps?.length ? { fileGaps: ref.fileGaps } : {}) };
     case "dash-segments":
       if (ref.mediaUrls.length === 0) return null;
-      return { initUrl: ref.initUrl || null, segmentUrls: ref.mediaUrls };
+      return { initUrl: ref.initUrl || null, segmentUrls: ref.mediaUrls, ...(ref.fileBytes !== undefined ? { fileBytes: ref.fileBytes } : {}) };
     case "byte-range":
       return null;
   }
 }
 
-// The merge engine muxes to MP4 only; families outside these sets yield an
-// invalid or unplayable MP4 (VP9/Opus belong in WebM — a later story). A null
-// codec passes: progressive pairs confirmed as MP4 by magic bytes carry no
-// manifest codec declaration.
-const MP4_VIDEO_FAMILIES: ReadonlySet<VideoCodecFamily> = new Set(["h264", "h265", "av1"]);
-const MP4_AUDIO_FAMILIES: ReadonlySet<AudioCodecFamily> = new Set(["aac", "mp3"]);
+// The merge engine muxes to MP4, and these are the families its muxer writes
+// there, whatever container the segments arrive in (fMP4, WebM, MPEG-TS).
+// A family outside them cannot be put into the file, so its plan is refused
+// before anything is fetched. A null codec passes: a manifest need not
+// declare one, and the muxer reads it from the bytes.
+const MP4_VIDEO_FAMILIES: ReadonlySet<VideoCodecFamily> = new Set(["h264", "h265", "av1", "vp9", "vp8"]);
+const MP4_AUDIO_FAMILIES: ReadonlySet<AudioCodecFamily> = new Set(["aac", "mp3", "opus", "flac", "vorbis", "ac3", "eac3"]);
 
-function mp4MergeCompatible(video: Variant, audio: Variant): boolean {
+/** The declared codec the MP4 file cannot hold, if a track declares one. */
+function codecOutsideMp4(video: Variant, audio: Variant | null): UnsupportedCodec | null {
+  if (video.videoCodec && !MP4_VIDEO_FAMILIES.has(video.videoCodec.family)) return { track: "video", family: video.videoCodec.family };
   // A demuxed HLS variant's CODECS attribute declares the group's audio
-  // codec; the rendition itself usually carries none.
-  const audioCodec = audio.audioCodec ?? video.audioCodec;
-  if (video.videoCodec && !MP4_VIDEO_FAMILIES.has(video.videoCodec.family)) return false;
-  if (audioCodec && !MP4_AUDIO_FAMILIES.has(audioCodec.family)) return false;
-  return true;
+  // codec; the rendition itself usually carries none. Without a separate
+  // audio track, the video track's own declared audio is what is copied.
+  const audioCodec = audio?.audioCodec ?? video.audioCodec;
+  if (audioCodec && !MP4_AUDIO_FAMILIES.has(audioCodec.family)) return { track: "audio", family: audioCodec.family };
+  return null;
 }
 
-function buildAvMergePlan(video: Variant, audio: Variant, choice: UserChoice): AvMergePlan | null {
+function mp4MergeCompatible(video: Variant, audio: Variant | null): boolean {
+  return codecOutsideMp4(video, audio) === null;
+}
+
+/** A track is clear, or its media playlist was read and names the key of each segment. */
+function keysKnown(track: Variant): boolean {
+  const ref = track.segmentRef;
+  if (ref.kind !== "hls-segments") return true;
+  return ref.segmentKeys?.length === ref.segmentUrls.length || (ref.encryption === null && ref.initKey == null);
+}
+
+/**
+ * `audio` null: the manifest declares no separate audio track, and the video
+ * track is saved as the page plays it, with the sound its own bytes carry
+ * (one representation can hold video and audio together) or without sound.
+ */
+function buildAvMergePlan(video: Variant, audio: Variant | null, choice: UserChoice): AvMergePlan | null {
   if (!mp4MergeCompatible(video, audio)) return null;
   const videoTrack = mergeTrackFrom(video.segmentRef);
-  const audioTrack = mergeTrackFrom(audio.segmentRef);
-  if (!videoTrack || !audioTrack) return null;
+  const audioTrack = audio ? mergeTrackFrom(audio.segmentRef) : null;
+  if (!videoTrack || (audio && !audioTrack)) return null;
   return {
     kind: "av-merge",
     video: videoTrack,
@@ -201,6 +256,10 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
   if (descriptor.drm) {
     return { kind: "refuse", reason: descriptor.drm.reason };
   }
+  // A playlist that is still being written has no complete file to save yet.
+  if (descriptor.protocol === "hls" && descriptor.presentation?.live) {
+    return { kind: "refuse", reason: "hls_live_unsupported" };
+  }
 
   // Direct download: progressive + Original mode + actual direct URL.
   if (descriptor.capabilities.directDownload && choice.outputMode === "Original") {
@@ -213,53 +272,63 @@ export function dispatch(descriptor: StreamDescriptor, choice: UserChoice): JobP
   // HLS: classify per-variant encryption to pick plain vs AES vs blocked.
   if (descriptor.protocol === "hls") {
     const variant = pickVariant(descriptor, choice);
-    if (!variant) {
-      return { kind: "refuse", reason: "no_usable_variant" };
-    }
+    if (!variant) return { kind: "refuse", reason: "no_usable_variant" };
     const demuxed = variant.audioRenditionId !== null;
     const audio = demuxed ? pickHlsAudioRendition(descriptor, variant, choice) : null;
-    const estimated = demuxed ? combinedEstimate(variant, audio) : estimateSize(variant);
-    if (tooLargeForBrowser(estimated)) {
-      return { kind: "refuse", reason: "output_too_large_for_browser" };
+    const stated = statedSaveSize(variant, audio);
+    if (stated != null && tooLargeForBrowser(stated)) {
+      return { kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: stated };
     }
     const enc = hlsEncryptionFor(descriptor);
-    if (enc.kind === "drm-blocked") {
+    if (enc === "drm-blocked") {
       return { kind: "refuse", reason: "cdm_required" };
     }
-    // AES-128 with an identity key is decryptable: the engine fetches the
-    // 16 key bytes over the same HTTP the player uses and decrypts each
-    // segment (boundary rule G1). A demuxed variant is still refused —
-    // av-merge fetches its two tracks by URL alone and carries no key, so
-    // it would write an encrypted file and call it saved.
-    if (enc.kind === "encrypted" && demuxed) {
-      return { kind: "refuse", reason: "hls_encryption_unsupported" };
-    }
     if (demuxed) {
+      // A codec the MP4 file cannot hold is said as that. It is no fault of the playlist, and no new look
+      // at the page changes it.
+      const codec = codecOutsideMp4(variant, audio);
+      if (codec) return { kind: "refuse", reason: "codec_unsupported", codec };
       // A demuxed variant must never fall back to hls-plain — that would save
       // a silent video-only file. Until both tracks carry materialized segment
       // URLs (the caller fetches the media playlists first), refuse.
       const plan = audio ? buildAvMergePlan(variant, audio, choice) : null;
+      // AES-128 with an identity key is decrypted: the engine fetches the 16
+      // key bytes over the same HTTP the player uses. The materialized tracks
+      // name the key of every segment; a keyed track without that list would
+      // be merged as ciphertext, so it is refused.
+      if (plan && enc === "encrypted" && ![variant, audio].every(track => !track || keysKnown(track))) {
+        return { kind: "refuse", reason: "hls_encryption_unsupported" };
+      }
       return plan ?? { kind: "refuse", reason: "no_usable_variant" };
     }
     return buildHlsPlainPlan(descriptor, choice, variant, outputContainer);
   }
 
-  // DASH: clear demuxed video+audio merges into one MP4; anything less
-  // (no audio AdaptationSet, unmaterialized or byte-range segments, or a
-  // dynamic/live MPD — parseDash leaves those unmaterialized) keeps the
-  // historical refusal. DRM was already refused at the top.
+  // DASH: the clear video track and the audio track that belongs to it become
+  // one MP4. A manifest that declares no separate audio track is saved as it
+  // plays: with the sound the video track's own bytes carry, or without
+  // sound. It is clear media the browser receives. What stays refused is what
+  // cannot be assembled: a manifest still being written (parseDash leaves a
+  // dynamic MPD unmaterialized, because it lists only the current window),
+  // byte ranges that do not add up to one file, a codec the MP4 muxer does
+  // not write, and an audio track that exists but cannot be fetched, which is
+  // never dropped silently. DRM was already refused at the top.
   if (descriptor.protocol === "dash") {
     const variant = pickVariant(descriptor, choice);
-    if (!variant) {
-      return { kind: "refuse", reason: "no_usable_variant" };
+    if (!variant) return { kind: "refuse", reason: "no_usable_variant" };
+    if (descriptor.presentation?.live) {
+      return { kind: "refuse", reason: "hls_live_unsupported" };
     }
     const audio = pickDashAudioRendition(descriptor, choice);
-    const plan = audio ? buildAvMergePlan(variant, audio, choice) : null;
+    const codec = codecOutsideMp4(variant, audio);
+    if (codec) return { kind: "refuse", reason: "codec_unsupported", codec };
+    const plan = buildAvMergePlan(variant, audio, choice);
     if (!plan) {
       return { kind: "refuse", reason: "dash_unsupported" };
     }
-    if (tooLargeForBrowser(plan.estimatedBytes)) {
-      return { kind: "refuse", reason: "output_too_large_for_browser" };
+    const stated = statedSaveSize(variant, audio);
+    if (stated != null && tooLargeForBrowser(stated)) {
+      return { kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: stated };
     }
     return plan;
   }

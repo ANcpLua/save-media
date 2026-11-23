@@ -2,8 +2,8 @@
 
 The automated suites already prove the happy paths and every refusal against
 local fixtures: `bun run --filter './packages/*' test` (unit), `bun run
---filter @savemedia/extension test:e2e:chromium` (35 e2e specs, ffprobe on
-every saved file), `smoke:edge` and `smoke:firefox` (real browsers). Nothing
+--filter @savemedia/extension test:e2e:chromium` (headless e2e, ffprobe on
+the saved files), `smoke:edge` and `smoke:firefox` (real browsers). Nothing
 below repeats those.
 
 What is left needs a person: browser chrome the extension cannot drive, a
@@ -11,8 +11,8 @@ keyboard, a network cable, and judgement about whether a sentence in the popup
 actually reads well. Every step is a yes or no. Write the answer next to the
 number, and for a no write what you saw instead.
 
-Scope rule from `docs/boundary-rules.md` P3: every target here is a local
-fixture. Do not point these steps at a third-party site, not even to check.
+Scope rule: every target here is a local fixture. Do not point these steps at
+a third-party site, not even to check.
 
 ## Setup, once per browser
 
@@ -35,6 +35,18 @@ saved file.
 
 Note the extension id the card shows; a few steps below use it.
 
+**Check the shortcut before any Alt+S step.** A browser gives a key to one
+extension only. If another copy of savemedia is installed (the store version,
+also when it is switched off) or another extension uses Alt+S, the copy you
+just loaded gets no shortcut: Alt+S then does nothing on any page, and the
+popup header reads "No keyboard shortcut is set, so Alt+S does nothing." with
+a **Set shortcut** link. Open `chrome://extensions/shortcuts`
+(`edge://extensions/shortcuts` in Edge), find the savemedia you loaded, and
+set "Save the video or image under the pointer, or the main video of the
+page" to Alt+S, or remove the other copy and press Reload on the card. The
+popup header must read "Alt+S saves the video or image under the pointer, or
+this page's main video." before you go on.
+
 **Rebuilding under a loaded unpacked extension breaks it silently**: the
 content scripts keep injecting from disk, but the service worker is gone, so
 Alt+S does nothing and the popup cannot reach the background. After any
@@ -48,26 +60,34 @@ the rest of the session is meaningless. Run it in all three browsers.
 
 | # | Page (prefix `http://127.0.0.1:5174/page/`) | Expected toast | Yes/No |
 |---|---|---|---|
-| A1 | `direct.html` | Saving, then the browser's own download indicator | |
+| A1 | `direct.html` | Saving, Best quality with a size; then Saved with the file name | |
 | A2 | `hls.html` | Saving, then Saved with the file name | |
 | A3 | `hls-fmp4.html` | Saving, then Saved | |
+| A3a | `hls-single-file-fmp4.html`, `hls-single-file-ts.html` | Saving, then Saved (HLS kept in one file, listed as byte ranges) | |
 | A4 | `av-merge.html` | Saving, then Saved | |
-| A5 | `hls-aes.html` | Saving, then Saved (new: AES-128 is decrypted) | |
-| A6 | `dash-clear.html` | Saving, then Saved (new: DASH video+audio merged) | |
-| A7 | `dash.html` | Not saved, DASH is not supported | |
-| A8 | `hls-live.html` | Ends with Not saved, live HLS | |
-| A9 | `hls-fairplay.html` | Saving, then Not saved, this stream is protected | |
-| A10 | `hls-sample-aes.html` | Saving, then Not saved, this stream is protected | |
-| A11 | `widevine.html` | Not saved, this stream is protected (never Nothing to save) | |
-| A12 | `clearkey.html` | Not saved, ClearKey not implemented (never Nothing to save) | |
-| A13 | `negative.html` | Nothing to save, and the toolbar icon flashes ∅ | |
-| A14 | `low.html` | Saving, then the browser's own download indicator (see note) | |
+| A5 | `hls-aes.html` | Saving, then Saved (AES-128 is decrypted) | |
+| A6 | `dash-clear.html` | Saving, then Saved (DASH video and audio joined) | |
+| A6a | `dash-video-only.html` | Saving, then Saved (DASH that declares no audio, saved with its picture alone) | |
+| A6b | `dash-single-file.html`, `dash-on-demand.html` | Saving, then Saved (DASH kept in one file per track) | |
+| A7 | `dash.html` | Not saved, Can't save this stream in the browser | |
+| A8 | `hls-live.html` | Not ready or Not saved, Live stream | |
+| A9 | `hls-fairplay.html` | Not saved, Protected video | |
+| A10 | `hls-sample-aes.html` | Not saved, Protected video | |
+| A11 | `widevine.html` | Not saved, Protected video (never Nothing to save) | |
+| A12 | `clearkey.html` | Not saved, Protected video (never Nothing to save) | |
+| A12a | `fetch-blob.html` | Saving, This video; then Saved (a file the page fetched with a script and plays from memory) | |
+| A12b | `named-preview.html` | Saving, This video, and "The file this page names has not reached your browser yet."; the popup shows the same under the card, and the card is not titled Holiday.Trip.2024.1080p.mkv | |
+| A12c | `canvas-unattached-control.html`, pointer on the square at the left of the canvas | Saving, then Saved with the video's name, never an image | |
+| A13 | `negative.html` | Nothing to save, No media detected on this page; the toolbar icon flashes ∅ | |
+| A14 | `low.html` | Saving, then Saved (see note) | |
 
-Why some rows say "Saving, then Not saved": a FairPlay or SAMPLE-AES key tag
-sits on the media playlist, which the engine only reads once the job runs, so
-the refusal arrives a moment after the job started. A direct file (A1, A14)
-is handed straight to the browser's downloads, so the browser shows its own
-indicator and there is no second savemedia toast.
+In every toast the bold label says the state (Saving, Saved, Not saved) and
+the text after it says the object or the reason. A label that is repeated in
+the text is a bug.
+
+A FairPlay or SAMPLE-AES key tag (A9, A10) is read at detection when the
+media playlist or the master's session key declares it. If only the job finds
+it, the refusal arrives a moment after "Saving".
 
 History, so a regression is recognisable: until 2026-09-13 A9 and A10 stayed
 on "Saving" forever, A2 to A6 never said "Saved", and A11 and A12 said
@@ -77,11 +97,11 @@ delegated. Found by this checklist, now pinned by e2e specs named
 "Alt+S on a … page".
 
 A14 is a check on my reading of the code rather than a known-good: there is no
-minimum-height gate in `dispatch`, so a sub-720p progressive file should save
-like any other. The `no_variant_meets_minimum` refusal exists for an HLS plan
-whose variant vanished between classify and run, not as a quality policy, and
-no automated test uses the `low` fixture for behaviour. If you get a refusal
-instead, that is news worth reporting.
+minimum-height gate, so a sub-720p progressive file should save like any other
+and its card shows no quality warning. An HLS plan whose variant vanished
+between classify and run fails as a malformed playlist, not as a quality
+policy, and no automated test uses the `low` fixture for behaviour. If you get
+a refusal instead, that is news worth reporting.
 
 A5 and A6 are the two new capabilities. Probe both saved files:
 
@@ -103,16 +123,19 @@ Unless a step names a browser, run it in all three and give three answers.
 2. Add a text field to the page (`about:blank` is not enough, use the console
    on `direct.html`: `document.body.insertAdjacentHTML("beforeend", "<input id=t>"); t.focus()`),
    then press Alt+S. Expected: nothing saved, and on a German layout the
-   field shows `ß` or nothing, never a download. This is the
-   `isEditableTarget` guard.
+   field shows `ß` or nothing, never a download. This is the rule in
+   `packages/extension/src/content/hotkey.ts` (`altSAction` ignores a key
+   whose target takes text).
 3. Same page, click on the video, press and hold Alt+S for two seconds.
    Expected: exactly one download, not one per repeat. (`event.repeat`.)
 4. Press Alt+S twice within a second on `hls.html`. Expected: the second
-   press does not start a second identical download while the first runs.
+   press does not start a second identical download while the first runs, and
+   its toast says "Saving, Already in progress".
 5. Firefox only: open `about:addons`, gear menu, **Manage Extension
-   Shortcuts**. Expected: savemedia lists "Download highest available media
-   quality". If the shortcut is empty, Firefox did not assign Alt+S; assign it
-   by hand, then redo A1. Note which case you had.
+   Shortcuts**. Expected: savemedia lists "Save the video or image under the
+   pointer, or the main video of the page". If the shortcut is empty, Firefox
+   did not assign Alt+S; assign it by hand, then redo A1. Note which case you
+   had.
 
 **Service worker and lifetime**
 
@@ -126,14 +149,36 @@ Unless a step names a browser, run it in all three and give three answers.
    download runs. Expected: progress continues and the reopened popup shows
    the running job, not a fresh empty state.
 
+   Chrome and Edge, during a running save: open
+   `chrome://serviceworker-internals`, find savemedia's worker and press
+   **Stop**. Expected: the save finishes once, one file is written, and the
+   toolbar icon returns to its normal look.
+
+   Open a tab with `direct.html`, then load or reload the extension on the
+   extensions page, and open the popup on that tab without reloading it.
+   Expected: "Reload this page so savemedia can see it." with a **Reload
+   page** button, not an empty list; after the reload the video is listed.
+
 **Interruption and failure**
 
-9. Start the `av-merge.html` download, then press cancel in the popup (the
-   running item has a cancel control). Expected: no file in Downloads, and no
-   `.crdownload` / `.part` left behind.
+9. Start the `av-merge.html` download, then press **Cancel** in the popup
+   (the card's one button reads Cancel while the save runs). Expected: the
+   card shows "Cancelled" in grey and its button reads Save again, nothing is
+   shown as an error, no file is in Downloads, and no `.crdownload` / `.part`
+   is left behind.
 10. Start `hls.html`, then kill the fixture server in its terminal mid-flight.
-    Expected: a failure toast naming a segment or network problem, and no
-    partial file kept. Restart the server afterwards.
+    Expected: the card in the popup says the connection was lost and counts
+    down to the next try, five times with longer waits (one to two minutes
+    in all). Then a failure toast in plain words (a lost connection or a server
+    that could not be reached) with what to do, no code in it, and no partial
+    file kept. Restart the server afterwards. Variant: restart the server
+    within that time. Expected: the save goes on with the segment it was
+    reading and ends in Saved, and the file plays to its end. A server that
+    hangs takes longer than one that is gone: when it accepts the connection
+    and then sends nothing (suspend the server process instead of killing
+    it), each try waits 45 seconds for a byte before the card counts down to
+    the next one, the progress stands still in between, and the save ends
+    as not saved after six such tries, about five minutes in all.
 11. Switch the browser to offline (devtools, Network, Offline) and press
     Alt+S on `hls-fmp4.html`. Expected: a network failure refusal, not a
     silent nothing.
@@ -145,15 +190,18 @@ Unless a step names a browser, run it in all three and give three answers.
 
 13. Turn on "Ask where to save each file" (Chrome/Edge settings, or Firefox
     "Always ask you where to save files"), press Alt+S on `direct.html`, then
-    **cancel** the save dialog. Expected: a failure toast, nothing written.
-    Turn the setting back off afterwards.
+    **cancel** the save dialog. Expected: a neutral "Cancelled" toast, no
+    failure, nothing written. Turn the setting back off afterwards.
 14. Save `direct.html` twice. Expected: two files, the second suffixed by the
     browser (`… (1).mp4`), never an overwrite and never a failure.
-15. Fill the popup's filename field with 200 characters plus `.mp4` and save.
-    Expected: either a saved file with a truncated name or a clean failure
-    toast; no hang.
-16. Put non-ASCII in the filename (`Grüße-测试-🎬.mp4`) and save `hls.html`.
-    Expected: the file exists with a readable name and ffprobe still reads it.
+15. Open `http://127.0.0.1:5174/page/download-32.html` and press **Save** in
+    the popup. Expected: the file is saved as `Färbige Balken 32.mov`, the
+    name the page and the server state, with the umlaut and the spaces kept,
+    and ffprobe reads it. The popup has no field for a file name.
+16. Long names need no step by hand: a name comes from the server or the page
+    address and is cut to 180 characters for a file the server names and to
+    80 otherwise (`packages/extension/src/util/filename.ts`, checked in
+    `tests/unit/util/filename.test.ts`).
 
 **Two things at once**
 
@@ -171,36 +219,60 @@ Unless a step names a browser, run it in all three and give three answers.
     click inside the iframe and press Alt+S. Expected: the video is saved and
     the toast appears once, in the top frame only (`window.top === window` in
     `src/content/bridge.ts`).
-20. Open a private/incognito window and load `direct.html`. Expected: either
-    the extension is not active there at all (the default: extensions are off
-    in private windows until you allow it) or, once allowed, Alt+S saves
-    normally. Never a console error or a dead popup.
+20. Open a private/incognito window and load `direct.html`. Expected: the
+    extension is not active there, and its details page offers no switch to
+    allow it in private windows (`"incognito": "not_allowed"` in
+    `manifest.json`). Its own requests would carry the normal windows'
+    cookies, and its saves would land in their download list.
 
 **How the refusals read**
 
 21. Open the popup on `dash.html`, `hls-fairplay.html`, `hls-live.html` and
-    `low.html` and read each item's refusal text. Expected: title and body say
-    what is wrong and imply no fix the user cannot do. Flag any sentence that
-    reads as a promise ("not yet", "coming") or as advice to defeat a
+    `widevine.html` and read each item's text. Expected: a title that says
+    what happened, a body in plain words, a hint that starts with a verb where
+    something helps, and codes only after opening **Technical details**. Flag
+    any sentence that reads as a promise ("not yet", "coming"), that points at
+    a site's own button, or that suggests a way around a block or a
     protection.
-22. Specifically re-read the encrypted-HLS text (it changed with AES-128
-    support): "This encrypted HLS stream cannot be saved" plus a body that
-    says AES-128 with a key in the clear is saved normally. Expected: it makes
-    sense to someone who just successfully saved A5 and then hit this on a
-    different stream.
+22. Read the popup's footer. Expected: "Save only what you have the right to
+    keep." exactly once, and nowhere else in the popup, in a toast or on a
+    failure.
 23. Open the popup on `dash-clear.html` before saving. Expected: one item, a
     resolution and a size estimate that are not obviously wrong (320x180, a
     few tens of kB), and no second phantom item for the audio AdaptationSet.
 
 **Local downloader interaction** (only if you have the host installed)
 
-24. With the local downloader on, press Alt+S on `dash.html` (the audio-less
-    MPD the in-browser engine refuses). Expected: toast "Local downloader",
-    then Saved. This is the delegation allowlist doing its job.
+24. With the Local downloader on, press Alt+S on `dash.html` (the MPD whose
+    byte ranges leave a gap, which the in-browser engine cannot assemble).
+    Expected: toast "Saving, With yt-dlp on this computer". This is the
+    delegation allowlist doing its job. The fixture does not serve the file,
+    so the run then ends in "Not saved".
 25. With the local downloader on, press Alt+S on `widevine.html`. Expected:
     "Not saved", and **nothing** delegated. If a local run starts here, stop
     and report it: that is the one hard boundary (`DELEGABLE_ERROR_CODES`
     holds no DRM code).
+
+**The user's network, a screen reader, fullscreen**
+
+26. Firefox only (Chromium is covered by `tests/e2e/network-block.spec.ts`
+    and `classification.spec.ts`): point a page's video at a host with an
+    untrusted certificate, and at a host name that does not exist. Open
+    **Technical details** on each failure and write down the exact **Browser
+    error** value. Expected titles: "Secure connection not trusted" and
+    "Server not found". The Firefox code names in
+    `packages/core/src/errors/network-block.ts` (`SEC_ERROR_*`,
+    `NS_ERROR_*`) are not verified against a real Firefox; a different value
+    here shows the general text and is worth a report.
+27. With VoiceOver (macOS) or NVDA (Windows) on, open the popup on a page
+    with a failed source. Expected: the failure is not read out on open.
+    Then save `hls.html` from the popup. Expected: one announcement per step
+    (what was found, "Saving", a stage such as "Joining video and audio",
+    "Saved to Downloads"), never the same sentence twice in a row, and a
+    failure announced once, as an alert.
+28. Put a player in fullscreen (the fixture `http://127.0.0.1:5174/page/direct.html`,
+    the player's own fullscreen control) and press Alt+S. Expected: the toast
+    is visible above the fullscreen video.
 
 ## Part C: browser-specific notes while you test
 
@@ -224,7 +296,7 @@ Copy this block per browser and fill it in:
 Browser + version:
 Build:            dist-chrome | dist-firefox, commit <sha>
 Part A:           A1..A14 all yes? otherwise list
-Part B:           1..25, number: yes/no + what you saw
+Part B:           1..28, number: yes/no + what you saw
 Files probed:     A5, A6, step 16
 Anything that felt wrong but passed:
 ```

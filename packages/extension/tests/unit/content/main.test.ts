@@ -29,14 +29,12 @@ function playerBody(videoId: string, videoUrl: string, audioUrl: string): string
 
 let responseBody = "";
 let posted: BridgeMessage[] = [];
-const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+const flush = async () => { for (let turn = 0; turn < 6; turn++) await new Promise(resolve => setTimeout(resolve, 0)); };
 
 beforeAll(async () => {
   // The interceptor wraps window.fetch once at import, so the stub must be
   // in place before main.ts runs.
-  window.fetch = (() => Promise.resolve({
-    clone: () => ({ text: async () => responseBody }),
-  } as unknown as Response)) as typeof fetch;
+  window.fetch = (() => Promise.resolve(new Response(responseBody, { headers: { "content-type": "application/json" } }))) as typeof fetch;
   await import("../../../src/content/main");
 });
 

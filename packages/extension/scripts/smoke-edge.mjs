@@ -83,7 +83,7 @@ try {
   console.log("✓ Edge detected and downloaded a verified direct MP4 fixture");
 
   await clearDownloadHistory(probe);
-  const hls = await firstDescriptor(context, probe, baseURL, "hls", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const hls = await firstDescriptor(context, probe, baseURL, "hls", d => d.protocol === "hls" && d.drm === null);
   const hlsName = `edge-hls-${Date.now()}.mp4`;
   await startDescriptorDownload(probe, hls, hlsName);
   const hlsFile = await waitForDownloadedFile(probe, hlsName);
@@ -91,7 +91,7 @@ try {
   console.log("✓ Edge remuxed and downloaded a plain HLS VOD fixture");
 
   await clearDownloadHistory(probe);
-  const fmp4 = await firstDescriptor(context, probe, baseURL, "hls-fmp4", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const fmp4 = await firstDescriptor(context, probe, baseURL, "hls-fmp4", d => d.protocol === "hls" && d.drm === null);
   const fmp4Name = `edge-hls-fmp4-${Date.now()}.mp4`;
   await startDescriptorDownload(probe, fmp4, fmp4Name);
   const fmp4File = await waitForDownloadedFile(probe, fmp4Name);
@@ -129,7 +129,7 @@ try {
   console.log("✓ Edge Alt+S on a media-free page flashes the ∅ feedback badge");
 
   await clearDownloadHistory(probe);
-  const aes = await firstDescriptor(context, probe, baseURL, "hls-aes", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const aes = await firstDescriptor(context, probe, baseURL, "hls-aes", d => d.protocol === "hls" && d.drm === null);
   const aesName = `edge-hls-aes-${Date.now()}.mp4`;
   await startDescriptorDownload(probe, aes, aesName);
   const aesFile = await waitForDownloadedFile(probe, aesName);
@@ -137,7 +137,7 @@ try {
   console.log("✓ Edge decrypted an AES-128 HLS fixture whose key is served in the clear");
 
   await clearDownloadHistory(probe);
-  const dashClear = await firstDescriptor(context, probe, baseURL, "dash-clear", d => d.protocol === "dash" && d.capabilities?.drmBlocked === false);
+  const dashClear = await firstDescriptor(context, probe, baseURL, "dash-clear", d => d.protocol === "dash" && d.drm === null);
   const dashClearName = `edge-dash-clear-${Date.now()}.mp4`;
   await startDescriptorDownload(probe, dashClear, dashClearName);
   const dashClearFile = await waitForDownloadedFile(probe, dashClearName);
@@ -148,7 +148,7 @@ try {
   await expectFailure(context, probe, baseURL, "hls-live", d => d.protocol === "hls", "hls_live_unsupported");
   await expectFailure(context, probe, baseURL, "hls-fairplay", d => d.protocol === "hls", "cdm_required");
   await expectFailure(context, probe, baseURL, "hls-sample-aes", d => d.protocol === "hls", "cdm_required");
-  console.log("✓ Edge surfaced audio-less DASH, live HLS, FairPlay and SAMPLE-AES refusals");
+  console.log("✓ Edge surfaced the refusals for DASH byte ranges with a gap, live HLS, FairPlay and SAMPLE-AES");
 
   console.log("✓ Edge runtime smoke passed");
 } finally {
@@ -197,8 +197,13 @@ async function descriptorsForMarker(probe, marker) {
   }, marker);
 }
 
+/**
+ * Empties the browser's download list and the download folder, so the file a
+ * scenario finds afterwards is the one that scenario saved.
+ */
 async function clearDownloadHistory(probe) {
   await probe.evaluate(async () => chrome.downloads.erase({}));
+  for (const name of readdirSync(downloadDir)) rmSync(join(downloadDir, name), { recursive: true, force: true });
 }
 
 async function waitForDownloadedFile(probe, suffix) {

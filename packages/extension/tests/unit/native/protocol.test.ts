@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isHostToExtensionMessage, localFailureText, LOCAL_FAILURE_CODES } from "../../../src/types/native";
-import { isPopupToBackgroundMessage, isBackgroundToPopupMessage } from "../../../src/types/messages";
+import { NATIVE_PROTOCOL_VERSION, helperOutdated, isHostToExtensionMessage, type HostPong } from "../../../src/types/native";
+import { parseBroadcast, parsePopupRequest } from "../../../src/types/messages";
+
+const isPopupToBackgroundMessage = (value: unknown): boolean => parsePopupRequest(value) !== null;
+const isBackgroundToPopupMessage = (value: unknown): boolean => parseBroadcast(value) !== null;
 
 describe("host protocol guards", () => {
   it("accepts well-formed frames and rejects the rest", () => {
@@ -12,12 +15,26 @@ describe("host protocol guards", () => {
     expect(isHostToExtensionMessage(null)).toBe(false);
   });
 
-  it("has user-facing text for every failure code", () => {
-    for (const code of LOCAL_FAILURE_CODES) {
-      const t = localFailureText(code, "");
-      expect(t.title.length).toBeGreaterThan(0);
-      expect(t.body.length).toBeGreaterThan(0);
+  it("takes a helper of an earlier protocol as outdated, whatever version text it reports", () => {
+    const pong = (protocolVersion: number, hostVersion = "1.3.0"): HostPong => ({ type: "pong", hostVersion, protocolVersion,
+      ytdlp: { found: true, version: "x", path: "/x" }, ffmpeg: { found: true, version: "y", path: "/y" }, outputDir: "/d" });
+    expect(NATIVE_PROTOCOL_VERSION).toBe(2);
+    // Every helper published before this protocol, and the development copies of it, report protocol 1.
+    expect(helperOutdated(pong(1, "1.1.0"))).toBe(true);
+    expect(helperOutdated(pong(1, "1.3.0"))).toBe(true);
+    expect(helperOutdated(pong(NATIVE_PROTOCOL_VERSION))).toBe(false);
+    expect(helperOutdated(pong(NATIVE_PROTOCOL_VERSION + 1))).toBe(false);
+  });
+
+  it("knows no failure code that only an unpublished helper sent", () => {
+    for (const code of ["cookie_store_missing", "origin_timeout"]) {
+      expect(isHostToExtensionMessage({ type: "failed", id: "a", code, message: "m" })).toBe(false);
     }
+  });
+
+  it("accepts an HTTP status with a failure, within the range a status has", () => {
+    expect(isHostToExtensionMessage({ type: "failed", id: "a", code: "unknown", message: "m", httpStatus: 403 })).toBe(true);
+    expect(isHostToExtensionMessage({ type: "failed", id: "a", code: "unknown", message: "m", httpStatus: 9999 })).toBe(false);
   });
 });
 

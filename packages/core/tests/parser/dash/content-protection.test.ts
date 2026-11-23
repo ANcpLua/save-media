@@ -32,11 +32,35 @@ describe("classifyContentProtection", () => {
     expect(v.drm?.keySystem).toBe("org.w3.clearkey");
   });
 
-  it("CENC-only schemeIdUri → null (decryptable in principle)", () => {
+  it.each(["cenc", "cbcs"])("the generic mp4protection element alone (%s) is encrypted media, never clear", scheme => {
+    const v = classifyContentProtection([{ schemeIdUri: "urn:mpeg:dash:mp4protection:2011", value: scheme }]);
+    expect(v.drm).toEqual({ reason: "cdm_required", detectedVia: ["dash-content-protection"], keySystem: scheme });
+  });
+
+  it("a key system this table does not name is still protection, reported by its scheme", () => {
+    const marlin = "urn:uuid:5e629af5-38da-4063-8977-97ffbd9902d4";
     const v = classifyContentProtection([
       { schemeIdUri: "urn:mpeg:dash:mp4protection:2011", value: "cenc" },
+      { schemeIdUri: marlin, value: null },
     ]);
-    expect(v.drm).toBeNull();
+    expect(v.drm).toMatchObject({ reason: "cdm_required", keySystem: marlin });
+  });
+
+  it("a named CDM wins over ClearKey and the generic element", () => {
+    const v = classifyContentProtection([
+      { schemeIdUri: "urn:mpeg:dash:mp4protection:2011", value: "cenc" },
+      { schemeIdUri: "urn:uuid:1077efec-c0b2-4d02-ace3-3c1e52e2fb4b", value: null },
+      { schemeIdUri: "urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95", value: null },
+    ]);
+    expect(v.drm).toMatchObject({ reason: "cdm_required", keySystem: "com.microsoft.playready" });
+  });
+
+  it("ClearKey beside the generic element stays ClearKey", () => {
+    const v = classifyContentProtection([
+      { schemeIdUri: "urn:mpeg:dash:mp4protection:2011", value: "cenc" },
+      { schemeIdUri: "urn:uuid:1077efec-c0b2-4d02-ace3-3c1e52e2fb4b", value: null },
+    ]);
+    expect(v.drm?.reason).toBe("clearkey_deferred");
   });
 
   it("no ContentProtection → null", () => {

@@ -3,14 +3,19 @@
  * host (`packages/native-host`). The host is a Native Messaging program the
  * user installs themselves; it runs the user's own yt-dlp and ffmpeg.
  *
- * A yt-dlp job takes a page URL and quality preference. The separate optional
- * HTTPS file reader streams the publisher’s response into the browser verifier.
+ * A yt-dlp job takes a page URL and quality preference.
  */
 
 import { z } from "zod";
 
 export const NATIVE_HOST_NAME = "com.savemedia.host" as const;
-export const NATIVE_PROTOCOL_VERSION = 1 as const;
+/**
+ * The protocol this extension speaks, as the helper reports its own in `pong.protocolVersion`
+ * (PROTOCOL_VERSION in packages/native-host/host.py). 2: a download may carry `allowWithoutCookies`,
+ * a failure may carry `httpStatus`, and the helper classifies failures from yt-dlp's format data.
+ * Raise both numbers together when a request or an answer changes its meaning.
+ */
+export const NATIVE_PROTOCOL_VERSION = 2 as const;
 
 export const LOCAL_QUALITIES = ["best", "1080", "720", "480"] as const;
 export type LocalQuality = typeof LOCAL_QUALITIES[number];
@@ -47,6 +52,8 @@ export type ExtensionToHostMessage =
     readonly quality: LocalQuality;
     readonly cookiesFromBrowser: CookieBrowser | null;
     readonly outputDir: string | null;
+    /** The helper may run without cookies when the browser has no cookie database on this machine. */
+    readonly allowWithoutCookies?: boolean;
   }
   | { readonly type: "cancel"; readonly id: string };
 
@@ -89,6 +96,8 @@ export interface HostFailed {
   readonly id: string;
   readonly code: LocalFailureCode;
   readonly message: string;
+  /** The HTTP status the downloader's final error line names. */
+  readonly httpStatus?: number;
 }
 
 export type HostToExtensionMessage = HostPong | HostProgress | HostComplete | HostFailed;
@@ -133,8 +142,18 @@ const hostToExtensionSchema = z.discriminatedUnion("type", [
     id: z.string(),
     code: z.enum(LOCAL_FAILURE_CODES),
     message: z.string(),
+    httpStatus: z.number().int().min(100).max(599).optional(),
   }),
 ]);
+
+/**
+ * A helper that speaks an earlier protocol than this extension. It would ignore what it does not know
+ * (a request's `allowWithoutCookies`) and answer without what this extension reads (`httpStatus`), so it
+ * is not used: the user is asked to update it.
+ */
+export function helperOutdated(pong: HostPong): boolean {
+  return pong.protocolVersion < NATIVE_PROTOCOL_VERSION;
+}
 
 export function isHostToExtensionMessage(value: unknown): value is HostToExtensionMessage {
   return hostToExtensionSchema.safeParse(value).success;
@@ -150,42 +169,4 @@ export function isCookieBrowser(value: unknown): value is CookieBrowser {
 
 export function isLocalFailureCode(value: unknown): value is LocalFailureCode {
   return typeof value === "string" && (LOCAL_FAILURE_CODES as readonly string[]).includes(value);
-}
-
-
-
-
-/** Human-readable text for a host failure, shown in the popup and the page toast. */
-export function localFailureText(code: LocalFailureCode, message: string): { readonly title: string; readonly body: string } {
-  switch (code) {
-    case "host_unavailable":
-      return {
-        title: "Local downloader not reachable",
-        body: "Install the host from the repository (packages/native-host) and reload the extension.",
-      };
-    case "already_saved":
-      return { title: "Already saved", body: "This video is already in your downloads." };
-    case "ytdlp_missing":
-      return { title: "yt-dlp not found", body: "Install yt-dlp on this computer, then try again." };
-    case "ffmpeg_missing":
-      return { title: "ffmpeg not found", body: "Install ffmpeg on this computer, then try again." };
-    case "drm_protected":
-      return { title: "Protected media", body: "This stream uses DRM. savemedia does not decrypt protected media." };
-    case "unsupported_url":
-      return { title: "Page not supported", body: "The local downloader has no handler for this page." };
-    case "login_required":
-      return { title: "Sign-in required", body: "Enable browser cookies in the local downloader settings and make sure you are signed in." };
-    case "geo_restricted":
-      return { title: "Not available in your region", body: "The site does not serve this media to your location." };
-    case "network":
-      return { title: "Network error", body: message || "The download could not be completed." };
-    case "timeout":
-      return { title: "Timed out", body: "The download took longer than 30 minutes and was stopped." };
-    case "cancelled":
-      return { title: "Cancelled", body: "The download was cancelled." };
-    case "invalid_request":
-      return { title: "Invalid request", body: message || "The host rejected the request." };
-    case "unknown":
-      return { title: "Download failed", body: message || "See the host log for details." };
-  }
 }

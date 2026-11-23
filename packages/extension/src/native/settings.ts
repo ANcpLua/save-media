@@ -7,6 +7,12 @@ import {
 
 export type CookieSource = "auto" | "none" | CookieBrowser;
 
+export interface BrowserIdentity {
+  readonly browser: "chromium" | "firefox";
+  readonly userAgent: string;
+  readonly brands?: readonly string[];
+}
+
 export interface LocalDownloaderSettings {
   /** User opted in. Also implies the nativeMessaging permission was granted. */
   readonly enabled: boolean;
@@ -74,14 +80,18 @@ export async function saveLocalSettings(
  */
 export function resolveCookieBrowser(
   source: CookieSource,
-  env: { readonly browser: "chromium" | "firefox"; readonly userAgent: string },
+  env: BrowserIdentity,
 ): CookieBrowser | null {
   if (source === "none") return null;
   if (source !== "auto") return source;
   if (env.browser === "firefox") return "firefox";
   const ua = env.userAgent;
-  if (/\bEdg\//.test(ua)) return "edge";
-  if (/\bBrave\b/.test(ua)) return "brave";
-  if (/\bChrome\//.test(ua)) return "chrome";
-  return "chromium";
+  const brands = env.brands ?? [];
+  if (brands.includes("Microsoft Edge") || /\bEdg\//.test(ua)) return "edge";
+  if (brands.includes("Brave") || /\bBrave\b/.test(ua)) return "brave";
+  if (brands.includes("Google Chrome")) return "chrome";
+  // Other browsers also advertise a Chromium engine. An unrecognised
+  // product brand is not a reason to open a different browser's cookie store.
+  if (brands.includes("Chromium") && brands.every(b => b === "Chromium" || /^not.?a.?brand$/i.test(b))) return "chromium";
+  return null;
 }

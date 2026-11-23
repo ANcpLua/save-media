@@ -1,37 +1,25 @@
 /**
  * Engine host entry point.
  *
- * Chromium loads this in the offscreen document and registers onMessage
- * listeners that drive the EngineRunner. Firefox uses the same runner through
- * an in-process background host because its engine runs in the background event
- * page instead of an offscreen document.
+ * Chromium loads this in the offscreen document. It runs the engine and
+ * talks to the background over one port (background-link.ts): the port
+ * carries every message and tells each side when the other is gone. Firefox
+ * runs the same engine inside its background page instead.
  */
 
-import { isBackgroundToEngineMessage } from "../types/messages";
-import { createInProcessEngineHost } from "./in-process-host";
-import { readLinkedDownload } from "./linked-download";
+import { createBackgroundLink, type BackgroundLink, type LinkRuntime } from "./background-link";
+import { createInProcessEngineHost, type InProcessEngineHost } from "./in-process-host";
+import { reportUncaught } from "../util/uncaught";
 
-const host = createInProcessEngineHost({
-  sendToBackground: msg => {
-    chrome.runtime.sendMessage(msg, () => {
-      void chrome.runtime.lastError;
-    });
-  },
+let link: BackgroundLink | undefined;
+const host: InProcessEngineHost = createInProcessEngineHost({
+  sendToBackground: msg => link?.send(msg),
+  prepareRequests: (streamId, urls) => link ? link.prepareRequests(streamId, urls) : Promise.resolve(),
 });
-
-chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
-  if (sender.id === chrome.runtime.id && !sender.tab && msg && typeof msg === "object") {
-    const request = msg as { type?: unknown; pageUrl?: unknown; filename?: unknown };
-    if (request.type === "read-linked-download" && typeof request.pageUrl === "string"
-      && typeof request.filename === "string") {
-      void readLinkedDownload(request.pageUrl, request.filename).then(sendResponse, () => sendResponse(null));
-      return true;
-    }
-  }
-  if (!isBackgroundToEngineMessage(msg)) return false;
-  host.handleMessage(msg);
-  sendResponse({ ok: true });
-  return false;
-});
+link = createBackgroundLink(chrome.runtime as unknown as LinkRuntime, () => host);
+// An error nothing caught here would otherwise be seen by nobody: this document has no console a person
+// looks at. The background is told, and logs it with the extension's other errors.
+reportUncaught(globalThis, detail => link?.send({ type: "engine-fault", detail }));
+link.start();
 
 export {};

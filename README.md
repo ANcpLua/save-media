@@ -1,17 +1,26 @@
 # savemedia
 
-Browser extension for Chrome, Edge and Firefox that saves complete,
-browser-visible video. It saves direct files in MP4, QuickTime, WebM and MKV.
-It also supports plain HLS VOD with MPEG-TS segments, clear HLS fMP4/CMAF,
-and clear DASH with a fully addressed video and audio pair. AES-128 HLS can
-be saved when the server gives the player the key in the clear. The extension
-refuses protected media, live streams, and responses that fail verification.
-Everything runs in the browser. There is no telemetry, no account and no server.
+A browser extension for Chrome, Edge and Firefox that saves videos and images
+that are not DRM encrypted, as the browser receives them. It saves direct
+video files in MP4, QuickTime, WebM and MKV, HLS streams with MPEG-TS or
+fragmented MP4 segments, and DASH streams with fully addressed tracks, joined
+into one MP4 file. Standard HLS AES-128 is decrypted with
+the key the player receives. Alt+S saves the video or image under the
+pointer. Every file savemedia downloads itself is verified before it
+reaches the Downloads folder. The one exception is a download your browser
+already holds and continues on its own: savemedia lets the browser finish it
+and cannot read its content. DRM is never touched, and live streams are not
+saved. Apart from the optional Local downloader, which runs the yt-dlp and
+ffmpeg you install, everything runs in the browser. There is no telemetry, no
+account and no server. Chrome and Edge come first; the Firefox build is kept
+compiling.
 
-The support contract is [`docs/design.md`](docs/design.md). The legal and
-engineering limits are [`docs/boundary-rules.md`](docs/boundary-rules.md); read
-that file before touching capture, parsing, site readers or the local
-downloader. The privacy policy is [`docs/privacy-policy.md`](docs/privacy-policy.md).
+What savemedia does and does not do is in
+[`docs/boundary-rules.md`](docs/boundary-rules.md), the owner's policy. It
+overrides every other document here; read it before changing capture,
+parsing, download behaviour or user-facing text. What is supported in detail
+is in [`docs/design.md`](docs/design.md). The privacy policy is
+[`docs/privacy-policy.md`](docs/privacy-policy.md).
 Direct-file probe retries and checked chunk recovery are described in
 [`docs/range-recovery.md`](docs/range-recovery.md), including browser size and
 validation limits.
@@ -76,7 +85,7 @@ remain independent, so a successful submission is not proof that it is live.
 # 2. check everything locally
 bun install                       # refresh bun.lock after the version bump
 bun run verify
-bunx store-publish lint            # listing text: no forbidden words, no comma chains
+bunx store-publish lint            # listing, manifest and UI text: no forbidden words, brand names, dashes, emojis or comma chains
 bunx store-publish readme --check  # README store table matches store.config.json
 release_version=$(bunx store-publish version)
 # 3. stage the reviewed release changes, commit, push main, and wait for ci.yml
@@ -90,7 +99,9 @@ git push origin "v$release_version"
 
 The tag push runs [`release.yml`](.github/workflows/release.yml): it builds
 the Chrome, Edge (same bytes as Chrome) and Firefox zips plus the source zip AMO
-requires, and creates the GitHub release with the zips attached. The tag does
+requires, and creates the GitHub release with the zips attached. The zips are
+store builds: they leave out the one site reader the Chrome Web Store does not
+accept, and packing stops if a build still carries it. The tag does
 not submit to stores. Wait for that run to succeed before dispatching the
 store submission.
 
@@ -229,7 +240,11 @@ Store review traps, each one has already cost a rejection or a takedown:
 
 - No platform or brand names in the extension name, listing, screenshots,
   README, commit messages or tests. Say "direct MP4", "plain HLS VOD", "DASH".
-- No "bypass", "unlock" or "circumvent", not even in a negation.
+- None of the three words `store-publish lint` forbids (they name ways around
+  a protection), not even in a negation. The owner's policy sentence in
+  `docs/boundary-rules.md` is the one place that uses one of them; the listing
+  and this file do not.
+- No "any site" and no "all videos". Say what the extension does.
 - No comma-separated runs of format names. Formats belong in a sentence that
   says what they are for.
 - Chrome lists video downloaders as not eligible for the Featured badge. Do
@@ -272,10 +287,12 @@ the package manager only, not the bundler and not the unit test runner.
   dispatch. Pure TypeScript, no browser APIs. Must be built before the
   extension typechecks.
 - `packages/extension`: the MV3 extension. `src/background` (capture, router,
-  download-best), `src/content` (page bridge, site readers), `src/engine`
+  download-best, the observer of savemedia's own requests), `src/content`
+  (page bridge, and three site readers that are an open owner decision, see
+  the policy; store packages carry two of them), `src/selection` (the one main-video selector), `src/engine`
   (in-browser download, remux, sinks), `src/native` (local downloader client),
-  `src/popup` (React and Tailwind), `src/types/messages.ts`. Vite builds
-  `dist-chrome` and `dist-firefox`.
+  `src/popup` (React and Tailwind), `src/ui` (the text catalogues),
+  `src/types/messages.ts`. Vite builds `dist-chrome` and `dist-firefox`.
 - `packages/native-host`: optional Python native messaging host that runs the
   user's own yt-dlp and ffmpeg. Protocol in its README.
 
@@ -283,17 +300,107 @@ the package manager only, not the bundler and not the unit test runner.
 bun install
 bun run build            # core + chrome build
 bun run build:all        # plus firefox
+bun run --filter @savemedia/extension zip   # store packages: every target built with SAVEMEDIA_STORE_BUILD=1
 bun run test             # vitest in every package, python tests in the native host
 bun run typecheck        # builds core first
 bun run test:e2e         # playwright, chromium
-bun run --filter @savemedia/extension dev            # vite watch, load dist-chrome unpacked
 bun run --filter @savemedia/extension smoke:native   # local downloader end to end
 python3 -m unittest discover -s packages/native-host   # protocol, host internals, install.sh, setup.sh
 bun run verify           # full pre-release check
 ```
 
+To try a change in the browser, run `bun run build` and load
+`packages/extension/dist-chrome` as an unpacked extension. After each further
+build, press Reload on the extension's card. There is no watch build: only
+`bun run build` writes `dist-chrome` and its manifest.
+
 For direct file changes, see [direct file discovery and recovery](docs/range-recovery.md#verify-locally)
 for a focused popup and Alt+S check.
+
+A complete MPEG transport stream declared by a video element or download link
+saves as its original file. For HLS VOD, the browser checks the transport
+program map in each segment. When MP4 can carry the audio and video, such as
+H.264 or HEVC with AAC or MPEG audio, the stream remuxes to MP4 and metadata
+streams such as timed ID3 or SCTE-35 cues are left out. A program with audio,
+video or another stream MP4 cannot carry saves as `.ts` with every packet, and
+so does a stream whose clock starts again part-way, as when a clip is joined
+in on the server.
+
+To check the popup and Alt+S against a timed ID3 fixture and a server that
+keeps answering 522, run the following after building the extension.
+
+```sh
+cd packages/extension
+bunx playwright test --project=chromium -g 'transport stream|manifest 522'
+```
+
+Regenerate the timed ID3 fixture with
+`node packages/extension/scripts/generate-transport-fixture.mjs`. Without
+arguments it writes to a temporary directory and compares the result with the
+committed file; `--write` replaces the committed file.
+
+Every committed media fixture has a script in `packages/extension/scripts`
+that says how it is made and makes it again with ffmpeg:
+`generate-base-fixtures.mjs` (the direct files, the one-segment HLS fixtures
+and the unit test inputs; it also compares before it writes),
+`generate-hls-multi-fixtures.mjs`, `generate-packed-audio-fixtures.mjs`, `generate-av-merge-fixtures.mjs`,
+`generate-dash-fixtures.mjs`, `generate-webm-fixtures.mjs`,
+`generate-merge-codec-fixtures.mjs`, `generate-transport-fixture.mjs` and
+`generate-ac3-transport-fixtures.mjs`.
+Tests never run them: a regenerated fixture has other bytes and is a new
+fixture.
+
+User-facing text has one home per kind. `JobError` failures: core
+`errors/messages.ts` and `errors/network-block.ts`. Everything else,
+including Local downloader failures and image refusals: extension
+`ui/text.ts`, `ui/toast-text.ts` and `util/transfer-progress.ts`. Each file
+starts with the wording rules. A failure is shown one way everywhere: what happened, what
+the user can do, and codes and HTTP details only under Technical details. To
+check the popup's live regions, the cancel path, the toast and the
+explanations for a server the network blocks:
+
+```sh
+cd packages/extension
+bunx playwright test --project=chromium tests/e2e/popup-ux.spec.ts tests/e2e/network-block.spec.ts
+```
+
+Alt+S saves the video or image under the pointer. Every frame reports what
+lies under the pointer, and one selector in the background decides: the same
+one that picks the popup's main card and the toolbar count. A video at the
+pointer wins over images there, also across frames, because players draw
+their poster, play button, controls and banners above the video, and a video
+that ignores the pointer is still found by its position. A canvas stands for
+the video that feeds it, and for a video the page never attached, the one
+stream its document loaded outside any video element. With the pointer over
+nothing, the page's main video is saved. An image is fetched once, its bytes are checked, and only those
+bytes are saved. To check it against two players, a poster with a play
+button, and an image:
+
+```sh
+cd packages/extension
+bunx playwright test --project=chromium -g 'under the pointer'
+```
+
+What a page's ad responses name is never the main video and is never
+requested by savemedia on its own. An ad the browser itself loaded is listed
+last, in a closed "Ads (n)" group that the toolbar count leaves out, and is
+requested only when the user presses Save on it.
+
+The main-video suite covers ads, frames, shadow roots, canvases, route
+changes, key use, gates and disguised bytes:
+
+```sh
+cd packages/extension
+bunx playwright test --project=chromium tests/e2e/main-video.spec.ts
+```
+
+Alt+S in the end-to-end suites is a key event the page receives. The
+browser's own command cannot be pressed from a test; both reach the same
+function, which the unit tests drive through the registered command.
+
+The end-to-end suites run Playwright's full Chromium in headless mode, which
+loads the extension without opening a window. Set `SAVEMEDIA_HEADED=1`, or use
+`bun run --filter @savemedia/extension test:e2e:headed`, to watch the browser.
 
 Toolchain decision, shared with the other extension repository so a third
 extension can copy either as a template: bun is the package manager, Vitest
@@ -307,16 +414,31 @@ testing-library, which Vitest handles and `bun test` does not. Google Chrome 137
 
 Rules that override everything else, short form of `docs/boundary-rules.md`:
 
-- Observe, do not defeat. Save what the browser already received in the
-  clear. Never touch DRM, CDM keys, EME, PSSH, signature or n-cipher solving,
-  paywalls, geo or login restrictions.
-- Refuse loudly. Only EXT-X-KEY METHOD=AES-128 with an identity KEYFORMAT is
-  decrypted: the key is 16 bytes fetched over the same HTTP the player uses.
-  Every other method, every other KEYFORMAT, and a key URI that answers 401,
-  402 or 403 are refused. Keep the refusal tests.
-- The native host never bundles, downloads or installs yt-dlp or ffmpeg. DRM
-  refusals are never delegated to it: `DELEGABLE_ERROR_CODES` in
-  `src/native/local-downloader.ts` is an allowlist.
+- Observe, never defeat. Save what the browser receives in the clear during
+  normal playback and browsing. Never click anything for the user, never
+  fetch an ad unless the user saves it from the Ads list, never skip or mute
+  ads, never forge a token or guess an address, and never reach a server the
+  user's network blocks another way. For a page on the internet, a server
+  inside the user's network is requested only when the browser itself loaded
+  from it for that page.
+- Encryption is the only refusal on purpose. (One more is listed as open
+  in `docs/boundary-rules.md` under "Where the code differs from the policy
+  today": the local-network rule.)
+  Only `EXT-X-KEY` `METHOD=AES-128` with an
+  identity `KEYFORMAT` is decrypted: the key is 16 bytes fetched the way the
+  player fetches it. Every other method, every other `KEYFORMAT`, a key
+  address that answers 401, 402 or 403, DASH `ContentProtection`, Common
+  Encryption and scrambled transport streams are refused. A price or a
+  "premium" label decides nothing. Keep the refusal tests.
+- Site-agnostic and idempotent. No text and no code path points at a site's
+  own buttons. The same page state gives the same detection and the same
+  save; repeated scans, popup opens and Alt+S presses change nothing.
+- The savemedia helper never bundles, downloads or installs yt-dlp or ffmpeg.
+  The Alt+S fallback and the offer under a failed save are never made for
+  protected media: `DELEGABLE_ERROR_CODES` in `src/native/local-downloader.ts`
+  is an allowlist without a protection code. **Save this page with yt-dlp**
+  hands over the page address whatever savemedia found on the page, and
+  relies on yt-dlp's own DRM data.
 - Test fixtures are local files under `tests/`, Creative Commons assets, or
   the author's own uploads. Never a third-party platform.
 
@@ -324,8 +446,9 @@ Conventions:
 
 - Commit messages: subject line only, plus the Co-Authored-By trailer when an
   agent wrote the change.
-- Public text (README, listing, release notes): no em dashes, no emojis,
-  claims verified before they are written.
+- Public text (README, docs, listing, release notes, UI): no em dashes, no
+  emojis, no site or brand names, claims verified before they are written.
+  The product is `savemedia`, in lowercase, also at the start of a sentence.
 - Firefox: request permissions synchronously inside the click handler. An
   `await` before `permissions.request` drops the user gesture.
 - Native host subprocesses use `stdin=DEVNULL`, otherwise they inherit the
@@ -339,16 +462,22 @@ Conventions:
 
 ## Optional local downloader
 
-For pages the in-browser engine cannot save (DASH, browser memory limits,
-unusual containers), savemedia can hand the page address to yt-dlp and ffmpeg
-that the user installs themselves. It is off by default, asks for the
-`nativeMessaging` permission only when switched on, and refuses protected media
-exactly like the browser engine does. Setup and the wire protocol are in
+For pages the in-browser engine cannot save (HLS or DASH byte ranges that do
+not add up to one file, files above the 2 GiB the browser engine puts
+together, unusual containers), savemedia can hand the page
+address to yt-dlp and ffmpeg that the user installs themselves. It is off by
+default and asks for the `nativeMessaging` permission only when switched on.
+The Alt+S fallback and the offer under a failed save are never made for
+protected media; **Save this page with yt-dlp** relies on yt-dlp's own DRM
+data. yt-dlp writes its file itself and makes its own requests, so savemedia's
+file check and the browser's network settings do not apply to it. A helper
+installed for an earlier version of savemedia is not used: the popup says
+that it needs an update and shows the setup command. Setup and the wire
+protocol are in
 [`packages/native-host/README.md`](packages/native-host/README.md).
 
-The feature is on `main` and is not part of 0.0.7, the last version released
-to the stores. It ships in the next release after the checklist below is
-green:
+The feature has been part of the extension since 1.0.0, off until switched
+on. The release check for it:
 
 - `bun run --filter @savemedia/extension smoke:native` passes: Playwright
   Chromium plus the real host and the user's own yt-dlp and ffmpeg. Verified
@@ -366,11 +495,9 @@ green:
   sleep, cancelled saves, duplicate and non-ASCII filenames, frames, private
   windows, how the refusals read) have their own per-browser checklist:
   [`docs/manual-check-browsers.md`](docs/manual-check-browsers.md).
-- The `nativeMessaging` permission is new for the stores, so expect a
-  re-review. The justification text is in `docs/privacy-policy.md`.
-
-History: the archive branch `native-host-v1.1.0` holds the March 2026 plain-JS
-variant of the local downloader.
+- The `nativeMessaging` permission is optional and asked for only when the
+  user switches the Local downloader on. Its justification is in
+  `docs/privacy-policy.md`.
 
 ## Support and security
 

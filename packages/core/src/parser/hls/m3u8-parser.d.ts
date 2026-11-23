@@ -30,6 +30,7 @@ declare module "m3u8-parser" {
         byterange?: { length: number; offset: number };
       }>;
       endList?: boolean;
+      targetDuration?: number;
       /** Populated for DRM schemes (SAMPLE-AES / FairPlay / Widevine) */
       contentProtection?: Record<
         string,

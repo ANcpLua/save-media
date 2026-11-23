@@ -158,20 +158,23 @@ class SetupScriptTest(unittest.TestCase):
     def test_setup_fetches_the_helper_files_and_runs_the_installer(self) -> None:
         env = dict(os.environ, HOME=self.home, XDG_DATA_HOME=os.path.join(self.home, ".local", "share"),
                    SAVEMEDIA_HOST_BASE_URL="file://" + HERE)
+        if platform.system() == "Darwin":
+            target = os.path.join(self.home, "Library", "Application Support", "savemedia", "native-host")
+        else:
+            target = os.path.join(self.home, ".local", "share", "savemedia", "native-host")
+        os.makedirs(target)
+        for stale in ("file_transport.py", "published_source.py"):
+            with open(os.path.join(target, stale), "w") as fh:
+                fh.write("# left by an earlier helper\n")
         proc = subprocess.run(
             ["bash", os.path.join(HERE, "setup.sh"), "--extension-id", "negbodmpgjhkacmdkbfdpocjanaklifn", "--dry-run"],
             env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        if platform.system() == "Darwin":
-            target = os.path.join(self.home, "Library", "Application Support", "savemedia", "native-host")
-        else:
-            target = os.path.join(self.home, ".local", "share", "savemedia", "native-host")
-        for name in ("host.py", "file_transport.py", "install.sh"):
+        self.assertEqual(sorted(os.listdir(target)), ["host.py", "install.sh"])
+        for name in ("host.py", "install.sh"):
             path = os.path.join(target, name)
-            self.assertTrue(os.path.isfile(path), path)
-            if name != "file_transport.py":
-                self.assertTrue(os.stat(path).st_mode & stat.S_IXUSR, name + " executable")
+            self.assertTrue(os.stat(path).st_mode & stat.S_IXUSR, name + " executable")
             with open(path, "rb") as got, open(os.path.join(HERE, name), "rb") as want:
                 self.assertEqual(got.read(), want.read(), name + " copied verbatim")
         self.assertIn("Helper files in: " + target, proc.stdout)

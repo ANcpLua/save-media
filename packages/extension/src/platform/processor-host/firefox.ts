@@ -1,18 +1,18 @@
 /**
- * Firefox MV3 background context is an event page with DOM. The engine host
- * is loaded from the background's HTML shell, so this implementation only
- * needs to ensure the script is alive.
- *
- * No chrome.offscreen API is available; calling into chrome.offscreen.* here
- * would throw and break the Firefox build. The chromium implementation lives
- * in a separate file so tree-shaking by the build-time `__BROWSER__` define
- * removes the offscreen import path from the Firefox bundle.
+ * Firefox's background is an event page with a DOM, so the engine runs in
+ * the background page itself (background/engine-channel.ts,
+ * createInProcessEngineChannel). There is no separate document to create or
+ * close, and chrome.offscreen does not exist there.
  */
 
-export async function ensureEngineHost(): Promise<void> {
-  // Engine runs in the background event page's DOM; no setup needed.
+export async function engineDocumentExists(): Promise<boolean> {
+  return true;
 }
 
-export async function closeEngineHost(): Promise<void> {
-  // No-op: lifetime tied to the event page itself.
+export async function createEngineDocument(): Promise<void> {
+  // The engine lives in the background page.
+}
+
+export async function closeEngineDocument(): Promise<void> {
+  // Its lifetime is the background page's.
 }

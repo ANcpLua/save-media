@@ -17,8 +17,7 @@
     "build:preview": "node scripts/build-chrome.mjs --preview",
     "build:firefox": "node scripts/build-firefox.mjs",
     "build:all": "bun run build:chrome && bun run build:firefox",
-    "zip": "bun run build:all && node scripts/package.mjs",
-    "dev": "SAVEMEDIA_BROWSER=chromium vite build --watch",
+    "zip": "SAVEMEDIA_STORE_BUILD=1 bun run build:all && node scripts/package.mjs",
     "icons": "node scripts/generate-icons.mjs",
     "store:assets": "node scripts/store-assets.mjs",
     "lint:firefox": "bun run build:firefox && web-ext lint --source-dir dist-firefox",
@@ -31,7 +30,7 @@
     "test:e2e": "bun run test:e2e:chromium",
     "test:e2e:chromium": "playwright test --project=chromium",
     "test:e2e:firefox-fixtures": "playwright test --project=firefox-fixtures",
-    "test:e2e:headed": "playwright test --project=chromium --headed",
+    "test:e2e:headed": "SAVEMEDIA_HEADED=1 playwright test --project=chromium --headed",
     "report:e2e": "playwright show-report playwright-report",
     "typecheck": "tsc -p tsconfig.json",
     "smoke:native": "bun run build:chrome && node scripts/smoke-native.mjs"

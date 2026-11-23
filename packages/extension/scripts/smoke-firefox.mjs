@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { dirname, extname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
@@ -63,7 +63,13 @@ try {
     // Firefox 153+ requires this for WebDriver navigation to moz-extension:.
     // It applies only to this disposable test profile and loopback driver.
     // https://firefox-source-docs.mozilla.org/testing/geckodriver/Flags.html#allow-system-access
-    .setFirefoxService(new firefox.ServiceBuilder().addArguments("--allow-system-access"))
+    .setFirefoxService(new firefox.ServiceBuilder()
+      .addArguments("--allow-system-access")
+      .setEnvironment({
+        ...process.env,
+        MOZ_APP_DATA: join(downloadDir, "app-data"),
+        MOZ_LOCAL_APP_DATA: join(downloadDir, "app-cache"),
+      }))
     .build();
 
   const installedId = await driver.installAddon(dist, true);
@@ -94,15 +100,27 @@ try {
   console.log("✓ Firefox detected and downloaded a verified direct MP4 fixture");
 
   await clearDownloadHistory();
-  const hls = await firstDescriptor("hls", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const hls = await firstDescriptor("hls", d => d.protocol === "hls" && d.drm === null);
   const hlsName = `firefox-hls-${Date.now()}.mp4`;
   await startDescriptorDownload(hls, hlsName);
   const hlsFile = await waitForDownloadedFile(hlsName);
   expectPlayable(hlsFile, /mp4|mov/);
   console.log("✓ Firefox remuxed and downloaded a plain HLS VOD fixture");
 
+  const sourceTs = readFileSync(resolve(root, "tests/e2e/media-fixtures/transport/timed-id3.ts"));
+  for (const [scenario, protocol] of [["transport", "progressive-http"], ["hls-id3", "hls"]]) {
+    await clearDownloadHistory();
+    const descriptor = await firstDescriptor(scenario, d => d.protocol === protocol);
+    const name = `firefox-${scenario}-${Date.now()}.ts`;
+    await startDescriptorDownload(descriptor, name);
+    const file = await waitForDownloadedFile(name);
+    expectPlayable(file, /mpegts/);
+    assert(readFileSync(file).equals(sourceTs), `${scenario} changed the transport packets`);
+  }
+  console.log("✓ Firefox retained timed ID3 in standalone and HLS transport streams");
+
   await clearDownloadHistory();
-  const fmp4 = await firstDescriptor("hls-fmp4", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const fmp4 = await firstDescriptor("hls-fmp4", d => d.protocol === "hls" && d.drm === null);
   const fmp4Name = `firefox-hls-fmp4-${Date.now()}.mp4`;
   await startDescriptorDownload(fmp4, fmp4Name);
   const fmp4File = await waitForDownloadedFile(fmp4Name);
@@ -110,7 +128,7 @@ try {
   console.log("✓ Firefox downloaded a clear HLS fMP4/CMAF fixture");
 
   await clearDownloadHistory();
-  const aes = await firstDescriptor("hls-aes", d => d.protocol === "hls" && d.capabilities?.drmBlocked === false);
+  const aes = await firstDescriptor("hls-aes", d => d.protocol === "hls" && d.drm === null);
   const aesName = `firefox-hls-aes-${Date.now()}.mp4`;
   await startDescriptorDownload(aes, aesName);
   const aesFile = await waitForDownloadedFile(aesName);
@@ -118,7 +136,7 @@ try {
   console.log("✓ Firefox decrypted an AES-128 HLS fixture whose key is served in the clear");
 
   await clearDownloadHistory();
-  const dashClear = await firstDescriptor("dash-clear", d => d.protocol === "dash" && d.capabilities?.drmBlocked === false);
+  const dashClear = await firstDescriptor("dash-clear", d => d.protocol === "dash" && d.drm === null);
   const dashClearName = `firefox-dash-clear-${Date.now()}.mp4`;
   await startDescriptorDownload(dashClear, dashClearName);
   const dashClearFile = await waitForDownloadedFile(dashClearName);
@@ -225,7 +243,10 @@ try {
     }, descriptor, filename);
   }
 
-  async function waitForDownloadedFile(suffix) {
+  async function waitForDownloadedFile(requestedFilename) {
+    // Each fixture clears Firefox's download history. The router can replace
+    // the suggested filename with its dated name before it saves the file.
+    const extension = extname(requestedFilename);
     let lastItems = [];
     for (let attempt = 0; attempt < 80; attempt++) {
       const items = await popupEval(async () => {
@@ -237,14 +258,12 @@ try {
         error: item.error,
         exists: item.exists,
       }));
-      const hit = items.find(item => item.state === "complete" && item.filename?.endsWith(suffix));
+      const hit = items.find(item => item.state === "complete" && item.filename?.endsWith(extension));
       if (hit?.filename && existsSync(hit.filename)) return hit.filename;
 
-      const onDisk = findDownloadedFile(downloadDir, suffix);
-      if (onDisk) return onDisk;
       await sleep(500);
     }
-    throw new Error(`no completed ${suffix} Firefox download; last items: ${JSON.stringify(lastItems)}`);
+    throw new Error(`no completed ${extension} Firefox download for ${requestedFilename}; last items: ${JSON.stringify(lastItems)}`);
   }
 
   async function popupEval(fn, ...args) {
@@ -300,19 +319,6 @@ function assert(condition, message) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function findDownloadedFile(dir, suffix) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const nested = findDownloadedFile(path, suffix);
-      if (nested) return nested;
-    } else if (entry.name.endsWith(suffix) && !entry.name.endsWith(".part") && statSync(path).size > 0) {
-      return path;
-    }
-  }
-  return null;
 }
 
 function expectPlayable(file, expectedFormat) {

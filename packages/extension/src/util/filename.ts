@@ -1,4 +1,5 @@
 import type { StreamDescriptor, OutputContainer } from "@savemedia/core";
+import { MEDIA_FILE_SUFFIX } from "./media-url";
 
 const PATH_SEPARATORS = /[/\\]/g;
 // Only what file systems refuse (Windows is the strictest) plus control
@@ -27,7 +28,7 @@ export function sanitizeFilename(input: string, maxLength = 80): string | null {
   return HAS_WORD_CHAR.test(cleaned) ? cleaned : null;
 }
 
-const MEDIA_SUFFIX = /\.(?:mp4|mov|qt|webm|mkv)$/i;
+const MEDIA_SUFFIX = MEDIA_FILE_SUFFIX;
 
 /** Prefer the server's filename, then the path of the verified media response. */
 export function originalMediaFilename(
@@ -51,10 +52,12 @@ export function originalMediaFilename(
     if (!HAS_WORD_CHAR.test(stem)) continue;
     // Direct saves keep the original bytes. QuickTime and MP4 share a box
     // format, so the detected brand may differ from the publisher's suffix.
-    const compatible = suffix === `.${container}`
-      || ((container === "mp4" || container === "mov") && (suffix === ".mov" || suffix === ".mp4"))
+    const extensionForContainer = container === "mpegts" ? ".ts" : `.${container}`;
+    const compatible = suffix === extensionForContainer || suffix === `.${container}`
+      || ((container === "mp4" || container === "mov") && (suffix === ".mov" || suffix === ".mp4" || suffix === ".m4v"))
+      || (container === "mpegts" && (suffix === ".mpegts" || suffix === ".m2ts"))
       || (container === "mov" && suffix === ".qt");
-    return stem + (compatible ? extension : `.${container}`);
+    return stem + (compatible ? extension : extensionForContainer);
   }
   return null;
 }
@@ -64,25 +67,17 @@ export function suggestFilename(
   container: OutputContainer = "mp4",
 ): string {
   if (d.capabilities?.directDownload) {
-    if (d.container === "mov" || d.container === "webm" || d.container === "mkv") container = d.container;
+    if (d.container === "mov" || d.container === "webm" || d.container === "mkv" || d.container === "mpegts") container = d.container;
     const original = MEDIA_SUFFIX.test(d.title ?? "") ? originalMediaFilename(d.title, container) : null;
     if (original) return original;
   }
   const candidates = [d.title ?? "", ...titlesFromUrl(d.pageUrl), "video"];
+  const suffix = container === "mpegts" ? "ts" : container;
   for (const candidate of candidates) {
-    const name = sanitizeFilename(unplus(candidate.replace(MEDIA_SUFFIX, "")));
-    if (name) return `${name}.${container}`;
+    const name = sanitizeFilename(candidate.replace(MEDIA_SUFFIX, ""));
+    if (name) return `${name}.${suffix}`;
   }
-  return `video.${container}`;
-}
-
-/**
- * CDNs and download headers often encode spaces as "+" ("Erin+Everheart+-+Talk").
- * A title with plus signs and no spaces at all is such an encoding, not a name
- * with plus signs in it.
- */
-function unplus(text: string): string {
-  return text.includes("+") && !/\s/.test(text) ? text.replace(/\+/g, " ") : text;
+  return `video.${suffix}`;
 }
 
 function titlesFromUrl(pageUrl: string): string[] {

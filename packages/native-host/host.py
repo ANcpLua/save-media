@@ -21,13 +21,24 @@ import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-HOST_VERSION = "1.1.0"
-PROTOCOL_VERSION = 1
-DOWNLOAD_TIMEOUT_SECONDS = 30 * 60
+HOST_VERSION = "1.3.0"
+# What the extension checks before it uses this helper (NATIVE_PROTOCOL_VERSION in the extension's
+# types/native.ts). 2: a download may carry allowWithoutCookies, a failure may carry httpStatus, and
+# failures are classified from yt-dlp's format data and exit status. Raise both numbers together when a
+# request or an answer changes its meaning.
+PROTOCOL_VERSION = 2
+# A run is ended when yt-dlp goes quiet, never because of how long it has
+# taken: a large file on a slow connection is progress, not a fault. Every
+# byte yt-dlp writes to stdout or stderr counts as a sign of life. ffmpeg
+# prints nothing while it joins the tracks, so that step gets a longer window.
+STALL_TIMEOUT_SECONDS = 5 * 60
+MERGE_STALL_TIMEOUT_SECONDS = 60 * 60
 KILL_GRACE_SECONDS = 3.0
 PROGRESS_MIN_INTERVAL = 0.25
 # Native messaging caps: the browser accepts at most 1 MB from a host; a host
@@ -164,10 +175,17 @@ def read_frame(stream: Any) -> Optional[Dict[str, Any]]:
     return parsed
 
 
-def send_failed(msg_id: str, code: str, message: str) -> None:
+def failure_frame(msg_id: str, code: str, message: str, http_status: Optional[int] = None) -> Dict[str, Any]:
     if code not in FAILURE_CODES:
         code = "unknown"
-    send({"type": "failed", "id": msg_id, "code": code, "message": message})
+    frame = {"type": "failed", "id": msg_id, "code": code, "message": message}  # type: Dict[str, Any]
+    if http_status is not None:
+        frame["httpStatus"] = http_status
+    return frame
+
+
+def send_failed(msg_id: str, code: str, message: str) -> None:
+    send(failure_frame(msg_id, code, message))
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +260,28 @@ def timestamped_output_template(now: Optional[time.struct_time] = None) -> str:
     return "%s %s/%s_%s.%%(ext)s" % (day, DAY_PARTS[t.tm_hour // 6], day, time.strftime("%H%M%S", t))
 
 
+@contextmanager
+def reserve_output_template(output_dir: str) -> Iterator[str]:
+    """Give concurrent helper processes distinct output names for the same second."""
+    original, extension = os.path.splitext(timestamped_output_template())
+    suffix = 0
+    while True:
+        stem = original if suffix == 0 else "%s (%d)" % (original, suffix)
+        suffix += 1
+        marker = os.path.join(output_dir, ".savemedia-reserve-" + os.path.basename(stem))
+        try:
+            os.mkdir(marker, 0o700)
+        except FileExistsError:
+            continue
+        try:
+            pattern = glob.escape(os.path.join(output_dir, stem)) + ".*"
+            if next(glob.iglob(pattern), None) is None:
+                yield stem + extension
+                return
+        finally:
+            os.rmdir(marker)
+
+
 def download_archive_path() -> str:
     """yt-dlp records every finished video (site + video id) here and skips
     it from then on, so the local downloader never saves a video twice."""
@@ -304,41 +344,128 @@ def format_for_quality(quality: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Error classification from yt-dlp stderr
+# Failure classes from yt-dlp's own structured answers
 # ---------------------------------------------------------------------------
 
-
-def classify_stderr(text: str, page_url: str = "") -> str:
-    # yt-dlp echoes the page URL in most ERROR lines; strip it so words in
-    # the URL (or the title) cannot steer classification.
-    if page_url:
-        text = text.replace(page_url, "")
-    lower = text.lower()
-    if re.search(r"\bdrm\b", lower):
-        return "drm_protected"
-    if "unsupported url" in lower:
-        return "unsupported_url"
-    if re.search(r"\b(login|log in|sign in|private|age)\b", lower):
-        return "login_required"
-    if (
-        "available in your country" in lower
-        or "from your location" in lower
-        or re.search(r"\bgeo", lower)
-    ):
-        return "geo_restricted"
-    if re.search(r"\b(connection|timed out|timeout|network|unable to download)\b", lower):
-        return "network"
-    if re.search(r"http error 5\d\d", lower):
-        return "network"
-    return "unknown"
+# yt-dlp exits 101 when it stops a run on purpose. With this host's flags only
+# an archive hit does that (--break-on-existing).
+EXIT_EXISTING = 101
 
 
 def last_error_line(text: str) -> str:
+    """The last line yt-dlp wrote at its ERROR level, or its last line at all."""
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for line in reversed(lines):
-        if line.lower().startswith("error"):
+        if line.startswith("ERROR"):
             return line[:500]
     return (lines[-1] if lines else "yt-dlp failed")[:500]
+
+
+def http_status(final_line: str) -> Optional[int]:
+    """The status number in yt-dlp's HTTPError token ("HTTP Error 403: ..."), read from the final ERROR line only."""
+    match = re.search(r"\bHTTP Error (\d{3})\b", final_line)
+    if not match:
+        return None
+    status = int(match.group(1))
+    return status if 100 <= status <= 599 else None
+
+
+def drm_verdict(info: Optional[Dict[str, Any]]) -> bool:
+    """True only when yt-dlp's own format data says DRM and no playable video format is left.
+
+    Words in a title, a warning or an error line never decide this.
+    """
+    if not isinstance(info, dict) or info.get("_type", "video") != "video":
+        return False
+    if info.get("_has_drm") is not True:  # some format has has_drm True, not "maybe"
+        return False
+    formats = info.get("formats") or []
+    playable = [f for f in formats
+                if isinstance(f, dict) and f.get("has_drm") is not True and f.get("vcodec") != "none"]
+    return not playable
+
+
+def classify_failure(stderr_text: str, info: Optional[Dict[str, Any]]) -> Tuple[str, str, Optional[int]]:
+    """(code, message, httpStatus) for a failed run.
+
+    DRM comes from yt-dlp's format data; everything else is "unknown" with
+    yt-dlp's final error line as technical detail and the HTTP status that
+    line names, if any.
+    """
+    final = last_error_line(stderr_text)
+    if drm_verdict(info):
+        return "drm_protected", "yt-dlp reports DRM on every video format of this page", None
+    return "unknown", final, http_status(final)
+
+
+# ---------------------------------------------------------------------------
+# Browser cookie stores
+# ---------------------------------------------------------------------------
+
+
+def cookie_store_roots(browser: str, home: Optional[str] = None, env: Optional[Dict[str, str]] = None,
+                       platform: Optional[str] = None) -> Optional[List[str]]:
+    """The directories under which this browser keeps its profiles, or None on a platform this host does not know."""
+    home = home or os.path.expanduser("~")
+    env = os.environ if env is None else env  # type: ignore[assignment]
+    platform = platform or sys.platform
+    chromium_names = {
+        "chrome": ("Google/Chrome", "google-chrome", "Google\\Chrome\\User Data"),
+        "chromium": ("Chromium", "chromium", "Chromium\\User Data"),
+        "edge": ("Microsoft Edge", "microsoft-edge", "Microsoft\\Edge\\User Data"),
+        "brave": ("BraveSoftware/Brave-Browser", "BraveSoftware/Brave-Browser", "BraveSoftware\\Brave-Browser\\User Data"),
+    }
+    if platform == "darwin":
+        support = os.path.join(home, "Library", "Application Support")
+        if browser == "firefox":
+            return [os.path.join(support, "Firefox", "Profiles")]
+        return [os.path.join(support, chromium_names[browser][0])] if browser in chromium_names else None
+    if platform.startswith("linux"):
+        config = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+        if browser == "firefox":
+            return [
+                os.path.join(home, ".mozilla", "firefox"),
+                os.path.join(config, "mozilla", "firefox"),
+                os.path.join(home, "snap", "firefox", "common", ".mozilla", "firefox"),
+                os.path.join(home, ".var", "app", "org.mozilla.firefox", ".mozilla", "firefox"),
+                os.path.join(home, ".var", "app", "org.mozilla.firefox", "config", "mozilla", "firefox"),
+            ]
+        return [os.path.join(config, chromium_names[browser][1])] if browser in chromium_names else None
+    if platform in ("win32", "cygwin"):
+        local = env.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        roaming = env.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+        if browser == "firefox":
+            return [
+                os.path.join(roaming, "Mozilla", "Firefox", "Profiles"),
+                os.path.join(local, "Packages", "Mozilla.Firefox_n80bbvh6b1yt2", "LocalCache", "Roaming", "Mozilla", "Firefox", "Profiles"),
+            ]
+        return [os.path.join(local, chromium_names[browser][2])] if browser in chromium_names else None
+    return None
+
+
+def cookie_store_exists(browser: str, home: Optional[str] = None, env: Optional[Dict[str, str]] = None,
+                        platform: Optional[str] = None) -> bool:
+    """Whether the browser has a cookie database on this machine: a look at the file system.
+
+    False only when every place the browser keeps its profiles was looked at
+    and none holds a cookie database. On a platform this host does not know
+    the answer is True, and yt-dlp finds out itself.
+    """
+    roots = cookie_store_roots(browser, home, env, platform)
+    if roots is None:
+        return True
+    name = "cookies.sqlite" if browser == "firefox" else "Cookies"
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        base_depth = root.rstrip(os.sep).count(os.sep)
+        for current, dirs, files in os.walk(root):
+            if name in files:
+                return True
+            # <root>/<profile>/Network/Cookies is the deepest a profile keeps it.
+            if current.count(os.sep) - base_depth >= 3:
+                dirs[:] = []
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +537,11 @@ class Job:
         if cookies is not None and cookies not in ALLOWED_COOKIE_BROWSERS:
             send_failed(self.id, "invalid_request", "cookiesFromBrowser is not a supported browser name")
             return
+        # The extension's "Auto" cookie setting names the running browser and allows a run without cookies.
+        # When that browser has no cookie database here, yt-dlp is not asked to read one.
+        if cookies and req.get("allowWithoutCookies") is True and not cookie_store_exists(cookies):
+            log("job %s cookie store of the selected browser not found; running without cookies" % self.id)
+            cookies = None
         output_dir = validate_output_dir(req.get("outputDir"))
         if output_dir is None:
             send_failed(self.id, "invalid_request", "outputDir must be an existing directory inside the home directory")
@@ -427,28 +559,51 @@ class Job:
             send_failed(self.id, "cancelled", "cancelled before start")
             return
 
+        # A native port owns one job. Keep its fragments and unfinished merges
+        # in a job-specific directory on the same filesystem as the result.
+        with tempfile.TemporaryDirectory(prefix=".savemedia-", dir=output_dir) as staging:
+            with reserve_output_template(output_dir) as template:
+                result = self._download(page_url, quality, cookies, output_dir, staging, ytdlp, ffmpeg, template)
+        send(result)
+
+    def _download(self, page_url: str, quality: str, cookies: Optional[str], output_dir: str,
+                  staging: str, ytdlp: str, ffmpeg: str, template: str) -> Dict[str, Any]:
         cmd = [
             ytdlp,
             "--no-playlist",
             "--newline",
             "--no-continue",
+            "--abort-on-unavailable-fragments",
+            # yt-dlp would otherwise send a made-up X-Forwarded-For address for
+            # sites it knows to be limited to some countries. The helper asks
+            # as the user's own connection does and takes the server's answer.
+            "--no-geo-bypass",
+            "--no-cookies",
             # --print implies quiet mode, which would also suppress the
             # progress template and the [Merger] lines this host parses.
             "--no-quiet",
             "--progress",
             "--ffmpeg-location", os.path.dirname(ffmpeg),
             "-f", format_for_quality(quality),
-            "-o", timestamped_output_template(),
+            # yt-dlp reads a "Home" yt-dlp.conf from its home path, so the home
+            # path is the job's fresh, private staging directory and never the
+            # Downloads folder, where any web page can drop a file. The output
+            # template is absolute, so the result still lands in output_dir.
+            # The user's own yt-dlp configuration keeps working.
+            "-o", os.path.join(output_dir, template),
             "--download-archive", download_archive_path(),
-            "-P", output_dir,
+            # An archive hit ends the run with exit status 101 instead of a line of text.
+            "--break-on-existing",
+            "-P", staging,
+            "-P", "temp:" + staging,
             "--print", "after_move:filepath",
             "--progress-template",
             "download:SMPROG %(progress.downloaded_bytes)s %(progress.total_bytes)s "
             "%(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s",
         ]
-        if cookies:
-            cmd += ["--cookies-from-browser", cookies]
-        cmd.append(page_url)
+        cookie_flags = ["--cookies-from-browser", cookies] if cookies else ["--no-cookies-from-browser"]
+        cmd += cookie_flags
+        cmd.extend(["--", page_url])
 
         log("job %s start quality=%s cookies=%s outputDir=%s" % (self.id, quality, "yes" if cookies else "no", output_dir))
         self._progress(phase="probing")
@@ -459,14 +614,13 @@ class Job:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=output_dir,
+                cwd=staging,
                 # Own process group so cancel/timeout also reach the ffmpeg
                 # child yt-dlp spawns for merging.
                 start_new_session=True,
             )
         except Exception as exc:
-            send_failed(self.id, "unknown", "could not start yt-dlp: %s" % exc)
-            return
+            return failure_frame(self.id, "unknown", "could not start yt-dlp: %s" % exc)
         with self.lock:
             self.process = proc
         if self.cancelled.is_set():
@@ -474,27 +628,36 @@ class Job:
 
         stderr_chunks = []  # type: List[bytes]
 
+        self.timed_out = False
+        self._stall_window = STALL_TIMEOUT_SECONDS
+        self._alive()
+
         def drain_stderr() -> None:
+            # Read as the bytes arrive, not line by line: ffmpeg rewrites its
+            # progress line without ever ending it.
             try:
-                for raw in proc.stderr:
-                    stderr_chunks.append(raw)
+                with proc.stderr as stream:
+                    while True:
+                        chunk = os.read(stream.fileno(), 65536)
+                        if not chunk:
+                            break
+                        self._alive()
+                        stderr_chunks.append(chunk)
             except Exception:
                 pass
 
         stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
         stderr_thread.start()
 
-        timer = threading.Timer(DOWNLOAD_TIMEOUT_SECONDS, self._timeout)
-        timer.daemon = True
-        timer.start()
-        self.timed_out = False
+        watching = threading.Event()
+        watcher = threading.Thread(target=self._watch, args=(watching,), daemon=True)
+        watcher.start()
 
         phase = "downloading"
         last_path = None  # type: Optional[str]
-        destinations = []  # type: List[str]
-        already_saved = False
         try:
             for raw in proc.stdout:
+                self._alive()
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
                 if not line:
                     continue
@@ -503,83 +666,126 @@ class Job:
                     continue
                 if line.startswith("[Merger]") or line.startswith("[ExtractAudio]") or line.startswith("[FixupM"):
                     phase = "merging"
+                    self._stall_window = MERGE_STALL_TIMEOUT_SECONDS
                     self._progress(phase=phase, force=True)
-                    continue
-                if "has already been recorded in the archive" in line:
-                    already_saved = True
-                    continue
-                if line.startswith("[download] Destination: "):
-                    destinations.append(line[len("[download] Destination: "):])
                     continue
                 if line.startswith("["):
                     continue
                 last_path = line
+            proc.wait()
         finally:
-            timer.cancel()
-        proc.wait()
+            watching.set()
+            proc.stdout.close()
         stderr_thread.join(timeout=5)
         stderr_text = b"".join(stderr_chunks).decode("utf-8", "replace")
 
-        if self.cancelled.is_set() or self.timed_out:
-            self._remove_partials(destinations, output_dir)
         if self.cancelled.is_set():
-            send_failed(self.id, "cancelled", "download cancelled")
-            return
+            return failure_frame(self.id, "cancelled", "download cancelled")
+        timeout_frame = failure_frame(self.id, "timeout", "yt-dlp printed nothing for %d seconds" % self._stall_window)
         if self.timed_out:
-            send_failed(self.id, "timeout", "download exceeded %d minutes" % (DOWNLOAD_TIMEOUT_SECONDS // 60))
-            return
-        if already_saved and proc.returncode == 0:
-            send_failed(self.id, "already_saved", "this video is already saved")
-            return
-        if proc.returncode != 0 or not last_path:
-            code = classify_stderr(stderr_text, page_url)
-            message = last_error_line(stderr_text)
-            if code == "drm_protected":
-                message = "this content is DRM protected and is refused"
-            log("job %s failed code=%s rc=%s" % (self.id, code, proc.returncode))
-            send_failed(self.id, code, message)
-            return
-        if not os.path.isabs(last_path):
-            last_path = os.path.join(output_dir, last_path)
-        size = None
-        try:
-            size = os.path.getsize(last_path)
-        except OSError:
-            pass
+            return timeout_frame
+        # A file yt-dlp reports and that is there counts as saved, whatever the exit status:
+        # a user's own yt-dlp configuration (such as --max-downloads) must not mislabel it.
+        saved = None  # type: Optional[str]
+        if last_path and proc.returncode in (0, EXIT_EXISTING):
+            candidate = last_path if os.path.isabs(last_path) else os.path.join(output_dir, last_path)
+            candidate = os.path.realpath(candidate)
+            if os.path.commonpath([candidate, output_dir]) == output_dir and os.path.isfile(candidate):
+                saved = candidate
+        if saved is None and proc.returncode == EXIT_EXISTING:
+            return failure_frame(self.id, "already_saved", "this video is already saved")
+        if saved is None and proc.returncode == 0:
+            return failure_frame(self.id, "unknown", "yt-dlp finished without a file in the downloads directory")
+        if saved is None:
+            # Only a failed run is examined further: what yt-dlp itself knows about the page's formats.
+            info = self._probe_formats(ytdlp, page_url, cookie_flags, staging, STALL_TIMEOUT_SECONDS)
+            if self.cancelled.is_set():
+                return failure_frame(self.id, "cancelled", "download cancelled")
+            if self.timed_out:
+                return timeout_frame
+            code, message, status = classify_failure(stderr_text, info)
+            log("job %s failed code=%s rc=%s httpStatus=%s" % (self.id, code, proc.returncode, status))
+            return failure_frame(self.id, code, message, status)
+        last_path = saved
+        size = os.path.getsize(last_path)
+        if size == 0:
+            return failure_frame(self.id, "unknown", "yt-dlp produced an empty file")
         log("job %s complete bytes=%s" % (self.id, size))
-        send({
+        return {
             "type": "complete",
             "id": self.id,
             "filename": os.path.basename(last_path),
             "path": last_path,
             "bytes": size,
-        })
+        }
 
-    @staticmethod
-    def _remove_partials(destinations: List[str], output_dir: str) -> None:
-        for dest in destinations:
-            if not os.path.isabs(dest):
-                dest = os.path.join(output_dir, dest)
-            candidates = glob.glob(glob.escape(dest) + ".part*") + [dest + ".ytdl"]
-            # Intermediate per-format files (name.f137.mp4) of an interrupted merge.
-            if re.search(r"\.f\d+\.\w+$", dest):
-                candidates.append(dest)
-            for candidate in candidates:
-                try:
-                    if os.path.isfile(candidate):
-                        os.remove(candidate)
-                except OSError:
-                    pass
+    def _probe_formats(self, ytdlp: str, page_url: str, cookie_flags: List[str], staging: str,
+                       budget: float) -> Optional[Dict[str, Any]]:
+        """yt-dlp's own description of the page, asked for after a failed run.
+
+        The answer can contain cookies and signed addresses. It stays in
+        memory and is never logged or written to disk.
+        """
+        if self.cancelled.is_set() or budget <= 0:
+            return None
+        cmd = [
+            ytdlp, "-J", "--no-playlist", "--ignore-no-formats-error", "--no-geo-bypass", "--no-cookies",
+            # The same private home path and working directory as the download run.
+            "-P", staging, "-P", "temp:" + staging,
+        ] + cookie_flags + ["--", page_url]
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    cwd=staging, start_new_session=True)
+        except Exception:
+            return None
+        with self.lock:
+            self.process = proc
+        if self.cancelled.is_set():
+            self.cancel()
+        timer = threading.Timer(max(1.0, budget), self._timeout)
+        timer.daemon = True
+        timer.start()
+        try:
+            out, _ = proc.communicate()
+        finally:
+            timer.cancel()
+        info = None  # type: Optional[Dict[str, Any]]
+        if proc.returncode == 0:
+            try:
+                parsed = json.loads(out.decode("utf-8", "replace"))
+                info = parsed if isinstance(parsed, dict) else None
+            except ValueError:
+                info = None
+        formats = info.get("formats") if info else None
+        log("job %s drm probe rc=%s has_drm=%s formats=%s" % (
+            self.id, proc.returncode, bool(info and info.get("_has_drm") is True), len(formats) if isinstance(formats, list) else 0))
+        return info
+
+    _last_alive = 0.0
+    _stall_window = float(STALL_TIMEOUT_SECONDS)
+
+    def _alive(self) -> None:
+        """yt-dlp just wrote something."""
+        self._last_alive = time.monotonic()
+
+    def _watch(self, done: threading.Event) -> None:
+        """Ends the run once yt-dlp has written nothing for the window of its current step."""
+        while not done.wait(min(1.0, self._stall_window / 4.0)):
+            if time.monotonic() - self._last_alive > self._stall_window:
+                self._timeout()
+                return
 
     def _timeout(self) -> None:
-        self.timed_out = True
         with self.lock:
             proc = self.process
-        if proc is not None and proc.poll() is None:
-            _signal_group(proc, signal.SIGTERM)
-            time.sleep(KILL_GRACE_SECONDS)
-            if proc.poll() is None:
-                _signal_group(proc, signal.SIGKILL)
+        # A run that ended by itself in the same moment was not stopped: its result stands.
+        if proc is None or proc.poll() is not None:
+            return
+        self.timed_out = True
+        _signal_group(proc, signal.SIGTERM)
+        time.sleep(KILL_GRACE_SECONDS)
+        if proc.poll() is None:
+            _signal_group(proc, signal.SIGKILL)
 
     _last_progress_at = 0.0
 
@@ -651,7 +857,6 @@ def handle_ping() -> None:
         send({
             "type": "pong",
             "hostVersion": HOST_VERSION,
-            "fileTransport": 1,
             "protocolVersion": PROTOCOL_VERSION,
             "ytdlp": cached_tool_info("yt-dlp"),
             "ffmpeg": cached_tool_info("ffmpeg"),
@@ -691,9 +896,7 @@ def dispatch(message: Dict[str, Any]) -> None:
     kind = message.get("type")
     raw_id = message.get("id")
     msg_id = raw_id if isinstance(raw_id, str) else ""
-    if kind == "file-connection-status":
-        send({"type": "file-connection-status", "version": 1})
-    elif kind == "ping":
+    if kind == "ping":
         handle_ping()
     elif kind == "download":
         handle_download(message)
@@ -707,7 +910,6 @@ def dispatch(message: Dict[str, Any]) -> None:
 
 def main() -> int:
     log("host started pid=%d version=%s" % (os.getpid(), HOST_VERSION))
-    file_read = None
     while True:
         try:
             message = read_message()
@@ -717,37 +919,17 @@ def main() -> int:
         if message is None:
             break
         try:
-            if file_read is not None:
-                if message.get("id") != file_read.request_id:
-                    break
-                if message.get("type") == "file-pull":
-                    file_read.pull_event.set()
-                elif message.get("type") == "cancel":
-                    break
-                else:
-                    send_failed(file_read.request_id, "invalid_request", "unexpected local connection request")
-                    break
-            elif message.get("type") == "read-file":
-                request_id = message.get("id")
-                if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
-                    send_failed("", "invalid_request", "read-file requires a request id")
-                    break
-                from file_transport import FileRead
-                file_read = FileRead(message, send)
-                file_read.start()
-            else:
-                dispatch(message)
+            dispatch(message)
         except Exception as exc:
             log("dispatch error: %r" % exc)
             raw_id = message.get("id")
             send_failed(raw_id if isinstance(raw_id, str) else "", "unknown", "internal host error")
-    if file_read is not None:
-        file_read.cancel()
-        file_read.join(3)
     with _jobs_lock:
         jobs = list(_jobs.values())
     for job in jobs:
         job.cancel()
+    for job in jobs:
+        job.thread.join(timeout=KILL_GRACE_SECONDS + 1)
     log("host exiting")
     return 0
 

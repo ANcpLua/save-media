@@ -38,6 +38,7 @@ export interface DownloadRequest {
   readonly pageUrl: string;
   readonly quality: LocalQuality;
   readonly cookiesFromBrowser: CookieBrowser | null;
+  readonly allowWithoutCookies?: boolean;
   readonly outputDir: string | null;
 }
 
@@ -140,6 +141,8 @@ export function createNativeHostClient(deps: NativeHostClientDeps): NativeHostCl
         quality: req.quality,
         cookiesFromBrowser: req.cookiesFromBrowser,
         outputDir: req.outputDir,
+        // "Auto" cookies: the helper looks for the browser's cookie database itself and runs without cookies when there is none.
+        ...(req.allowWithoutCookies && req.cookiesFromBrowser ? { allowWithoutCookies: true } : {}),
       });
     } catch (e) {
       fail(unavailable(req.id, e instanceof Error ? e.message : String(e)));

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createNativeHostClient, type NativePortLike } from "../../../src/native/host-client";
-import type { HostPong } from "../../../src/types/native";
+import { NATIVE_PROTOCOL_VERSION, type HostPong } from "../../../src/types/native";
 
 function fakePort() {
   const messageListeners: ((msg: unknown) => void)[] = [];
@@ -18,7 +18,7 @@ function fakePort() {
 }
 
 const pong: HostPong = {
-  type: "pong", hostVersion: "1.0.0", protocolVersion: 1,
+  type: "pong", hostVersion: "1.3.0", protocolVersion: NATIVE_PROTOCOL_VERSION,
   ytdlp: { found: true, version: "2026.08.01", path: "/opt/homebrew/bin/yt-dlp" },
   ffmpeg: { found: true, version: "7.1", path: "/opt/homebrew/bin/ffmpeg" },
   outputDir: "/Users/me/Downloads",
@@ -105,5 +105,57 @@ describe("native host client", () => {
     port.emit("garbage");
     expect(onComplete).not.toHaveBeenCalled();
     expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("tells the helper that it may run without cookies, and passes its failure on as it is: one request for one job", async () => {
+    const port = fakePort();
+    const connect = vi.fn(() => port);
+    const handlers = { onFailed: vi.fn(), onComplete: vi.fn(), onProgress: vi.fn() };
+    createNativeHostClient({ connectNative: connect }).download({
+      id: "j", pageUrl: "https://example.test/watch", quality: "720", outputDir: null,
+      cookiesFromBrowser: "chrome", allowWithoutCookies: true,
+    }, handlers);
+    // With cookies on "Auto", the helper is told it may run without them. It looks for the browser's cookie
+    // database itself before it starts yt-dlp, so the extension never asks a second time.
+    expect(port.sent).toEqual([{ type: "download", id: "j", pageUrl: "https://example.test/watch", quality: "720", outputDir: null,
+      cookiesFromBrowser: "chrome", allowWithoutCookies: true }]);
+    port.emit({ type: "failed", id: "j", code: "unknown", message: "ERROR: [generic] Unable to download webpage: HTTP Error 522: <none>", httpStatus: 522 });
+    await Promise.resolve();
+    // The helper's frame is passed on as it is: the status as a number, the line as technical detail.
+    expect(handlers.onFailed.mock.calls).toEqual([[{ type: "failed", id: "j", code: "unknown",
+      message: "ERROR: [generic] Unable to download webpage: HTTP Error 522: <none>", httpStatus: 522 }]]);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(port.sent).toHaveLength(1);
+  });
+
+  it("never reads the downloader's words, and no failure starts a second run: a line about a cookie database changes nothing", async () => {
+    const port = fakePort();
+    const connect = vi.fn(() => port);
+    const onFailed = vi.fn();
+    createNativeHostClient({ connectNative: connect }).download({
+      id: "j", pageUrl: "https://example.test/watch", quality: "720", outputDir: null, cookiesFromBrowser: "chrome", allowWithoutCookies: true,
+    }, { onFailed, onComplete: vi.fn(), onProgress: vi.fn() });
+    // A field this protocol does not have, as an unpublished helper once sent it, starts nothing.
+    port.emit({ type: "failed", id: "j", code: "unknown", reason: "cookie_store_missing", message: 'ERROR: could not find chrome cookies database in "/private/profile"' });
+    await Promise.resolve();
+    expect(connect).toHaveBeenCalledOnce();
+    expect(port.sent).toHaveLength(1);
+    expect(onFailed).toHaveBeenCalledOnce();
+    expect(onFailed.mock.calls[0]![0]).toMatchObject({ code: "unknown", message: 'ERROR: could not find chrome cookies database in "/private/profile"' });
+  });
+
+  it("sends allowWithoutCookies only for the automatic cookie setting with a browser to read from", () => {
+    const sent = (cookiesFromBrowser: "edge" | null, allowWithoutCookies: boolean | undefined) => {
+      const port = fakePort();
+      createNativeHostClient({ connectNative: () => port }).download({
+        id: "j", pageUrl: "https://example.test", quality: "best", outputDir: null, cookiesFromBrowser, ...(allowWithoutCookies === undefined ? {} : { allowWithoutCookies }),
+      }, { onFailed: vi.fn(), onProgress: vi.fn(), onComplete: vi.fn() });
+      return port.sent[0] as Record<string, unknown>;
+    };
+    expect(sent("edge", true)).toMatchObject({ cookiesFromBrowser: "edge", allowWithoutCookies: true });
+    // A browser the user selected is passed as it is, and "No cookies" has nothing to fall back from.
+    expect(sent("edge", false)).not.toHaveProperty("allowWithoutCookies");
+    expect(sent("edge", undefined)).not.toHaveProperty("allowWithoutCookies");
+    expect(sent(null, true)).not.toHaveProperty("allowWithoutCookies");
   });
 });

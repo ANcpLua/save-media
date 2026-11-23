@@ -31,7 +31,7 @@ describe("job types", () => {
       estimatedBytes: null,
     };
     expect(merge.kind).toBe("av-merge");
-    if (merge.kind === "av-merge") expect(merge.audio.initUrl).toBeNull();
+    if (merge.kind === "av-merge") expect(merge.audio?.initUrl).toBeNull();
   });
 
   it("DispatchRefusal carries the DRM reason", () => {

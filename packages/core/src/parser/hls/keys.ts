@@ -9,6 +9,8 @@
  *
  * Pure policy: no fetching, no decryption. The engine owns those.
  */
+import type { HlsEncryption } from "../../types/codec";
+import type { DrmStatus } from "../../types/stream";
 
 /** KEYFORMAT values that mean "the URI answers with the raw key bytes". */
 const IDENTITY_KEY_FORMATS = new Set(["identity", ""]);
@@ -38,9 +40,11 @@ export function isClearAes128(declaration: HlsKeyDeclaration): boolean {
 }
 
 /**
- * What a playlist's key tags mean for us. Every active declaration must be
- * supported: one SAMPLE-AES tag in an otherwise AES-128 playlist makes the
- * whole thing undecryptable, because those segments stay locked.
+ * The one HLS key policy, used at detection, at dispatch and before any
+ * segment is read. Every active declaration must be supported: one
+ * SAMPLE-AES tag in an otherwise AES-128 playlist makes the whole thing
+ * undecryptable, because those segments stay locked. The key system named
+ * is the declared KEYFORMAT when it is not identity, else the METHOD.
  */
 export function planHlsKeys(declarations: readonly HlsKeyDeclaration[]): HlsKeyPlan {
   const active = declarations.filter(d => d.method !== "NONE");
@@ -49,18 +53,47 @@ export function planHlsKeys(declarations: readonly HlsKeyDeclaration[]): HlsKeyP
   if (unsupported) {
     return {
       kind: "drm",
-      keySystem: unsupported.method === "AES-128" ? unsupported.keyFormat : unsupported.method,
+      keySystem: IDENTITY_KEY_FORMATS.has(unsupported.keyFormat) ? unsupported.method : unsupported.keyFormat,
     };
   }
   return { kind: "aes-128" };
 }
 
+/** A key plan as the descriptor reports it: a CDM key system is DRM, anything else is not. */
+export function hlsKeyDrm(plan: HlsKeyPlan): DrmStatus {
+  return plan.kind === "drm" ? { reason: "cdm_required", detectedVia: ["hls-ext-x-key"], keySystem: plan.keySystem } : null;
+}
+
+/** The first key a decryptable playlist names, as its variant carries it. */
+export function hlsEncryptionOf(declarations: readonly HlsKeyDeclaration[]): HlsEncryption | null {
+  const key = declarations.find(isClearAes128);
+  return key?.keyUri ? { method: "AES-128", keyUri: key.keyUri, iv: key.iv, keyFormat: key.keyFormat } : null;
+}
+
+/** A variant's encryption back as the declaration the policy judges, KEYFORMAT included. */
+export function declarationOf(encryption: HlsEncryption): HlsKeyDeclaration {
+  return { method: encryption.method, keyUri: encryption.keyUri, keyFormat: encryption.keyFormat ?? "identity", iv: encryption.iv };
+}
+
+/** Every EXT-X-KEY in a media playlist (RFC 8216 4.3.2.4). */
 export function parseHlsKeyDeclarations(manifestText: string, manifestUrl: string): HlsKeyDeclaration[] {
+  return parseKeyTags(manifestText, manifestUrl, "#EXT-X-KEY:");
+}
+
+/**
+ * Every EXT-X-SESSION-KEY in a master playlist (RFC 8216 4.3.4.5): the keys
+ * its media playlists use, declared up front so detection can judge them.
+ */
+export function parseHlsSessionKeys(manifestText: string, manifestUrl: string): HlsKeyDeclaration[] {
+  return parseKeyTags(manifestText, manifestUrl, "#EXT-X-SESSION-KEY:");
+}
+
+function parseKeyTags(manifestText: string, manifestUrl: string, tag: string): HlsKeyDeclaration[] {
   const declarations: HlsKeyDeclaration[] = [];
   for (const line of manifestText.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("#EXT-X-KEY:")) continue;
-    const attributes = parseAttributeList(trimmed.slice("#EXT-X-KEY:".length));
+    if (!trimmed.startsWith(tag)) continue;
+    const attributes = parseAttributeList(trimmed.slice(tag.length));
     const uri = attributes.get("URI");
     declarations.push({
       method: (attributes.get("METHOD") ?? "AES-128").toUpperCase(),

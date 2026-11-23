@@ -8,6 +8,7 @@ export interface UrlClassification {
 
 const EXT_TO_CONTAINER: Record<string, Container> = {
   mp4: "mp4",
+  m4v: "mp4",
   mov: "mov",
   qt: "mov",
   webm: "webm",

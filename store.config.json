@@ -11,12 +11,18 @@
   "lint": {
     "forbidden": [],
     "textFiles": [
-      "packages/extension/scripts/screenshot/harness.tsx"
+      "packages/extension/scripts/screenshot/harness.tsx",
+      "packages/core/src/errors/messages.ts",
+      "packages/core/src/errors/network-block.ts",
+      "packages/extension/src/ui/text.ts",
+      "packages/extension/src/ui/toast-text.ts",
+      "packages/extension/src/util/transfer-progress.ts"
     ],
     "packageScript": "packages/extension/scripts/package.mjs"
   },
   "manifests": [
-    "packages/extension/manifest.json"
+    "packages/extension/manifest.json",
+    "packages/extension/manifest.preview.json"
   ],
   "images": [
     {

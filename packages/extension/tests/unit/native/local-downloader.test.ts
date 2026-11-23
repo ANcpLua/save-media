@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createLocalDownloader, DELEGABLE_ERROR_CODES, isDelegableError } from "../../../src/native/local-downloader";
 import type { NativeHostClient, DownloadHandlers } from "../../../src/native/host-client";
+import { NATIVE_PROTOCOL_VERSION } from "../../../src/types/native";
 import { LOCAL_SETTINGS_KEY, resolveCookieBrowser, parseLocalSettings, type StorageLike } from "../../../src/native/settings";
 
 function memoryStorage(initial: Record<string, unknown> = {}): StorageLike & { data: Record<string, unknown> } {
@@ -19,7 +20,7 @@ function fakeClient() {
     handlers,
     cancel,
     ping: vi.fn(async () => ({
-      type: "pong" as const, hostVersion: "1.0.0", protocolVersion: 1,
+      type: "pong" as const, hostVersion: "1.3.0", protocolVersion: NATIVE_PROTOCOL_VERSION as number,
       ytdlp: { found: true, version: "x", path: "/x" }, ffmpeg: { found: true, version: "y", path: "/y" }, outputDir: "/dl",
     })),
     download: vi.fn((_req, h) => { handlers.push(h); return cancel; }),
@@ -45,7 +46,7 @@ function build(opts: { enabled?: boolean; fallback?: boolean; permission?: boole
 
 describe("delegation allowlist", () => {
   it("contains only browser-engine limitations, never protected-media codes", () => {
-    for (const code of ["encrypted_media_detected", "cdm_required", "license_bound_stream", "clearkey_deferred", "clear_segments_unavailable", "access_denied", "user_cancelled"] as const) {
+    for (const code of ["encrypted_media_detected", "cdm_required", "license_bound_stream", "clearkey_deferred", "access_denied", "user_cancelled"] as const) {
       expect(DELEGABLE_ERROR_CODES.has(code)).toBe(false);
     }
     expect(isDelegableError({ code: "dash_unsupported", severity: "terminal", manifestUrl: "u" })).toBe(true);
@@ -71,6 +72,22 @@ describe("local downloader", () => {
     expect(await build().ld.start("chrome://extensions", null)).toBeNull();
   });
 
+  it("never runs a helper that speaks an earlier protocol, from the popup or from Alt+S, and runs one that does not answer so its failure says so", async () => {
+    const { ld, client, updates } = build();
+    const pong = await client.ping();
+    vi.mocked(client.ping).mockResolvedValue({ ...pong!, hostVersion: "1.1.0", protocolVersion: NATIVE_PROTOCOL_VERSION - 1 });
+    expect(await ld.start("https://example.com/watch", 7)).toBeNull();
+    expect(await ld.startFallback("https://example.com/watch", 7)).toBeNull();
+    expect(client.download).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
+    expect((await ld.status()).jobs).toEqual([]);
+
+    const missing = build();
+    vi.mocked(missing.client.ping).mockResolvedValue(null);
+    expect(await missing.ld.start("https://example.com/watch", 7)).toMatchObject({ phase: "probing" });
+    expect(missing.client.download).toHaveBeenCalledOnce();
+  });
+
   it("startFallback honours the fallbackOnHotkey setting", async () => {
     expect(await build({ fallback: false }).ld.startFallback("https://example.com/", 1)).toBeNull();
     expect(await build({ fallback: true }).ld.startFallback("https://example.com/", 1)).not.toBeNull();
@@ -90,6 +107,33 @@ describe("local downloader", () => {
     await second.ld.start("https://example.com/watch", 1);
     second.client.handlers[0]!.onFailed({ type: "failed", id: "job-1", code: "drm_protected", message: "DRM" });
     expect(second.updates.at(-1)).toMatchObject({ phase: "failed", failure: { code: "drm_protected" } });
+  });
+
+  it("says who asked for a job, so only Alt+S gets a toast: a press that joins a running job makes it Alt+S's too", async () => {
+    const origins = (deps: ReturnType<typeof build>["storage"], client: ReturnType<typeof fakeClient>) => {
+      const seen: [string, string][] = [];
+      const ld = createLocalDownloader({ client, storage: deps, permissions: { contains: async () => true }, env: { browser: "chromium", userAgent: "" },
+        onJobUpdate: (job, origin) => seen.push([job.phase, origin]), newId: () => "job-1" });
+      return { ld, seen };
+    };
+    const popup = build();
+    const fromPopup = origins(popup.storage, popup.client);
+    await fromPopup.ld.start("https://example.com/watch", 1);
+    popup.client.handlers[0]!.onComplete({ type: "complete", id: "job-1", filename: "clip.mp4", path: "/dl/clip.mp4", bytes: 1 });
+    expect(fromPopup.seen).toEqual([["probing", "popup"], ["complete", "popup"]]);
+
+    const hotkey = build();
+    const fromHotkey = origins(hotkey.storage, hotkey.client);
+    await fromHotkey.ld.startFallback("https://example.com/watch", 1);
+    hotkey.client.handlers[0]!.onFailed({ type: "failed", id: "job-1", code: "network", message: "" });
+    expect(fromHotkey.seen).toEqual([["probing", "hotkey"], ["failed", "hotkey"]]);
+
+    const joined = build();
+    const both = origins(joined.storage, joined.client);
+    await both.ld.start("https://example.com/watch", 1);
+    expect((await both.ld.startFallback("https://example.com/watch", 1))?.id).toBe("job-1");
+    joined.client.handlers[0]!.onComplete({ type: "complete", id: "job-1", filename: "clip.mp4", path: "/dl/clip.mp4", bytes: 1 });
+    expect(both.seen).toEqual([["probing", "popup"], ["complete", "hotkey"]]);
   });
 
   it("cancel forwards to the running job", async () => {
@@ -128,8 +172,12 @@ describe("settings", () => {
   it("resolves the auto cookie source from the running browser", () => {
     expect(resolveCookieBrowser("auto", { browser: "firefox", userAgent: "" })).toBe("firefox");
     expect(resolveCookieBrowser("auto", { browser: "chromium", userAgent: "Chrome/140 Edg/140" })).toBe("edge");
-    expect(resolveCookieBrowser("auto", { browser: "chromium", userAgent: "Chrome/140 Safari/537" })).toBe("chrome");
-    expect(resolveCookieBrowser("auto", { browser: "chromium", userAgent: "Other" })).toBe("chromium");
+    const chromeUa = { browser: "chromium" as const, userAgent: "Chrome/140 Safari/537" };
+    expect(resolveCookieBrowser("auto", chromeUa)).toBeNull();
+    expect(resolveCookieBrowser("auto", { ...chromeUa, brands: ["Chromium", "Google Chrome"] })).toBe("chrome");
+    expect(resolveCookieBrowser("auto", { ...chromeUa, brands: ["Chromium", "Brave"] })).toBe("brave");
+    expect(resolveCookieBrowser("auto", { ...chromeUa, brands: ["Chromium", "Not/A)Brand"] })).toBe("chromium");
+    expect(resolveCookieBrowser("auto", { ...chromeUa, brands: ["Some Browser", "Chromium"] })).toBeNull();
     expect(resolveCookieBrowser("none", { browser: "chromium", userAgent: "Chrome/140" })).toBeNull();
     expect(resolveCookieBrowser("brave", { browser: "chromium", userAgent: "Chrome/140" })).toBe("brave");
   });

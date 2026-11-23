@@ -1,13 +1,29 @@
 // Metadata supplies candidates for the same byte and manifest checks as player sources.
+import { mimeKind } from "../util/media-url";
+
 export interface VideoMetadata {
   readonly primary: boolean;
-  readonly sources: { url: string; height?: number }[];
+  readonly via: "json-ld" | "og";
+  readonly sources: { url: string; height?: number; mime?: string }[];
+}
+
+export interface PageVideoMetadata {
+  readonly groups: VideoMetadata[];
+  /** Images the page declares as stills of its videos; never a video to save. */
+  readonly thumbnails: string[];
+  /**
+   * The page's og:image when its og:video names an embed page and nothing else says that the page is a
+   * video. Such a page may be a player page, whose og:image is the player's poster, or an article with a
+   * video further down, whose og:image is its lead photo. The picture is a still only where it lies on a
+   * player (content/pointer-media.ts); anywhere else it is a picture like any other.
+   */
+  readonly playerStills: string[];
 }
 
 type Node = Record<string, unknown>;
 const MAX_NODES = 500;
 
-export function readVideoMetadata(doc: Document, pageUrl: string): VideoMetadata[] {
+export function readVideoMetadata(doc: Document, pageUrl: string): PageVideoMetadata {
   const base = doc.baseURI === "about:blank" ? pageUrl : doc.baseURI;
   const nodes: Node[] = [];
   const definitions = new Map<string, Node>();
@@ -57,6 +73,7 @@ export function readVideoMetadata(doc: Document, pageUrl: string): VideoMetadata
     }
   }
   const groups: VideoMetadata[] = [];
+  const thumbnails = new Set<string>();
   const encodings = new Set<Node>();
   for (const node of nodes.filter(n => isType(n, "VideoObject"))) {
     for (const ref of [...values(node.encoding), ...values(node.associatedMedia)]) {
@@ -66,7 +83,11 @@ export function readVideoMetadata(doc: Document, pageUrl: string): VideoMetadata
   }
   for (const node of nodes) {
     if (!isType(node, "VideoObject") || encodings.has(node)) continue;
-    const group: VideoMetadata = { primary: primary.has(node), sources: [] };
+    const group: VideoMetadata = { primary: primary.has(node), via: "json-ld", sources: [] };
+    for (const still of values(node.thumbnailUrl)) {
+      const url = absolute(isNode(still) ? still.url ?? still["@id"] : still, base);
+      if (url) thumbnails.add(url);
+    }
     for (const item of [node, ...values(node.encoding).map(resolve), ...values(node.associatedMedia).map(resolve)]) {
       if (!item || isType(item, "AudioObject") || isType(item, "ImageObject")) continue;
       const format = typeof item.encodingFormat === "string" ? item.encodingFormat : "";
@@ -74,7 +95,7 @@ export function readVideoMetadata(doc: Document, pageUrl: string): VideoMetadata
       const height = resolution(item.height) ?? resolution(item.videoQuality);
       for (const contentUrl of values(item.contentUrl)) {
         const url = absolute(isNode(contentUrl) ? contentUrl["@id"] : contentUrl, base);
-        if (url) group.sources.push({ url, ...(height ? { height } : {}) });
+        if (url) group.sources.push({ url, ...(height ? { height } : {}), ...(format.includes("/") ? { mime: format } : {}) });
       }
     }
     if (group.sources.length) groups.push(group);
@@ -85,9 +106,14 @@ export function readVideoMetadata(doc: Document, pageUrl: string): VideoMetadata
   let urls: string[] = [];
   let height: number | undefined;
   let type = "";
+  // The page declares a video this way at all, whatever its type: an embed page (text/html) is no source to check.
+  let declaresOgVideo = false;
+  // One of them is media itself: a file or a stream, by its type, or with no type stated.
+  let declaresOgMedia = false;
   function finishOgVideo(): void {
-    if (urls.length && (!type || type.startsWith("video/") || /mpegurl|dash\+xml/i.test(type))) {
-      groups.push({ primary: false, sources: urls.map(url => ({ url, ...(height ? { height } : {}) })) });
+    if (urls.length && (!type || mimeKind(type) !== null)) {
+      groups.push({ primary: false, via: "og", sources: urls.map(url => ({ url, ...(height ? { height } : {}), ...(type ? { mime: type } : {}) })) });
+      declaresOgMedia = true;
     }
     urls = []; height = undefined; type = "";
   }
@@ -96,7 +122,7 @@ export function readVideoMetadata(doc: Document, pageUrl: string): VideoMetadata
     if (property === "og:video" || property === "og:video:url") {
       finishOgVideo();
       const url = absolute(meta.content, base);
-      if (url) urls.push(url);
+      if (url) { urls.push(url); declaresOgVideo = true; }
     } else if (property === "og:video:secure_url") {
       const url = absolute(meta.content, base);
       if (url?.startsWith("https://")) urls.unshift(url);
@@ -104,7 +130,21 @@ export function readVideoMetadata(doc: Document, pageUrl: string): VideoMetadata
     else if (property === "og:video:type") type = meta.content.trim().toLowerCase();
   }
   finishOgVideo();
-  return groups;
+  // og:image is the picture of the object the page declares. It is the still of a video when that object
+  // is one: an og:video that is media itself, or a page whose og:type is a video type (video.movie,
+  // video.episode, video.other). An og:video that names an embed page says less: an article with a video
+  // further down declares the same, and its og:image is the article's lead photo.
+  const playerStills = new Set<string>();
+  if (declaresOgVideo) {
+    const pageIsVideo = Array.from(doc.querySelectorAll<HTMLMetaElement>('meta[property="og:type" i]'))
+      .some(meta => /^video(\.|$)/i.test(meta.content.trim()));
+    const stills = declaresOgMedia || pageIsVideo ? thumbnails : playerStills;
+    for (const meta of doc.querySelectorAll<HTMLMetaElement>('meta[property="og:image" i], meta[property="og:image:secure_url" i]')) {
+      const url = absolute(meta.content, base);
+      if (url) stills.add(url);
+    }
+  }
+  return { groups, thumbnails: [...thumbnails].slice(0, 50), playerStills: [...playerStills].filter(url => !thumbnails.has(url)).slice(0, 50) };
 }
 
 function absolute(value: unknown, base: string): string | undefined {

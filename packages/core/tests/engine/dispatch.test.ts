@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { dispatch } from "../../src/engine/dispatch";
+import { parseHlsMaster } from "../../src/parser/hls/adapter";
 import type { StreamDescriptor, StreamId } from "../../src/types/stream";
 import type { UserChoice } from "../../src/types/job";
-import type { Variant, VariantId, AudioRenditionId, HlsEncryption } from "../../src/types/codec";
+import type { Variant, VariantId, AudioRenditionId, HlsEncryption, HlsSegmentKey } from "../../src/types/codec";
 
 function variant(overrides: Partial<Variant> = {}): Variant {
   return {
@@ -42,7 +43,6 @@ function makeDirect(): StreamDescriptor {
     capabilities: {
       directDownload: true,
       remuxableTo: ["mp4"],
-      drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "confirmed", codecs: "guessed" },
   };
@@ -74,7 +74,6 @@ function makeHls(encryption: HlsEncryption | null = null): StreamDescriptor {
     capabilities: {
       directDownload: false,
       remuxableTo: ["mp4"],
-      drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
   };
@@ -96,7 +95,6 @@ function makeDash(): StreamDescriptor {
     capabilities: {
       directDownload: false,
       remuxableTo: ["mp4"],
-      drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
   };
@@ -199,7 +197,6 @@ describe("dispatch — DRM refusal", () => {
     const blocked: StreamDescriptor = {
       ...d,
       drm: { reason: "cdm_required", detectedVia: ["eme-hook"], keySystem: "com.widevine.alpha" },
-      capabilities: { ...d.capabilities, drmBlocked: true },
     };
     const r = dispatch(blocked, originalChoice);
     expect(r.kind).toBe("refuse");
@@ -207,7 +204,7 @@ describe("dispatch — DRM refusal", () => {
   });
 
   it("ClearKey returns clearkey_deferred reason distinct from CDM-block", () => {
-    const d = { ...makeDash(), drm: { reason: "clearkey_deferred" as const, detectedVia: ["dash-content-protection" as const, "clearkey-detector" as const], keySystem: "org.w3.clearkey" }, capabilities: { ...makeDash().capabilities, drmBlocked: true } };
+    const d = { ...makeDash(), drm: { reason: "clearkey_deferred" as const, detectedVia: ["dash-content-protection" as const, "clearkey-detector" as const], keySystem: "org.w3.clearkey" } };
     const r = dispatch(d, originalChoice);
     expect(r.kind).toBe("refuse");
     if (r.kind === "refuse") expect(r.reason).toBe("clearkey_deferred");
@@ -255,6 +252,11 @@ describe("dispatch — HLS", () => {
     }
   });
 
+  it("AES-128 whose KEYFORMAT names a CDM key system → refuses, the key format is never dropped", () => {
+    const enc: HlsEncryption = { method: "AES-128", keyUri: "skd://x/k", iv: null, keyFormat: "com.apple.streamingkeydelivery" };
+    expect(dispatch(makeHls(enc), originalChoice)).toEqual({ kind: "refuse", reason: "cdm_required" });
+  });
+
   it("SAMPLE-AES HLS variant → refuses with cdm_required", () => {
     const enc = { method: "SAMPLE-AES", keyUri: "https://x/k", iv: null } as HlsEncryption;
     const d = makeHls(enc);
@@ -270,14 +272,27 @@ describe("dispatch — HLS", () => {
     if (r.kind === "refuse") expect(r.reason).toBe("no_usable_variant");
   });
 
-  it("HLS estimatedSize above 2 GiB refuses before risking a corrupt browser Blob", () => {
+  it("plans a variant from its playlist, whatever codecs and picture size the master states for it", () => {
+    const d = { ...makeHls(), variants: [variant({ width: null, height: null, videoCodec: null })] };
+    expect(dispatch(d, originalChoice).kind).toBe("hls-plain");
+  });
+
+  it("an HLS size above 2 GiB that a server stated refuses before the save starts", () => {
     const base = makeHls();
+    // A size without a bit rate is the length a server declared.
     const huge: StreamDescriptor = {
       ...base,
-      variants: [variant({ estimatedSize: 3 * 1024 * 1024 * 1024 })],
+      variants: [variant({ bitrate: null, estimatedSize: 3 * 1024 * 1024 * 1024 })],
     };
     const r = dispatch(huge, originalChoice);
-    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser" });
+    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
+    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 3 * 1024 ** 3 });
+  });
+
+  it("an HLS size worked out from the bit rate never refuses: BANDWIDTH is the peak rate, and the sum leans high", () => {
+    const r = dispatch({ ...makeHls(), variants: [variant({ bitrate: 6_000_000, estimatedSize: 3 * 1024 ** 3 })] }, originalChoice);
+    // The estimate still tells the progress display what to expect.
+    expect(r).toMatchObject({ kind: "hls-plain", estimatedBytes: 3 * 1024 ** 3 });
   });
 });
 
@@ -305,6 +320,30 @@ describe("dispatch — demuxed HLS (av-merge)", () => {
     expect(r.kind).toBe("hls-plain");
   });
 
+  it("a master whose DEFAULT audio is muxed into the variant is saved as it plays, not merged with another language", () => {
+    const master = [
+      "#EXTM3U",
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES',
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Deutsch",LANGUAGE="de",DEFAULT=NO,URI="de/prog.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="aud"',
+      "main/prog.m3u8",
+    ].join("\n");
+    const parsed = parseHlsMaster(master, "https://m.example/master.m3u8");
+    const read = (track: Variant, segment: string): Variant => ({
+      ...track,
+      segmentRef: { kind: "hls-segments", playlistUrl: segment, initSegmentUrl: null, segmentUrls: [segment], encryption: null },
+    });
+    // Both playlists are read, as they are when the save starts: the German rendition is ready to merge.
+    const d: StreamDescriptor = {
+      ...makeHls(),
+      variants: parsed.variants.map(v => read(v, "https://m.example/main/s0.ts")),
+      audioRenditions: parsed.audioRenditions.map(a => read(a, "https://m.example/de/s0.ts")),
+    };
+    const r = dispatch(d, originalChoice);
+    expect(r.kind).toBe("hls-plain");
+    if (r.kind === "hls-plain") expect(r.variantId).toBe(parsed.variants[0]?.id);
+  });
+
   it("demuxed variant with unmaterialized segment URLs refuses instead of saving video-only", () => {
     // Default variant() segmentRef has segmentUrls: [] — the media playlists
     // have not been fetched yet.
@@ -313,7 +352,7 @@ describe("dispatch — demuxed HLS (av-merge)", () => {
     expect(r).toEqual({ kind: "refuse", reason: "no_usable_variant" });
   });
 
-  it("demuxed AES-128 refuses: av-merge fetches by URL and carries no key", () => {
+  it("demuxed AES-128 without the key of each segment refuses: the merge would write ciphertext", () => {
     const aesKey: HlsEncryption = { method: "AES-128", keyUri: "https://x/key.bin", iv: null };
     const d = makeDemuxedHls();
     const keyed = {
@@ -327,6 +366,39 @@ describe("dispatch — demuxed HLS (av-merge)", () => {
     };
     const r = dispatch(keyed, originalChoice);
     expect(r).toEqual({ kind: "refuse", reason: "hls_encryption_unsupported" });
+  });
+
+  it("demuxed AES-128 whose media playlists were read merges, carrying the key of every segment and the init section", () => {
+    const aesKey: HlsEncryption = { method: "AES-128", keyUri: "https://x/key.bin", iv: null };
+    const segmentKey: HlsSegmentKey = { keyUri: "https://x/key.bin", iv: null, mediaSequence: 0 };
+    const d = makeDemuxedHls();
+    const keyed = {
+      ...d,
+      variants: d.variants.map(v => ({
+        ...v,
+        segmentRef: v.segmentRef.kind === "hls-segments"
+          ? { ...v.segmentRef, encryption: aesKey, initKey: segmentKey,
+            segmentKeys: v.segmentRef.segmentUrls.map((_, i) => ({ ...segmentKey, mediaSequence: i })) }
+          : v.segmentRef,
+      })),
+      // The audio rendition was read too, and is clear: every segment key is null.
+      audioRenditions: (d.audioRenditions ?? []).map(r => ({
+        ...r,
+        segmentRef: r.segmentRef.kind === "hls-segments"
+          ? { ...r.segmentRef, segmentKeys: r.segmentRef.segmentUrls.map(() => null) }
+          : r.segmentRef,
+      })),
+    };
+    const r = dispatch(keyed, originalChoice);
+    expect(r.kind).toBe("av-merge");
+    if (r.kind !== "av-merge") return;
+    expect(r.video).toEqual({
+      initUrl: "https://x/v-init.mp4",
+      segmentUrls: ["https://x/v1.m4s", "https://x/v2.m4s"],
+      initKey: segmentKey,
+      segmentKeys: [segmentKey, { ...segmentKey, mediaSequence: 1 }],
+    });
+    expect(r.audio?.segmentKeys).toEqual([null, null]);
   });
 
   it("demuxed variant whose rendition is missing from the descriptor refuses", () => {
@@ -351,10 +423,10 @@ describe("dispatch — demuxed HLS (av-merge)", () => {
     const r = dispatch(d, { ...originalChoice, audioRenditionId: AUDIO_FR });
     expect(r.kind).toBe("av-merge");
     if (r.kind !== "av-merge") return;
-    expect(r.audio.segmentUrls).toEqual(["https://x/fr1.m4s"]);
+    expect(r.audio?.segmentUrls).toEqual(["https://x/fr1.m4s"]);
   });
 
-  it("AES-128 on the audio rendition still refuses encrypted HLS", () => {
+  it("AES-128 on an audio rendition whose segment keys are unknown refuses encrypted HLS", () => {
     const enc: HlsEncryption = { method: "AES-128", keyUri: "https://x/key.bin", iv: null };
     const d = makeDemuxedHls({
       audioRenditions: [
@@ -392,25 +464,35 @@ describe("dispatch — demuxed HLS (av-merge)", () => {
     expect(r).toEqual({ kind: "refuse", reason: "cdm_required" });
   });
 
-  it("size cap sums both tracks: each under 2 GiB but combined over → refuses", () => {
-    const d = makeDemuxedHls({
+  it("size cap sums the sizes both tracks state: each under 2 GiB but combined over → refuses", () => {
+    // Each track is one file whose byte ranges state where it ends.
+    const sized = (videoBytes: number | undefined, audioBytes: number | undefined) => makeDemuxedHls({
       variants: [
         variant({
           audioRenditionId: AUDIO_EN,
-          estimatedSize: 1_610_612_736, // 1.5 GiB
+          estimatedSize: 1_610_612_736, // 1.5 GiB by its bit rate
           segmentRef: {
             kind: "hls-segments",
             playlistUrl: "https://x/v1080.m3u8",
-            initSegmentUrl: "https://x/v-init.mp4",
-            segmentUrls: ["https://x/v1.m4s"],
+            initSegmentUrl: null,
+            segmentUrls: ["https://x/v.mp4"],
             encryption: null,
+            ...(videoBytes === undefined ? {} : { fileBytes: videoBytes }),
           },
         }),
       ],
-      audioRenditions: [hlsAudioRendition({ estimatedSize: 644_245_094 })], // 0.6 GiB
+      audioRenditions: [hlsAudioRendition({
+        estimatedSize: 644_245_094, // 0.6 GiB by its bit rate
+        segmentRef: { kind: "hls-segments", playlistUrl: "https://x/audio-en.m3u8", initSegmentUrl: null, segmentUrls: ["https://x/a.mp4"],
+          encryption: null, ...(audioBytes === undefined ? {} : { fileBytes: audioBytes }) },
+      })],
     });
-    const r = dispatch(d, originalChoice);
-    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser" });
+    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
+    expect(dispatch(sized(1_610_612_736, 644_245_094), originalChoice))
+      .toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 1_610_612_736 + 644_245_094 });
+    // The same sum from the tracks' bit rates is an estimate that leans high: the save is planned, and counted as it arrives.
+    expect(dispatch(sized(undefined, undefined), originalChoice))
+      .toMatchObject({ kind: "av-merge", estimatedBytes: 1_610_612_736 + 644_245_094 });
   });
 });
 
@@ -431,9 +513,46 @@ describe("dispatch — DASH", () => {
     expect(r.estimatedBytes).toBe(59_600_000); // 50 MB video + 9.6 MB audio
   });
 
-  it("clear DASH without an audio rendition still refuses dash_unsupported", () => {
+  it("clear DASH that declares no audio is saved with its picture alone", () => {
+    const r = dispatch(makeDashAv({ audioRenditions: [] }), { ...originalChoice, variantId: "dash-1080" as VariantId });
+    expect(r).toEqual({
+      kind: "av-merge",
+      video: { initUrl: "https://x/init-1080.m4s", segmentUrls: ["https://x/v-1.m4s", "https://x/v-2.m4s"] },
+      audio: null,
+      outputContainer: "mp4",
+      outputFilename: originalChoice.filename,
+      estimatedBytes: 50_000_000,
+    });
+  });
+
+  it("a descriptor without an audio rendition list is the same: no audio declared", () => {
+    const { audioRenditions: _none, ...withoutList } = makeDashAv();
+    const r = dispatch(withoutList, originalChoice);
+    expect(r.kind === "av-merge" && r.audio).toBeNull();
+  });
+
+  it("clear DASH without audio whose segments cannot be fetched one by one refuses dash_unsupported", () => {
+    // makeDash's only track has no materialized segment list (a byte-range addressed representation).
     const r = dispatch(makeDash(), { ...originalChoice, variantId: "dash-1080" as VariantId });
     expect(r).toEqual({ kind: "refuse", reason: "dash_unsupported" });
+  });
+
+  it("a DASH manifest that is still being written is refused as live, with or without audio", () => {
+    const live = { live: true, durationSeconds: null, maxSegmentSeconds: 2 };
+    expect(dispatch({ ...makeDashAv(), presentation: live }, originalChoice)).toEqual({ kind: "refuse", reason: "hls_live_unsupported" });
+    expect(dispatch({ ...makeDashAv({ audioRenditions: [] }), presentation: live }, originalChoice))
+      .toEqual({ kind: "refuse", reason: "hls_live_unsupported" });
+  });
+
+  it("the size cap also holds for a video saved without audio, on the size a server stated and never on an estimate", () => {
+    const d = makeDashAv({ audioRenditions: [] });
+    // A size without a bit rate is the length a server declared.
+    const r = dispatch({ ...d, variants: [{ ...d.variants[0]!, bitrate: null, estimatedSize: 3 * 1024 ** 3 }] }, originalChoice);
+    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
+    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 3 * 1024 ** 3 });
+    // Bit rate over length: an estimate. The save is planned, and the count of received bytes stops it at the limit.
+    expect(dispatch({ ...d, variants: [{ ...d.variants[0]!, bitrate: 8_000_000, estimatedSize: 3 * 1024 ** 3 }] }, originalChoice))
+      .toMatchObject({ kind: "av-merge", estimatedBytes: 3 * 1024 ** 3 });
   });
 
   it("audio rendition with no materialized media URLs refuses dash_unsupported", () => {
@@ -491,7 +610,7 @@ describe("dispatch — DASH", () => {
     const r = dispatch(d, originalChoice);
     expect(r.kind).toBe("av-merge");
     if (r.kind !== "av-merge") return;
-    expect(r.audio.initUrl).toBe("https://x/init-audio.m4s");
+    expect(r.audio?.initUrl).toBe("https://x/init-audio.m4s");
   });
 
   it("choice.audioRenditionId selects the named DASH rendition", () => {
@@ -505,22 +624,37 @@ describe("dispatch — DASH", () => {
     const r = dispatch(d, { ...originalChoice, audioRenditionId: "audio-lo" as AudioRenditionId });
     expect(r.kind).toBe("av-merge");
     if (r.kind !== "av-merge") return;
-    expect(r.audio.segmentUrls).toEqual(["https://x/lo-1.m4s"]);
+    expect(r.audio?.segmentUrls).toEqual(["https://x/lo-1.m4s"]);
   });
 
-  it("size cap sums both DASH tracks before emitting a plan", () => {
+  it("size cap sums the sizes both DASH tracks state before emitting a plan", () => {
+    // Two files, each with the length its server declared (a size without a bit rate).
     const d = makeDashAv({
       variants: [
         variant({
           id: "dash-1080" as VariantId,
+          bitrate: null,
           estimatedSize: 1_610_612_736, // 1.5 GiB
-          segmentRef: { kind: "dash-segments", initUrl: "https://x/init-1080.m4s", mediaUrls: ["https://x/v-1.m4s"] },
+          segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: ["https://x/v.mp4"] },
         }),
       ],
-      audioRenditions: [dashAudioRendition({ estimatedSize: 644_245_094 })], // 0.6 GiB
+      audioRenditions: [dashAudioRendition({ bitrate: null, estimatedSize: 644_245_094,  // 0.6 GiB
+        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: ["https://x/a.mp4"] } })],
     });
     const r = dispatch(d, originalChoice);
-    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser" });
+    // The refusal carries the size that was compared with the limit: the whole save, video and audio together.
+    expect(r).toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 1_610_612_736 + 644_245_094 });
+  });
+
+  it("a representation kept in one file refuses on where its byte ranges end, whatever its bit rate adds up to", () => {
+    const oneFile = (fileBytes: number) => makeDashAv({
+      variants: [variant({ id: "dash-1080" as VariantId, estimatedSize: 50_000_000,
+        segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: ["https://x/v.mp4"], fileBytes } })],
+      audioRenditions: [],
+    });
+    expect(dispatch(oneFile(3 * 1024 ** 3), originalChoice))
+      .toEqual({ kind: "refuse", reason: "output_too_large_for_browser", estimatedBytes: 3 * 1024 ** 3 });
+    expect(dispatch(oneFile(40_000_000), originalChoice)).toMatchObject({ kind: "av-merge" });
   });
 });
 
@@ -533,7 +667,6 @@ describe("dispatch — progressive containers", () => {
       capabilities: {
         directDownload: true,
         remuxableTo: ["webm", "mp4"],
-        drmBlocked: false,
       },
     };
     const r = dispatch(d, originalChoice);
@@ -548,7 +681,6 @@ describe("dispatch — progressive containers", () => {
       capabilities: {
         directDownload: true,
         remuxableTo: ["mp4", "mkv"],
-        drmBlocked: false,
       },
     };
     const r = dispatch(d, originalChoice);
@@ -563,7 +695,6 @@ describe("dispatch — progressive containers", () => {
       capabilities: {
         directDownload: false,
         remuxableTo: [],
-        drmBlocked: false,
       },
     };
     const r = dispatch(d, originalChoice);
@@ -578,7 +709,6 @@ describe("dispatch — progressive containers", () => {
       capabilities: {
         directDownload: false,
         remuxableTo: [],
-        drmBlocked: false,
       },
     };
     const r = dispatch(d, originalChoice);
@@ -619,33 +749,53 @@ describe("dispatch — MP4 codec gate (av-merge)", () => {
   const av1 = { rfc6381: "av01.0.04M.08", family: "av1" as const, profile: null, level: null };
   const opus = { rfc6381: "opus", family: "opus" as const, channels: 2, sampleRate: 48000 };
 
-  it("demuxed HLS with a VP9 variant refuses instead of failing late in the muxer", () => {
+  const pcm = { rfc6381: "lpcm", family: "pcm" as const, channels: 2, sampleRate: 48000 };
+  const prores = { rfc6381: "apch", family: "prores" as const, profile: null, level: null };
+
+  it("demuxed HLS with a VP9 variant merges: the MP4 muxer writes VP9", () => {
     const d = makeDemuxedHls();
     const demuxedRef = d.variants[0]!.segmentRef;
     const r = dispatch(
       makeDemuxedHls({ variants: [variant({ audioRenditionId: AUDIO_EN, segmentRef: demuxedRef, videoCodec: vp9 })] }),
       originalChoice,
     );
-    expect(r).toEqual({ kind: "refuse", reason: "no_usable_variant" });
+    expect(r.kind).toBe("av-merge");
   });
 
-  it("clear DASH with an Opus audio rendition refuses dash_unsupported", () => {
-    const d = makeDashAv({ audioRenditions: [dashAudioRendition({ audioCodec: opus })] });
-    const r = dispatch(d, originalChoice);
-    expect(r).toEqual({ kind: "refuse", reason: "dash_unsupported" });
+  it("clear DASH with VP9 video and Opus audio merges: the MP4 muxer writes both", () => {
+    const d = makeDashAv();
+    const r = dispatch(
+      makeDashAv({ variants: [{ ...d.variants[0]!, videoCodec: vp9 }], audioRenditions: [dashAudioRendition({ audioCodec: opus })] }),
+      { ...originalChoice, variantId: d.variants[0]!.id },
+    );
+    expect(r.kind).toBe("av-merge");
   });
 
-  it("falls back to the variant's CODECS audio declaration when the rendition carries none", () => {
+  it("the audio codec a demuxed HLS variant declares for its group counts when the rendition carries none", () => {
     const d = makeDemuxedHls();
     const demuxedRef = d.variants[0]!.segmentRef;
-    const r = dispatch(
+    const withGroupCodec = (audioCodec: typeof opus | typeof pcm) => dispatch(
       makeDemuxedHls({
-        variants: [variant({ audioRenditionId: AUDIO_EN, segmentRef: demuxedRef, audioCodec: opus })],
+        variants: [variant({ audioRenditionId: AUDIO_EN, segmentRef: demuxedRef, audioCodec })],
         audioRenditions: [hlsAudioRendition({ audioCodec: null })],
       }),
       originalChoice,
     );
-    expect(r).toEqual({ kind: "refuse", reason: "no_usable_variant" });
+    expect(withGroupCodec(opus).kind).toBe("av-merge");
+    // Refused as the codec limit it is, with the codec: never as a playlist that is missing something.
+    expect(withGroupCodec(pcm)).toEqual({ kind: "refuse", reason: "codec_unsupported", codec: { track: "audio", family: "pcm" } });
+  });
+
+  it("refuses, before anything is fetched, a codec the MP4 muxer does not write", () => {
+    const d = makeDashAv();
+    const choice = { ...originalChoice, variantId: d.variants[0]!.id };
+    expect(dispatch(makeDashAv({ audioRenditions: [dashAudioRendition({ audioCodec: pcm })] }), choice))
+      .toEqual({ kind: "refuse", reason: "codec_unsupported", codec: { track: "audio", family: "pcm" } });
+    expect(dispatch(makeDashAv({ variants: [{ ...d.variants[0]!, videoCodec: prores }] }), choice))
+      .toEqual({ kind: "refuse", reason: "codec_unsupported", codec: { track: "video", family: "prores" } });
+    // The same holds when no audio is declared: the video alone still has to fit the file.
+    expect(dispatch(makeDashAv({ variants: [{ ...d.variants[0]!, videoCodec: prores }], audioRenditions: [] }), choice))
+      .toEqual({ kind: "refuse", reason: "codec_unsupported", codec: { track: "video", family: "prores" } });
   });
 
   it("AV1 + AAC still merges — MP4 carries both natively", () => {
@@ -667,5 +817,16 @@ describe("dispatch — MP4 codec gate (av-merge)", () => {
       { ...originalChoice, variantId: d.variants[0]!.id },
     );
     expect(r.kind).toBe("av-merge");
+  });
+});
+
+describe("live HLS", () => {
+  it("refuses a playlist that is still being written", async () => {
+    const { classify } = await import("../../src/classifier/classify");
+    const live = await classify({ tabId: 1, pageUrl: "https://p.test/", url: "https://cdn.test/live/media.m3u8",
+      headers: { "content-type": "application/vnd.apple.mpegurl" }, bodyBytes: null,
+      manifestText: "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:3\n#EXTINF:4,\nseg3.ts\n" });
+    expect(dispatch(live, { outputMode: "Original", filename: "a.mp4", variantId: null, audioRenditionId: null }))
+      .toEqual({ kind: "refuse", reason: "hls_live_unsupported" });
   });
 });

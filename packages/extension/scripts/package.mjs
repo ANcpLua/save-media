@@ -22,10 +22,19 @@ const targets = [
   { name: "firefox", dir: "dist-firefox" },
 ];
 
+// Store packages leave out the site reader the Chrome Web Store does not
+// accept (src/content/sites/registry.ts). Its player endpoint is the marker.
+const STORE_EXCLUDED_READER = "youtubei";
+
 for (const t of targets) {
   const src = resolve(root, t.dir);
   if (!existsSync(src)) {
     console.error(`✘ ${t.dir} missing — run bun run build:all first`);
+    process.exit(1);
+  }
+  const contentMain = resolve(src, "content-main.js");
+  if (!existsSync(contentMain) || readFileSync(contentMain, "utf8").includes(STORE_EXCLUDED_READER)) {
+    console.error(`✘ ${t.dir} is not a store build: it carries a site reader that store packages leave out. Run bun run zip, which builds with SAVEMEDIA_STORE_BUILD=1.`);
     process.exit(1);
   }
   const out = resolve(root, `savemedia-${t.name}-${version}.zip`);

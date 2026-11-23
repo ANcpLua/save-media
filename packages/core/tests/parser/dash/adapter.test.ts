@@ -75,4 +75,24 @@ describe("parseDash", () => {
     const r = parseDash(fx("mpd-clearkey-deferred.mpd"), "https://x.test/m.mpd");
     expect(r.drm?.reason).toBe("clearkey_deferred");
   });
+
+  // The same clear presentation with one ContentProtection element added to
+  // its video AdaptationSet: the scheme decides nothing, its presence does.
+  const protectedVideo = (element: string) => fx("clear-video-audio.mpd")
+    .replace('xmlns="urn:mpeg:dash:schema:mpd:2011"', 'xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:mpd="urn:mpeg:dash:schema:mpd:2011"')
+    .replace(/(<AdaptationSet id="0"[^>]*>)/, `$1\n${element}`);
+
+  it("the clear fixture itself has no protection", () => {
+    expect(parseDash(fx("clear-video-audio.mpd"), "https://x.test/m.mpd").drm).toBeNull();
+  });
+
+  it.each([
+    ['<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/>', "cenc"],
+    ["<ContentProtection schemeIdUri='urn:mpeg:dash:mp4protection:2011' value='cbcs'/>", "cbcs"],
+    ['<mpd:ContentProtection schemeIdUri = "urn:uuid:5E629AF5-38DA-4063-8977-97FFBD9902D4"></mpd:ContentProtection>',
+      "urn:uuid:5e629af5-38da-4063-8977-97ffbd9902d4"],
+  ])("marks %s as protected, never as a clear av-merge source", (element, keySystem) => {
+    const r = parseDash(protectedVideo(element), "https://x.test/m.mpd");
+    expect(r.drm).toEqual({ reason: "cdm_required", detectedVia: ["dash-content-protection"], keySystem });
+  });
 });

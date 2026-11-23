@@ -1,8 +1,0 @@
-{
-  "kind": "dash",
-  "drm": {
-    "reason": "clearkey_deferred",
-    "detectedVia": ["dash-content-protection", "clearkey-detector"],
-    "keySystem": "org.w3.clearkey"
-  }
-}

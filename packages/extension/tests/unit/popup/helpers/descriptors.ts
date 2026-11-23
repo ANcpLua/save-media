@@ -24,7 +24,6 @@ export function directDescriptor(
     capabilities: {
       directDownload: true,
       remuxableTo: ["mp4"],
-      drmBlocked: false,
     },
     confidence: { protocol: "probable", container: "probable", codecs: "guessed" },
     ...overrides,
@@ -67,13 +66,27 @@ export function hlsDescriptor(
     capabilities: {
       directDownload: false,
       remuxableTo: ["mp4"],
-      drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
     ...overrides,
   };
 }
 
+/**
+ * A clear DASH row the browser engine cannot assemble: its segments are byte
+ * ranges of one file, so the manifest gives no address to fetch one by one.
+ * This, a manifest still being written and a codec the MP4 muxer does not
+ * write are what dash_unsupported is left for.
+ */
+export function unassemblableDash(overrides: Partial<StreamDescriptor> = {}): StreamDescriptor {
+  const row = dashDescriptor();
+  return dashDescriptor({
+    variants: row.variants.map(variant => ({ ...variant, segmentRef: { kind: "dash-segments", initUrl: "", mediaUrls: [] } })),
+    ...overrides,
+  });
+}
+
+/** A clear DASH row with no audio declared: `dashDescriptor()`. It is saved with its picture alone. */
 export function dashDescriptor(
   overrides: Partial<StreamDescriptor> = {},
 ): StreamDescriptor {
@@ -108,7 +121,6 @@ export function dashDescriptor(
     capabilities: {
       directDownload: false,
       remuxableTo: [],
-      drmBlocked: false,
     },
     confidence: { protocol: "confirmed", container: "probable", codecs: "probable" },
     ...overrides,
@@ -127,7 +139,6 @@ export function drmDescriptor(reason: DrmReason = "cdm_required"): StreamDescrip
     capabilities: {
       directDownload: false,
       remuxableTo: [],
-      drmBlocked: true,
     },
   };
 }

@@ -23,9 +23,10 @@ const SCENES: readonly Scene[] = [
     id: "01-direct-video",
     caption: "Save a verified direct video",
     sub: "Only complete, browser-visible media is offered for download.",
+    // One direct file, with the size its server declared, so the card shows what the caption says.
     descriptors: [
-      directDescriptor({ title: "lecture-recording.mp4" }),
-      hlsDescriptor({ title: "stream.m3u8" }),
+      directDescriptor({ title: "lecture-recording.mp4", source: { kind: "direct-url", url: "https://example.com/lecture-recording.mp4",
+        headers: { "content-length": "257425408" } } }),
     ],
   },
   {
@@ -42,7 +43,7 @@ const SCENES: readonly Scene[] = [
     // Clear DASH and AES-128 HLS with a key in the clear are saved now, so
     // this scene must not show a refused DASH item or say "encrypted" as if
     // every encrypted stream were refused.
-    sub: "DRM and live streams are detected and refused, never saved as a broken file.",
+    sub: "DRM and live streams are recognised and refused, never saved as a broken file.",
     descriptors: [
       { ...drmDescriptor("cdm_required"), title: "premiere.mpd" },
     ],

@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   define: {
     __BROWSER__: JSON.stringify("chromium"),
+    __STORE_BUILD__: JSON.stringify(false),
   },
   test: {
     globals: true,

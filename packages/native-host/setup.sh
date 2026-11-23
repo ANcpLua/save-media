@@ -22,10 +22,12 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 mkdir -p "$TARGET"
-for f in file_transport.py host.py install.sh; do
+for f in host.py install.sh; do
   curl -fsSL "$BASE_URL/$f" -o "$TARGET/$f.tmp"
   mv "$TARGET/$f.tmp" "$TARGET/$f"
 done
+# Earlier helpers also shipped a separate file transport. Nothing uses it now.
+rm -f "$TARGET/file_transport.py" "$TARGET/published_source.py"
 chmod +x "$TARGET/host.py" "$TARGET/install.sh"
 
 echo "Helper files in: $TARGET"

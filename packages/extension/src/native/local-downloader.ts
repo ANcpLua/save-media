@@ -1,5 +1,5 @@
 import type { JobError } from "@savemedia/core";
-import type { HostPong } from "../types/native";
+import { helperOutdated, type HostPong } from "../types/native";
 import type { LocalJobView, LocalSettingsValue } from "../types/messages";
 import type { NativeHostClient } from "./host-client";
 import {
@@ -7,34 +7,30 @@ import {
   resolveCookieBrowser,
   saveLocalSettings,
   type LocalDownloaderSettings,
+  type BrowserIdentity,
   type StorageLike,
 } from "./settings";
 
 /**
- * Engine failures that a local yt-dlp run may legitimately handle better:
- * the browser engine is limited by CORS, memory, and the set of containers
- * it can remux. None of these involve protected media.
+ * Failures a local yt-dlp run may handle better than the browser, which is
+ * limited by memory and by the containers it can put together. None of them
+ * involves protected media.
  *
- * Deliberately an allowlist. Every DRM code (encrypted_media_detected,
- * cdm_required, license_bound_stream, clearkey_deferred,
- * clear_segments_unavailable) is absent: a local run must never be the
- * answer to "the media is protected".
+ * Deliberately an allowlist. Every protection code (encrypted_media_detected,
+ * cdm_required, license_bound_stream, clearkey_deferred) is absent: a local
+ * run is never the answer to "the media is protected".
  */
 export const DELEGABLE_ERROR_CODES: ReadonlySet<JobError["code"]> = new Set<JobError["code"]>([
   "dash_unsupported",
+  "codec_unsupported",
   "hls_encryption_unsupported",
   "hls_layout_unsupported",
   "output_too_large_for_browser",
   "unsupported_output",
-  "no_remux_path",
-  "unsupported_codec",
   "manifest_malformed",
-  "missing_video_track",
-  "no_variant_meets_minimum",
-  "cors_blocked",
-  "mixed_content_blocked",
-  "engine_oom",
   "engine_job_failed",
+  // A server that did not let the browser finish a direct file.
+  "transfer_failed",
   "verification_container",
 ]);
 
@@ -50,8 +46,9 @@ export interface LocalDownloaderDeps {
   readonly client: NativeHostClient;
   readonly storage: StorageLike;
   readonly permissions: PermissionsLike;
-  readonly env: { readonly browser: "chromium" | "firefox"; readonly userAgent: string };
-  readonly onJobUpdate: (job: LocalJobView) => void;
+  readonly env: BrowserIdentity;
+  /** `origin`: who asked for the job. Alt+S owes its tab a toast when the job ends; the popup shows its own jobs. */
+  readonly onJobUpdate: (job: LocalJobView, origin: "hotkey" | "popup") => void;
   readonly newId?: () => string;
 }
 
@@ -66,7 +63,7 @@ export interface LocalDownloader {
   /** Persist a settings patch. Enabling without the permission stays off; the popup requests it. */
   readonly updateSettings: (patch: Partial<LocalSettingsValue>) => Promise<LocalDownloaderSettings>;
   readonly status: () => Promise<LocalStatus>;
-  /** Start a download for a page URL. Returns the job view (phase "probing") or null when disabled. */
+  /** Start a download for a page URL. Returns the job view (phase "probing"), or null when disabled or when the helper is outdated. */
   readonly start: (pageUrl: string, tabId: number | null) => Promise<LocalJobView | null>;
   /** Hotkey fallback: only when enabled and the user opted into fallback. */
   readonly startFallback: (pageUrl: string, tabId: number | null) => Promise<LocalJobView | null>;
@@ -80,13 +77,16 @@ const PONG_CACHE_MS = 30_000;
 export function createLocalDownloader(deps: LocalDownloaderDeps): LocalDownloader {
   const jobs = new Map<string, LocalJobView>();
   const cancels = new Map<string, () => void>();
+  /** The jobs Alt+S started, or joined while they ran. */
+  const byHotkey = new Set<string>();
   const newId = deps.newId ?? (() => `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
 
   let pongCache: { readonly at: number; readonly value: HostPong } | null = null;
 
   function update(job: LocalJobView): void {
     jobs.set(job.id, job);
-    deps.onJobUpdate(job);
+    deps.onJobUpdate(job, byHotkey.has(job.id) ? "hotkey" : "popup");
+    if (job.phase === "complete" || job.phase === "failed") byHotkey.delete(job.id);
     pruneFinished();
   }
 
@@ -117,12 +117,23 @@ export function createLocalDownloader(deps: LocalDownloaderDeps): LocalDownloade
     return saveLocalSettings(deps.storage, enabled === undefined ? patch : { ...patch, enabled });
   }
 
-  async function start(pageUrl: string, tabId: number | null): Promise<LocalJobView | null> {
+  async function start(pageUrl: string, tabId: number | null, fallback = false): Promise<LocalJobView | null> {
     const settings = await loadLocalSettings(deps.storage);
-    if (!settings.enabled || !(await hasPermission())) return null;
+    if (!settings.enabled || (fallback && !settings.fallbackOnHotkey) || !(await hasPermission())) return null;
     if (!/^https?:\/\//i.test(pageUrl)) return null;
+    // A helper that speaks an earlier protocol is not used: the popup asks the user to update it.
+    // A helper that does not answer is left to the download itself, whose failure says so.
+    const helper = await ping();
+    if (helper && helperOutdated(helper)) return null;
+    const active = [...jobs.values()].find(job => job.tabId === tabId && job.pageUrl === pageUrl
+      && job.phase !== "complete" && job.phase !== "failed");
+    if (active) {
+      if (fallback) byHotkey.add(active.id);
+      return active;
+    }
 
     const id = newId();
+    if (fallback) byHotkey.add(id);
     const initial: LocalJobView = {
       id, pageUrl, tabId,
       phase: "probing",
@@ -137,6 +148,7 @@ export function createLocalDownloader(deps: LocalDownloaderDeps): LocalDownloade
         pageUrl,
         quality: settings.quality,
         cookiesFromBrowser: resolveCookieBrowser(settings.cookies, deps.env),
+        allowWithoutCookies: settings.cookies === "auto",
         outputDir: null,
       },
       {
@@ -155,19 +167,13 @@ export function createLocalDownloader(deps: LocalDownloaderDeps): LocalDownloade
         },
         onFailed: f => {
           cancels.delete(id);
-          update({ ...(jobs.get(id) ?? initial), phase: "failed", failure: { code: f.code, message: f.message } });
+          update({ ...(jobs.get(id) ?? initial), phase: "failed", failure: { code: f.code, message: f.message, httpStatus: f.httpStatus ?? null } });
         },
       },
     );
     const current = jobs.get(id);
     if (current && current.phase !== "complete" && current.phase !== "failed") cancels.set(id, cancel);
     return initial;
-  }
-
-  async function startFallback(pageUrl: string, tabId: number | null): Promise<LocalJobView | null> {
-    const settings = await loadLocalSettings(deps.storage);
-    if (!settings.enabled || !settings.fallbackOnHotkey) return null;
-    return start(pageUrl, tabId);
   }
 
   return {
@@ -182,7 +188,7 @@ export function createLocalDownloader(deps: LocalDownloaderDeps): LocalDownloade
       };
     },
     start,
-    startFallback,
+    startFallback: (pageUrl, tabId) => start(pageUrl, tabId, true),
     cancel: id => cancels.get(id)?.(),
   };
 }

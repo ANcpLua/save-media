@@ -46,6 +46,7 @@ export function detectContainerFromBytes(bytes: Uint8Array): Container {
 
 const MIME_MAP: Record<string, Container> = {
   "video/mp4": "mp4",
+  "video/x-m4v": "mp4",
   "video/quicktime": "mov",
   "video/webm": "webm",
   "video/x-matroska": "mkv",

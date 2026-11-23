@@ -77,10 +77,11 @@ describe("suggestFilename", () => {
     expect(suggestFilename({ title: " ", pageUrl: "not-a-url" })).toBe("video.mp4");
   });
 
-  it("reads plus signs as spaces when a title has no spaces at all", () => {
-    expect(suggestFilename({ title: "Erin+Everheart+-+Talk", pageUrl: "https://x.com/" })).toBe("Erin Everheart - Talk.mp4");
+  it("keeps plus signs as they are: a plus in a name is a plus, never a guess at an encoded space", () => {
+    expect(suggestFilename({ title: "Erin+Everheart+-+Talk", pageUrl: "https://x.com/" })).toBe("Erin+Everheart+-+Talk.mp4");
     expect(suggestFilename({ title: "C++ intro", pageUrl: "https://x.com/" })).toBe("C++ intro.mp4");
-    expect(suggestFilename({ title: null, pageUrl: "https://cdn.example/v/My+Clip+2026.mp4" })).toBe("My Clip 2026.mp4");
+    expect(suggestFilename({ title: "A+B", pageUrl: "https://x.com/" })).toBe("A+B.mp4");
+    expect(suggestFilename({ title: null, pageUrl: "https://cdn.example/v/My+Clip+2026.mp4" })).toBe("My+Clip+2026.mp4");
   });
 
   it("keeps non-ASCII titles instead of replacing them with underscores", () => {

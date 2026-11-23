@@ -35,6 +35,14 @@ describe("onInstalled update cleanup", () => {
     expect(deps.log).toHaveBeenCalledWith("updated 0.0.7 -> 0.0.8; removed 1 stale storage key(s)");
   });
 
+  it("deletes the removed local file connection opt-in on update", async () => {
+    const settings = { enabled: true, quality: "best", cookies: "auto", fallbackOnHotkey: true };
+    const { data, deps } = build({ desktopFileConnection: true, [LOCAL_SETTINGS_KEY]: settings }, true);
+    await handleInstalled({ reason: "update", previousVersion: "1.0.4" }, deps, "1.0.5");
+    expect(deps.storage.remove).toHaveBeenCalledWith(["desktopFileConnection"]);
+    expect(data).toEqual({ [LOCAL_SETTINGS_KEY]: settings });
+  });
+
   it("re-parses the local downloader settings so unknown fields go and defaults fill in", async () => {
     const { data, deps } = build({ [LOCAL_SETTINGS_KEY]: { enabled: true, quality: "4k", obsolete: "x" } }, true);
     await handleInstalled({ reason: "update" }, deps, "0.0.8");

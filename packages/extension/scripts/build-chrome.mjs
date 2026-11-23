@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const buildDir = resolve(root, "dist-build");
 // Unpacked previews carry a stable, public extension identity so moving the
-// folder keeps the desktop connection's user-scoped Chrome registration.
+// folder keeps the local downloader helper's user-scoped Chrome registration.
 const preview = process.argv.includes("--preview");
 const out = resolve(root, preview ? "dist-preview" : "dist-chrome");
 

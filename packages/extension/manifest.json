@@ -2,13 +2,15 @@
   "manifest_version": 3,
   "name": "savemedia",
   "version": "1.0.5",
-  "description": "Video downloader for verified direct files and unprotected HLS and DASH.",
+  "description": "Saves videos and images that are not DRM encrypted, as your browser receives them, and checks each file it downloads itself.",
   "minimum_chrome_version": "114",
+  "incognito": "not_allowed",
   "permissions": [
     "downloads",
     "tabs",
     "offscreen",
     "webRequest",
+    "webNavigation",
     "declarativeNetRequestWithHostAccess",
     "storage"
   ],
@@ -35,7 +37,8 @@
       ],
       "run_at": "document_start",
       "world": "MAIN",
-      "all_frames": true
+      "all_frames": true,
+      "match_origin_as_fallback": true
     },
     {
       "matches": [
@@ -46,7 +49,8 @@
       ],
       "run_at": "document_start",
       "world": "ISOLATED",
-      "all_frames": true
+      "all_frames": true,
+      "match_origin_as_fallback": true
     }
   ],
   "action": {
@@ -65,19 +69,9 @@
         "default": "Alt+S",
         "mac": "Alt+S"
       },
-      "description": "Download highest available media quality"
+      "description": "Save the video or image under the pointer, or the main video of the page"
     }
   },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "content-main.js"
-      ],
-      "matches": [
-        "<all_urls>"
-      ]
-    }
-  ],
   "optional_permissions": [
     "nativeMessaging"
   ]

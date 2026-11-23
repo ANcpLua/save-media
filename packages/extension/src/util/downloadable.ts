@@ -15,7 +15,7 @@ export function downloadOptions(descriptor: StreamDescriptor): readonly Download
   const known = choices.get(descriptor);
   if (known) return known;
   const options: DownloadOption[] = [];
-  if (!descriptor.drm && !descriptor.capabilities.drmBlocked) {
+  if (!descriptor.drm) {
     const filename = suggestFilename(descriptor);
     const variants = [...descriptor.variants].sort(compareVideoQuality);
     const audios = descriptor.protocol === "dash"

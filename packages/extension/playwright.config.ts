@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extensionBrowser, extensionDist } from "./tests/e2e/extension-browser";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -37,10 +38,10 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         launchOptions: {
           args: [
-            `--disable-extensions-except=${resolve(here, "dist-chrome")}`,
-            `--load-extension=${resolve(here, "dist-chrome")}`,
+            `--disable-extensions-except=${extensionDist}`,
+            `--load-extension=${extensionDist}`,
           ],
-          headless: false, // Chrome requires a headed window to load MV3 extensions
+          ...extensionBrowser,
         },
       },
     },
@@ -49,6 +50,13 @@ export default defineConfig({
       testMatch: /fixtures\.spec\.ts/,
       use: {
         ...devices["Desktop Firefox"],
+        launchOptions: {
+          env: {
+            ...process.env,
+            MOZ_APP_DATA: resolve(here, "test-results/e2e-artifacts/firefox-app-data"),
+            MOZ_LOCAL_APP_DATA: resolve(here, "test-results/e2e-artifacts/firefox-app-cache"),
+          },
+        },
         // Firefox extension runtime coverage lives in scripts/smoke-firefox.mjs.
         // This Playwright project is fixture-server coverage only and must not
         // be counted as Firefox extension support evidence.

@@ -71,7 +71,7 @@ describe("clear DASH with SegmentTemplate video+audio", () => {
       ? parsed.videoVariants[0]!.segmentRef.initUrl
       : null);
     expect(plan.video.segmentUrls.length).toBeGreaterThan(0);
-    expect(plan.audio.segmentUrls.length).toBeGreaterThan(0);
+    expect(plan.audio?.segmentUrls.length).toBeGreaterThan(0);
     expect(plan.outputContainer).toBe("mp4");
   });
 });

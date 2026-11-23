@@ -7,15 +7,19 @@ import type {
   ConfidenceLevel,
   OutputCapabilities,
   DrmStatus,
+  OutputContainer,
+  Presentation,
   StreamSource,
 } from "../types/stream";
-import type { CodecSet, SegmentRef, Variant } from "../types/codec";
+import type { CodecSet, HlsEncryption, SegmentRef, Variant } from "../types/codec";
 import { classifyByUrl } from "./layer-url";
 import { classifyByHeaders } from "./layer-headers";
 import { classifyByMagicBytes } from "./layer-magic-bytes";
 import { parseHlsMaster, parseHlsMediaPlaylist } from "../parser/hls/adapter";
-import { interpretHlsEncryption } from "../parser/hls/encryption";
+import { hlsEncryptionOf, hlsKeyDrm, planHlsKeys } from "../parser/hls/keys";
 import { parseDash } from "../parser/dash/adapter";
+import { checkManifestSize } from "../parser/limits";
+import { isJobError } from "../errors/taxonomy";
 
 export interface ClassifyInput {
   readonly tabId: number;
@@ -24,6 +28,15 @@ export interface ClassifyInput {
   readonly headers: Readonly<Record<string, string>>;
   readonly bodyBytes: Uint8Array | null;
   readonly manifestText: string | null;
+  /** Base for relative playlist references after a redirect. The source keeps its entry URL. */
+  readonly manifestBaseUrl?: string;
+  /**
+   * The kind of file the caller found `bodyBytes` to be, when it read more
+   * than the brand in the first box. A fragmented MP4 under a DASH or CMAF
+   * brand whose movie box is followed by media is one playable MP4 file, not
+   * a segment: its brand alone does not say which.
+   */
+  readonly fileContainer?: OutputContainer;
 }
 
 let _idCounter = 0;
@@ -52,7 +65,7 @@ function mergeConfidence(a: Confidence, b: Confidence): Confidence {
 }
 
 // Direct-download containers are standalone files, not manifests.
-const PROGRESSIVE_CONTAINERS = new Set<Container>(["mp4", "mov", "webm", "mkv"]);
+const PROGRESSIVE_CONTAINERS = new Set<Container>(["mp4", "mov", "webm", "mkv", "mpegts"]);
 
 function resolveProtocol(
   fromLayers: ProtocolFamily,
@@ -86,15 +99,14 @@ function computeCapabilities(
   _variants: readonly Variant[],
   drm: DrmStatus,
 ): OutputCapabilities {
-  const drmBlocked = drm !== null;
+  const protectedMedia = drm !== null;
   return {
     directDownload:
-      !drmBlocked
+      !protectedMedia
       && protocol === "progressive-http"
       && PROGRESSIVE_CONTAINERS.has(container)
       && confidence.container !== "guessed",
-    remuxableTo: drmBlocked || protocol !== "hls" ? [] : remuxableTargets(container),
-    drmBlocked,
+    remuxableTo: protectedMedia || protocol !== "hls" ? [] : remuxableTargets(container),
   };
 }
 
@@ -122,7 +134,7 @@ function hlsContainerFromSegments(segmentRef: SegmentRef): Container {
 function mediaPlaylistVariant(
   url: string,
   media: ReturnType<typeof parseHlsMediaPlaylist>,
-  encryption: ReturnType<typeof interpretHlsEncryption>["encryption"],
+  encryption: HlsEncryption | null,
 ): Variant {
   return {
     id: `${url}#media` as Variant["id"],
@@ -160,37 +172,52 @@ export async function classify(input: ClassifyInput): Promise<StreamDescriptor> 
   let drm: DrmStatus = null;
   const codecs: CodecSet = { video: null, audio: null, subtitles: [] };
   let hlsManifestType: "master" | "media" = "master";
+  let presentation: Presentation | undefined;
 
   // Layer 3: manifest parse
+  const manifestBase = input.manifestBaseUrl ?? input.url;
+  if ((protocol === "hls" || protocol === "dash") && input.manifestText) checkManifestSize(protocol, input.manifestText, input.url);
   if (protocol === "hls" && input.manifestText) {
-    const r = parseHlsMaster(input.manifestText, input.url);
+    const r = parseHlsMaster(input.manifestText, manifestBase);
     variants = [...r.variants];
     audioRenditions = [...r.audioRenditions];
     confidence = { ...confidence, protocol: "confirmed" };
 
-    // Only attempt media-playlist encryption scan when there are no variant
-    // playlists (i.e. the text is itself a media playlist, not a master).
+    // A master declares its keys up front in EXT-X-SESSION-KEY; a media
+    // playlist (no variant playlists) declares them in EXT-X-KEY. Both are
+    // judged by planHlsKeys, over every declaration, not just the first.
+    drm = hlsKeyDrm(planHlsKeys(r.sessionKeys));
     if (variants.length === 0) {
       try {
-        const media = parseHlsMediaPlaylist(input.manifestText, input.url);
-        const enc = interpretHlsEncryption(media.encryption);
-        if (enc.drm) drm = enc.drm;
+        const media = parseHlsMediaPlaylist(input.manifestText, manifestBase);
+        const keys = planHlsKeys(media.keyDeclarations);
+        drm = hlsKeyDrm(keys);
         hlsManifestType = "media";
-        const variant = mediaPlaylistVariant(input.url, media, enc.encryption);
+        // A playlist without EXT-X-ENDLIST is still being written, EVENT playlists included.
+        const longest = media.segments.reduce((most, segment) => Math.max(most, segment.duration || 0), 0);
+        presentation = {
+          live: !media.isVod,
+          durationSeconds: media.segments.reduce((sum, segment) => sum + (segment.duration || 0), 0),
+          maxSegmentSeconds: media.targetDuration ?? (longest > 0 ? longest : null),
+        };
+        const variant = mediaPlaylistVariant(input.url, media, keys.kind === "aes-128" ? hlsEncryptionOf(media.keyDeclarations) : null);
         variants = [variant];
         container = hlsContainerFromSegments(variant.segmentRef);
         if (container !== "unknown") {
           confidence = { ...confidence, container: "probable" };
         }
-      } catch {
+      } catch (error) {
+        // A playlist that resolves to more than is read is refused, not skipped.
+        if (isJobError(error)) throw error;
         // Not a media playlist; skip.
       }
     }
   } else if (protocol === "dash" && input.manifestText) {
-    const r = parseDash(input.manifestText, input.url);
+    const r = parseDash(input.manifestText, manifestBase);
     variants = [...r.videoVariants];
     audioRenditions = [...r.audioRenditions];
     drm = r.drm;
+    presentation = r.presentation;
     confidence = { ...confidence, protocol: "confirmed" };
   }
 
@@ -198,7 +225,7 @@ export async function classify(input: ClassifyInput): Promise<StreamDescriptor> 
   if (input.bodyBytes && input.bodyBytes.length > 0) {
     const l4 = classifyByMagicBytes(input.bodyBytes);
     if (l4.container !== "unknown") {
-      container = l4.container;
+      container = input.fileContainer ?? l4.container;
       confidence = mergeConfidence(confidence, l4.confidence);
     }
   }
@@ -227,5 +254,6 @@ export async function classify(input: ClassifyInput): Promise<StreamDescriptor> 
     drm,
     capabilities,
     confidence,
+    ...(presentation ? { presentation } : {}),
   };
 }

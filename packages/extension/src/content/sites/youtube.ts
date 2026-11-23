@@ -1,8 +1,9 @@
 import type { ResolvedMedia, SiteResolver } from "./types";
 import { isRecord } from "./json";
 
-// YouTube ships in unlisted/personal builds only (Chrome Web Store prohibits
-// YouTube-download extensions); see the standing decision in .claude/TASK.md.
+// Builds made from source only: store packages leave this reader out
+// (registry.ts, SAVEMEDIA_STORE_BUILD), because the Chrome Web Store does not
+// accept extensions that save from this site.
 //
 // Page hosts this resolver owns. NOT the media CDN (googlevideo.com).
 const OWNED_HOST = /(^|\.)(youtube\.com|youtube-nocookie\.com)$/i;

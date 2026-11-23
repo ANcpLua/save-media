@@ -1,82 +1,76 @@
 # Store listing
 
-Kept in the repo so the published copy has a reviewed source, and so the rules
-in `docs/boundary-rules.md` apply to the listing the same way they apply to the
-code.
+Kept in the repo so the published copy has a reviewed source, and so the
+policy in `docs/boundary-rules.md` applies to the listing the same way it
+applies to the code.
 
-Two traps this text must keep avoiding:
+Three traps this text must keep avoiding:
 
-- **R4, forbidden wording.** No "bypass", "unlock", or "circumvent", not even
-  while saying the extension refuses to do it. The live AMO copy carried
-  "paywalls, login bypass" in its *Not supported* line until 2026-09-12. The
-  intent was right and the phrasing was exactly what the rule forbids.
+- **Forbidden wording.** The three words `store-publish lint` rejects (see
+  `DEFAULT_FORBIDDEN` in the tool) must not appear, not even while saying the
+  extension does not do it. An earlier AMO copy carried one of them in its
+  *Not supported* line until 2026-09-12.
 - **Keyword spam.** The Chrome Web Store rejects bare runs of format names as
-  keyword bait, and rejected Video Transcript for it in August. Formats belong
-  in a sentence that says what they are for, never in a comma-separated row.
+  keyword bait. Formats belong in a sentence that says what they are for,
+  never in a comma-separated row.
+- **Claim only what a test covers.** Every capability sentence below maps to
+  an end-to-end test in `packages/extension/tests/e2e` that saves the fixture
+  and lets `ffprobe` read the result. No "any site" and no "all videos".
+
+The text says what the extension does. It names no site and no brand.
 
 ## Chrome and Edge description
 
-Both dashboards take this text by hand, neither store has an API for listing
-text. Entered in both on 2026-09-12 together with the corrected single purpose
-statement and privacy policy URL (the URL had a typo in the account name).
-Applied with the dashboards, not with a script.
+Both dashboards take this text by hand: neither store has an API for listing
+text. Paste it into both when it changes.
 
-Third trap, added 2026-09-12: **claim only what a test covers.** A draft read
-"supports unencrypted HLS and DASH streams" while clear DASH had no end-to-end
-proof and AES-128 was refused outright. Both are now real and tested, so the
-sentence is allowed, but the rule stands: every capability sentence below maps
-to a test in `tests/e2e/classification.spec.ts` that downloads the fixture and
-lets `ffprobe` read the result.
+savemedia saves the videos and images your browser receives while you watch
+and browse, when they are not DRM encrypted. Every file savemedia downloads
+itself is checked before it reaches your Downloads folder, so web pages and
+broken files are not saved as video. When your browser already holds an
+interrupted download of the same file, savemedia lets the browser finish it.
+savemedia cannot read that file, so its content is not checked.
 
-savemedia saves the video you are watching as an MP4, WebM or MKV file in
-your Downloads folder, when the browser already receives it unprotected. DRM,
-streams whose key only the player's protected module can unwrap, live streams
-and anything behind a paywall or sign-in are refused, and it never leaves a
-half-downloaded file behind.
+Press Alt+S to save the video or image under the pointer, or the page's main
+video. Open the popup to see what the page offers, with quality and expected
+size. When something can't be saved, savemedia explains why in plain words.
 
-Press Alt+S to save the best supported video on the current page, or open the
-popup to pick from everything detected. The popup shows for each item whether
-savemedia can save it, and why not when it cannot.
+It saves direct video files, HLS streams and DASH streams with separate video
+and audio, joined into one MP4 file. Standard HLS AES-128 encryption is
+decrypted with the key the player receives. Not supported: live streams and
+DRM-protected media.
 
-Supported: direct MP4, WebM, and MKV files verified by headers or bytes; plain
-HLS VOD with MPEG-TS segments remuxed locally to MP4; clear HLS fMP4/CMAF
-streams assembled locally after MP4 box validation; AES-128 HLS when the
-server hands the key to the page in the clear, decrypted locally with the
-browser's own WebCrypto; and complete DASH presentations that carry a video
-and an audio track without protection, merged locally into one MP4.
+An optional Local downloader can hand a page to yt-dlp and ffmpeg that you
+install yourself. They make their own requests and write their own file.
 
-Not supported: live or still-growing presentations, DASH that addresses its
-media by byte ranges, and any stream whose key is held by a protected media
-module. When something cannot be saved, the popup says so instead of writing a
-broken file.
-
-Everything runs locally in the browser. No telemetry, ads, accounts, or
-developer-operated server.
+Everything else runs in your browser. No account, no ads, no telemetry, no
+developer server. Save only what you have the right to keep.
 
 ## Chrome and Edge summary
 
-Video downloader for verified direct files and unprotected HLS and DASH.
+Saves videos and images that are not DRM encrypted, and checks each file it downloads itself before it reaches Downloads.
 
 ## AMO description
 
-savemedia saves the video you are watching as an MP4, WebM or MKV file in
-your Downloads folder, when the browser already receives it unprotected. DRM,
-streams whose key only the player's protected module can unwrap, live streams
-and anything behind a paywall or sign-in are refused, and it never leaves a
-half-downloaded file behind.
+savemedia saves the videos and images your browser receives while you watch
+and browse, when they are not DRM encrypted. Every file savemedia downloads
+itself is checked before it reaches your Downloads folder.
 
-Supported: direct MP4, WebM, and MKV files; plain HLS VOD with MPEG-TS
-segments; clear HLS fMP4/CMAF streams; AES-128 HLS when the key is served to
-the page in the clear; complete unprotected DASH with a video and an audio
-track, merged into one MP4.
+Press Alt+S to save the video or image under the pointer, or the page's main
+video. The popup shows what the page offers, with quality and expected size,
+and explains in plain words when something can't be saved.
 
-Not supported: live or still-growing presentations, DASH addressed by byte
-ranges, and any stream whose key is held by a protected media module. When
-something cannot be saved, the popup says so instead of writing a broken file.
+It saves direct video files, HLS streams and DASH streams with separate video
+and audio, joined into one MP4 file. Standard HLS AES-128 encryption is
+decrypted with the key the player receives. Not supported: live streams and
+DRM-protected media.
 
-Everything runs locally in the browser. No telemetry, ads, accounts, or
-developer-operated server.
+An optional Local downloader can hand a page to yt-dlp and ffmpeg that you
+install yourself. They make their own requests and write their own file.
+
+Everything else runs in your browser. No account, no ads, no telemetry, no
+developer server. Save only what you have the right to keep.
 
 ## AMO summary
 
-Save verified direct video files and unprotected HLS and DASH streams.
+Saves videos and images that are not DRM encrypted, and checks each file it downloads itself before it reaches Downloads.

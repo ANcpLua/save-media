@@ -58,6 +58,12 @@ jobs:
     name: E2E (Playwright ${{ matrix.project }})
     needs: build-extension
     runs-on: ubuntu-latest
+    env:
+      # Pinned on purpose: the release asset and its SHA-256 from the release's SHA2-256SUMS file.
+      # Bump both values together after reading the release notes. The helper's yt-dlp tests and the
+      # smoke test use only local fixtures, so the pin cannot drift with any site.
+      YT_DLP_VERSION: "2026.10.26"
+      YT_DLP_SHA256: "e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3"
     strategy:
       fail-fast: false
       matrix:
@@ -81,11 +87,33 @@ jobs:
         working-directory: packages/extension
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: bun run --filter @savemedia/extension build:chrome
-      # Loading the unpacked MV3 extension via --load-extension requires
-      # `headless: false`, which on Linux CI needs an X display. xvfb is
-      # pre-installed on ubuntu-latest; the -a flag picks a free DISPLAY.
-      - run: xvfb-run -a bunx playwright test --project=${{ matrix.project }}
+      # Playwright's Chromium loads the unpacked extension in headless mode
+      # (tests/e2e/extension-browser.ts), so no display is needed.
+      - run: bunx playwright test --project=${{ matrix.project }}
         working-directory: packages/extension
+      - name: Install the pinned yt-dlp
+        if: matrix.project == 'chromium'
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/yt-dlp" "https://github.com/yt-dlp/yt-dlp/releases/download/$YT_DLP_VERSION/yt-dlp"
+          echo "$YT_DLP_SHA256  $RUNNER_TEMP/yt-dlp" | sha256sum -c -
+          install -D -m 0755 "$RUNNER_TEMP/yt-dlp" "$HOME/.local/bin/yt-dlp"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # The helper's own tests of what it reads from yt-dlp (protection in the format data, the archive
+      # hit, the last error line) run in the unit job without yt-dlp and are skipped there. Here they
+      # run against the pin, and a missing tool fails them.
+      - name: Check the helper against the pinned yt-dlp
+        if: matrix.project == 'chromium'
+        env:
+          SAVEMEDIA_REQUIRE_YTDLP: "1"
+        run: |
+          yt-dlp --version
+          python3 -m unittest -v test_host.RealYtDlpTest
+        working-directory: packages/native-host
+      - name: Check the local downloader with an empty browser profile
+        if: matrix.project == 'chromium'
+        run: |
+          yt-dlp --version
+          node packages/extension/scripts/smoke-native.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

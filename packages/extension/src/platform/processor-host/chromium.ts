@@ -1,50 +1,41 @@
 /**
- * Chromium offscreen-document engine host bootstrap.
+ * Chromium's engine document: an offscreen document.
  *
- * Chromium MV3 service workers cannot hold a Web Worker, DOM, or Blob URLs
- * across restarts. We create an offscreen document the first time an engine
- * job needs to run; the offscreen page loads the engine runner module which
- * registers its own runtime.onMessage listener.
+ * An MV3 service worker has no DOM and cannot keep Blob URLs alive across
+ * its restarts, so the engine runs in an offscreen document that is created
+ * for the first job and closed when the engine is idle. These are only the
+ * three primitives; when they run, and in which order, is the engine
+ * channel's decision (background/engine-channel.ts).
  */
 
 const OFFSCREEN_DOCUMENT_PATH = "src/engine/offscreen.html";
 
-let creating: Promise<void> | null = null;
-
 interface OffscreenContext { readonly documentUrl?: string }
-type GetContextsFn = (filter: {
-  contextTypes: string[];
-  documentUrls?: string[];
-}) => Promise<OffscreenContext[]>;
+type GetContextsFn = (filter: { contextTypes: string[]; documentUrls?: string[] }) => Promise<OffscreenContext[]>;
+interface WindowClients { matchAll(options: { type: "window"; includeUncontrolled: boolean }): Promise<readonly { readonly url: string }[]> }
 
-export async function ensureEngineHost(): Promise<void> {
+export async function engineDocumentExists(): Promise<boolean> {
   const url = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
   const getContexts = (chrome.runtime as unknown as { getContexts?: GetContextsFn }).getContexts;
-  if (getContexts) {
-    const contexts = await getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [url] });
-    if (contexts.length > 0) return;
-  }
-
-  if (creating) {
-    await creating;
-    return;
-  }
-  creating = chrome.offscreen.createDocument({
-    url: OFFSCREEN_DOCUMENT_PATH,
-    reasons: ["BLOBS", "DOM_SCRAPING"] as chrome.offscreen.Reason[],
-    justification: "Reads the original address from a site's download page and verifies media before saving it.",
-  });
-  try {
-    await creating;
-  } finally {
-    creating = null;
-  }
+  if (getContexts) return (await getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [url] })).length > 0;
+  // Chrome 114 and 115 have no runtime.getContexts. The offscreen document is a window client of the extension's origin.
+  const clients = (globalThis as unknown as { clients?: WindowClients }).clients;
+  if (!clients) return false;
+  return (await clients.matchAll({ type: "window", includeUncontrolled: true })).some(client => client.url === url);
 }
 
-export async function closeEngineHost(): Promise<void> {
+export async function createEngineDocument(): Promise<void> {
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_DOCUMENT_PATH,
+    reasons: ["BLOBS" as chrome.offscreen.Reason],
+    justification: "Verifies browser-side media downloads and creates Blob URLs.",
+  });
+}
+
+export async function closeEngineDocument(): Promise<void> {
   try {
     await chrome.offscreen.closeDocument();
   } catch {
-    // No active offscreen document.
+    // No offscreen document is open.
   }
 }

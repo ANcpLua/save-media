@@ -1,7 +1,8 @@
 import { Parser } from "m3u8-parser";
 import type { Variant, VariantId, AudioRenditionId } from "../../types/codec";
 import { parseVideoCodec, parseAudioCodec } from "../../classifier/codec-registry";
-import { parseHlsKeyDeclarations, type HlsKeyDeclaration } from "./keys";
+import { parseHlsKeyDeclarations, parseHlsSessionKeys, type HlsKeyDeclaration } from "./keys";
+import { addressBudget } from "../limits";
 
 export interface HlsMasterParseResult {
   readonly variants: readonly Variant[];
@@ -11,21 +12,20 @@ export interface HlsMasterParseResult {
    * (segmentRef.playlistUrl); see StreamDescriptor.audioRenditions.
    */
   readonly audioRenditions: readonly Variant[];
-  readonly encryption: null;
+  /** Every EXT-X-SESSION-KEY, judged by the same key policy as EXT-X-KEY. */
+  readonly sessionKeys: readonly HlsKeyDeclaration[];
 }
 
 export interface HlsMediaPlaylistParseResult {
   readonly segments: ReadonlyArray<{ readonly uri: string; readonly duration: number }>;
   readonly initSegmentUrl: string | null;
   readonly isVod: boolean;
-  readonly encryption: {
-    readonly method: string;
-    readonly uri: string;
-    readonly iv: Uint8Array | null;
-    /** KEYFORMAT as written, lowercased; "identity" when the tag omits it. */
-    readonly keyFormat: string;
-  } | null;
-  /** Every EXT-X-KEY in the text, so callers can judge the whole playlist. */
+  /** EXT-X-TARGETDURATION in seconds, when stated. */
+  readonly targetDuration: number | null;
+  /**
+   * Every EXT-X-KEY, read from the text: m3u8-parser drops KEYFORMAT, and
+   * KEYFORMAT separates a key served in the clear from one a CDM holds.
+   */
   readonly keyDeclarations: readonly HlsKeyDeclaration[];
 }
 
@@ -42,19 +42,20 @@ function splitCodecs(codecs: string): [string | null, string | null] {
 function parseAudioGroups(
   mediaGroupsAudio: NonNullable<Parser["manifest"]["mediaGroups"]>["AUDIO"],
   manifestUrl: string,
+  counted: (address: string) => string,
 ): { renditions: readonly Variant[]; chosenByGroup: ReadonlyMap<string, AudioRenditionId> } {
   const renditions: Variant[] = [];
   const chosenByGroup = new Map<string, AudioRenditionId>();
 
   for (const [groupId, group] of Object.entries(mediaGroupsAudio ?? {})) {
-    let chosen: AudioRenditionId | null = null;
-    let chosenIsDefault = false;
-    for (const [name, rend] of Object.entries(group)) {
-      // No URI = the group's audio is muxed into the variant stream itself.
+    const entries = Object.entries(group);
+    // The rendition a player starts with: the one marked DEFAULT, else the first one listed.
+    const played = entries.find(([, rend]) => rend.default === true) ?? entries[0];
+    for (const [name, rend] of entries) {
+      // No URI = this rendition's audio is muxed into the variant stream itself.
       if (!rend.uri) continue;
-      const renditionId = `${groupId}:${name}` as AudioRenditionId;
       renditions.push({
-        id: `${manifestUrl}#audio:${groupId}:${name}` as VariantId,
+        id: counted(`${manifestUrl}#audio:${groupId}:${name}`) as VariantId,
         width: null,
         height: null,
         frameRate: null,
@@ -64,35 +65,36 @@ function parseAudioGroups(
         // EXT-X-MEDIA carries no CODECS; the linked variant's split CODECS
         // already names the audio codec.
         audioCodec: null,
-        audioRenditionId: renditionId,
+        audioRenditionId: `${groupId}:${name}` as AudioRenditionId,
         segmentRef: {
           kind: "hls-segments",
-          playlistUrl: new URL(rend.uri, manifestUrl).href,
+          playlistUrl: counted(new URL(rend.uri, manifestUrl).href),
           initSegmentUrl: null,
           segmentUrls: [],
           encryption: null,
         },
       });
-      const isDefault = rend.default === true;
-      if (chosen === null || (isDefault && !chosenIsDefault)) {
-        chosen = renditionId;
-        chosenIsDefault = isDefault;
-      }
     }
-    if (chosen !== null) chosenByGroup.set(groupId, chosen);
+    // A variant is linked to a rendition only when that is the audio the player plays. When the played
+    // rendition has no URI, its audio is in the variant's own stream, and the variant is saved as it plays:
+    // linking it to another language would replace the audio the viewer hears.
+    if (played?.[1].uri) chosenByGroup.set(groupId, `${groupId}:${played[0]}` as AudioRenditionId);
   }
 
   return { renditions, chosenByGroup };
 }
 
+/** Throws manifest_too_large when the variant and rendition addresses resolve to more text than a manifest may hold. */
 export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMasterParseResult {
   const parser = new Parser();
   parser.push(manifestText);
   parser.end();
 
   const manifest = parser.manifest;
+  // Every variant's id repeats the manifest's address, and every relative name is joined to it.
+  const counted = addressBudget(manifestUrl);
   const { renditions: audioRenditions, chosenByGroup } =
-    parseAudioGroups(manifest.mediaGroups?.AUDIO, manifestUrl);
+    parseAudioGroups(manifest.mediaGroups?.AUDIO, manifestUrl, counted);
   const variants: Variant[] = [];
 
   for (let i = 0; i < (manifest.playlists ?? []).length; i++) {
@@ -103,7 +105,7 @@ export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMa
     const audioGroup = p.attributes?.AUDIO;
 
     variants.push({
-      id: `${manifestUrl}#var${i}` as VariantId,
+      id: counted(`${manifestUrl}#var${i}`) as VariantId,
       width: p.attributes?.RESOLUTION?.width ?? null,
       height: p.attributes?.RESOLUTION?.height ?? null,
       frameRate: p.attributes?.["FRAME-RATE"] ?? null,
@@ -114,7 +116,7 @@ export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMa
       audioRenditionId: audioGroup ? chosenByGroup.get(audioGroup) ?? null : null,
       segmentRef: {
         kind: "hls-segments",
-        playlistUrl: new URL(p.uri, manifestUrl).href,
+        playlistUrl: counted(new URL(p.uri, manifestUrl).href),
         initSegmentUrl: null,
         segmentUrls: [],
         encryption: null,
@@ -122,9 +124,10 @@ export function parseHlsMaster(manifestText: string, manifestUrl: string): HlsMa
     });
   }
 
-  return { variants, audioRenditions, encryption: null };
+  return { variants, audioRenditions, sessionKeys: parseHlsSessionKeys(manifestText, manifestUrl) };
 }
 
+/** Throws manifest_too_large when the segment addresses resolve to more text than a manifest may hold. */
 export function parseHlsMediaPlaylist(manifestText: string, manifestUrl: string): HlsMediaPlaylistParseResult {
   const parser = new Parser();
   parser.push(manifestText);
@@ -133,46 +136,12 @@ export function parseHlsMediaPlaylist(manifestText: string, manifestUrl: string)
   const manifest = parser.manifest;
   const segs = manifest.segments ?? [];
   const firstMap = segs.find(s => s.map?.uri)?.map ?? null;
-
-  // AES-128 key is attached per-segment
-  const segKey = segs.find(s => s.key)?.key;
-
-  // SAMPLE-AES (FairPlay, Widevine) lands in contentProtection instead
-  const cpEntries = manifest.contentProtection
-    ? Object.values(manifest.contentProtection)
-    : [];
-  const cpEntry = cpEntries[0];
-  const contentProtectionKey =
-    cpEntry && cpEntry.attributes.METHOD !== "NONE"
-      ? { method: cpEntry.attributes.METHOD, uri: cpEntry.attributes.URI, iv: null as Uint8Array | null }
-      : null;
-
-  const rawKey = segKey
-    ? { method: segKey.method, uri: segKey.uri, iv: segKey.iv ?? null }
-    : contentProtectionKey;
-
-  // m3u8-parser drops KEYFORMAT, so the tags are read from the text too and
-  // the declaration matching this key supplies it.
-  const declarations = parseHlsKeyDeclarations(manifestText, manifestUrl);
-  const declarationFor = (uri: string) => {
-    const absolute = new URL(uri, manifestUrl).href;
-    return declarations.find(d => d.keyUri === absolute) ?? null;
-  };
-
+  const counted = addressBudget(manifestUrl);
   return {
     initSegmentUrl: firstMap?.uri ? new URL(firstMap.uri, manifestUrl).href : null,
     isVod: manifest.endList === true,
-    segments: segs.map(s => ({ uri: new URL(s.uri, manifestUrl).href, duration: s.duration })),
-    encryption: rawKey
-      ? {
-          method: rawKey.method,
-          uri: new URL(rawKey.uri, manifestUrl).href,
-          // The declaration's IV is parsed from the hex text; m3u8-parser's
-          // is a Uint32Array whose raw bytes are word-reversed.
-          iv: declarationFor(rawKey.uri)?.iv ?? null,
-          keyFormat: declarationFor(rawKey.uri)?.keyFormat ?? "identity",
-        }
-      : null,
-    keyDeclarations: declarations,
+    targetDuration: typeof manifest.targetDuration === "number" && manifest.targetDuration > 0 ? manifest.targetDuration : null,
+    segments: segs.map(s => ({ uri: counted(new URL(s.uri, manifestUrl).href), duration: s.duration })),
+    keyDeclarations: parseHlsKeyDeclarations(manifestText, manifestUrl),
   };
 }

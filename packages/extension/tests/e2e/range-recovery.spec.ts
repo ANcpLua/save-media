@@ -1,11 +1,14 @@
-import { test, expect, chromium, type BrowserContext } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import { createServer } from "node:https";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchExtension, type ExtensionSession } from "./extension-browser";
+import { extensionWorker } from "./extension-worker";
+import { popupFor, saveAndWait, tabIdOf } from "./helpers";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -22,6 +25,7 @@ test(`range-only ${mediaPath} shows server errors and recovers after a truncated
   const video = readFileSync(join(here, "media-fixtures/direct/clip.mp4"));
   let probes = 0;
   let chunks = 0;
+  const chunkStarts: number[] = [];
   let unavailable = true;
   const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }, (req, res) => {
     if (req.url === "/page.html") {
@@ -39,68 +43,46 @@ test(`range-only ${mediaPath} shows server errors and recovers after a truncated
     const start = Number(match[1]);
     const end = Math.min(Number(match[2]), video.length - 1);
     const bytes = video.subarray(start, end + 1);
+    if (isChunk) chunkStarts.push(start);
     res.writeHead(206, {
       "content-type": "video/mp4", "content-range": `bytes ${start}-${end}/${video.length}`,
       "content-length": bytes.length, etag: '"fixture-v1"',
     });
     if (isChunk && ++chunks === 1) {
       res.write(bytes.subarray(0, Math.floor(bytes.length / 2)));
-      setTimeout(() => res.destroy(), 10);
+      setTimeout(() => res.destroy(), 120);
       return;
     }
     res.end(bytes);
   });
-  let context: BrowserContext | undefined;
+  let session: ExtensionSession | undefined;
   try {
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as { port: number }).port;
     const pageUrl = `https://127.0.0.1:${port}/page.html`;
-    const dist = resolve(here, "../../dist-chrome");
-    context = await chromium.launchPersistentContext(join(temporary, "profile"), {
-      headless: false, acceptDownloads: true, downloadsPath: temporary,
-      args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, "--ignore-certificate-errors"],
-    });
-    const worker = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker");
-    const extensionId = new URL(worker.url()).host;
+    session = await launchExtension({ name: "ranges", args: ["--ignore-certificate-errors"] });
+    const context = session.context;
+    const worker = await extensionWorker(context, session.extensionId);
     const page = await context.newPage();
     await page.goto(pageUrl);
-    const popup = await context.newPage();
-    const tabId = await worker.evaluate(async url => (await chrome.tabs.query({})).find(t => t.url === url)?.id, pageUrl);
-    const popupUrl = `chrome-extension://${extensionId}/src/popup/index.html?tabId=${tabId}`;
-    await popup.goto(popupUrl);
-    await expect(popup.getByText("Server is busy or unstable")).toBeVisible();
+    const tabId = await tabIdOf(worker, pageUrl);
+    const popup = await popupFor(session, tabId);
+    await expect(popup.getByTestId("failure-title").filter({ hasText: "The server is busy" })).toBeVisible();
     await expect(popup.getByText("No media detected on this page.")).toHaveCount(0);
     await popup.getByRole("button", { name: "Check page again" }).click();
     await expect(popup.getByRole("button", { name: "Check page again" })).toBeEnabled();
-    await expect(popup.getByText("Server is busy or unstable")).toBeVisible();
+    await expect(popup.getByTestId("failure-title").filter({ hasText: "The server is busy" })).toBeVisible();
     unavailable = false;
     await popup.getByRole("button", { name: "Check page again" }).click();
-    const descriptors = () => popup.evaluate(async url => {
-      const tab = (await chrome.tabs.query({})).find(t => t.url === url);
-      const result = await chrome.runtime.sendMessage({ type: "list", tabId: tab?.id });
+    const descriptors = () => popup.evaluate(async id => {
+      const result = await chrome.runtime.sendMessage({ type: "list", tabId: id });
       return result.descriptors as Array<{ id: string; capabilities: { directDownload: boolean }; source: { headers: Record<string, string> } }>;
-    }, pageUrl);
+    }, tabId);
     await expect.poll(async () => (await descriptors()).some(d => d.capabilities.directDownload)).toBe(true);
-    await expect(popup.getByText("Server is busy or unstable")).toHaveCount(0);
+    await expect(popup.getByTestId("failure-title").filter({ hasText: "The server is busy" })).toHaveCount(0);
     const [descriptor] = await descriptors();
     expect(descriptor!.source.headers.etag).toBe('"fixture-v1"');
-    const outcome = await popup.evaluate(async streamId => {
-      const finished = new Promise<unknown>(resolve => {
-        const timer = setTimeout(() => { chrome.runtime.onMessage.removeListener(listener); resolve({ type: "timed-out" }); }, 15_000);
-        function listener(message: { type: string; streamId?: string }) {
-          if (message.streamId === streamId && ["job-complete", "job-failed"].includes(message.type)) {
-            clearTimeout(timer);
-            chrome.runtime.onMessage.removeListener(listener);
-            resolve(message);
-          }
-        }
-        chrome.runtime.onMessage.addListener(listener);
-      });
-      await chrome.runtime.sendMessage({ type: "download", streamId, choice: {
-        outputMode: "Original", filename: "recovered.mp4", variantId: null, audioRenditionId: null,
-      } });
-      return finished;
-    }, descriptor!.id);
+    const outcome = await saveAndWait(popup, descriptor!.id, "recovered.mp4");
     expect(outcome, JSON.stringify({ outcome, probes, chunks })).toMatchObject({ type: "job-complete" });
     const completed = () => popup.evaluate(async () => {
       const downloads = await chrome.downloads.search({ state: "complete" });
@@ -117,12 +99,13 @@ test(`range-only ${mediaPath} shows server errors and recovers after a truncated
       .toBe(createHash("sha256").update(video).digest("hex"));
     expect(probes).toBeGreaterThanOrEqual(3);
     expect(chunks).toBe(2);
+    expect(chunkStarts).toEqual([0, Math.floor(video.length / 2)]);
     await popup.close();
-    const reopened = await context.newPage();
-    await reopened.goto(popupUrl);
+    const reopened = await popupFor(session, tabId);
     await expect(reopened.getByTestId("job-complete")).toBeVisible();
+    expect(session.workerErrors, "errors the extension logged in its service worker").toEqual([]);
   } finally {
-    await context?.close();
+    await session?.close();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     rmSync(temporary, { recursive: true, force: true });

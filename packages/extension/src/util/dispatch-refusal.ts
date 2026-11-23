@@ -1,35 +1,34 @@
 import {
   BROWSER_OUTPUT_LIMIT_BYTES,
+  type DispatchRefusal,
   type DispatchRefusalReason,
   type JobError,
   type StreamDescriptor,
 } from "@savemedia/core";
+import { sourceAddress } from "./media-address";
 
-export function dispatchRefusalToError(reason: DispatchRefusalReason, d: StreamDescriptor): JobError {
-  const drm = d.drm;
+/**
+ * `details`: what dispatch said with the refusal (DispatchRefusal). With output_too_large_for_browser, the
+ * size it compared with the limit; with codec_unsupported, the codec and its track.
+ */
+export function dispatchRefusalToError(reason: DispatchRefusalReason, d: StreamDescriptor,
+  details: Pick<DispatchRefusal, "estimatedBytes" | "codec"> = {}): JobError {
+  const { estimatedBytes, codec } = details;
   switch (reason) {
-    case "encrypted_media_detected":
-      return {
-        code: "encrypted_media_detected",
-        severity: "terminal",
-        detectedVia: drm?.detectedVia ?? [],
-        keySystem: drm?.keySystem ?? null,
-      };
     case "cdm_required":
-      return { code: "cdm_required", severity: "terminal", keySystem: drm?.keySystem ?? "unknown" };
-    case "clear_segments_unavailable":
-      return { code: "clear_segments_unavailable", severity: "terminal", manifestUrl: d.pageUrl };
-    case "license_bound_stream":
-      return { code: "license_bound_stream", severity: "terminal", keyUri: "", httpStatus: 0 };
+      // Where the protection was declared travels with the refusal, so every surface describes it the same way.
+      return { code: "cdm_required", severity: "terminal", keySystem: d.drm?.keySystem ?? "unknown", ...(d.drm ? { detectedVia: d.drm.detectedVia } : {}) };
     case "clearkey_deferred":
-      return { code: "clearkey_deferred", severity: "terminal", manifestUrl: d.pageUrl };
+      return { code: "clearkey_deferred", severity: "terminal", manifestUrl: manifestOf(d), ...(d.drm ? { detectedVia: d.drm.detectedVia } : {}) };
     case "no_usable_variant":
       return {
         code: "manifest_malformed",
         severity: "terminal",
-        url: d.pageUrl,
+        url: manifestOf(d),
         parserError: "no usable video variant",
       };
+    case "codec_unsupported":
+      return { code: "codec_unsupported", severity: "terminal", manifestUrl: manifestOf(d), track: codec?.track ?? "audio", codec: codec?.family ?? "unknown" };
     case "unsupported_output":
       return {
         code: "unsupported_output",
@@ -42,27 +41,31 @@ export function dispatchRefusalToError(reason: DispatchRefusalReason, d: StreamD
       return {
         code: "output_too_large_for_browser",
         severity: "terminal",
-        estimatedBytes: Math.max(...d.variants.map(v => v.estimatedSize ?? 0), 0),
+        // The size of the whole save, video and audio together, as dispatch added it up. Without it, the largest video track.
+        estimatedBytes: estimatedBytes ?? Math.max(...d.variants.map(v => v.estimatedSize ?? 0), 0),
         limitBytes: BROWSER_OUTPUT_LIMIT_BYTES,
       };
     case "dash_unsupported":
       return {
         code: "dash_unsupported",
         severity: "terminal",
-        manifestUrl: d.source.kind === "dash-manifest" ? d.source.manifestUrl : d.pageUrl,
+        manifestUrl: manifestOf(d),
       };
     case "hls_encryption_unsupported":
       return {
         code: "hls_encryption_unsupported",
         severity: "terminal",
-        manifestUrl: d.source.kind === "hls-manifest" ? d.source.manifestUrl : d.pageUrl,
+        manifestUrl: manifestOf(d),
         method: "AES-128",
       };
     case "hls_live_unsupported":
       return {
         code: "hls_live_unsupported",
         severity: "terminal",
-        manifestUrl: d.source.kind === "hls-manifest" ? d.source.manifestUrl : d.pageUrl,
+        manifestUrl: manifestOf(d),
       };
   }
 }
+
+/** The stream's own address, as savemedia asks for it, whose host the failure names. Never the page's: the page is not the server that was asked. */
+const manifestOf = (d: StreamDescriptor): string => sourceAddress(d, "entry");

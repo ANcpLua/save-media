@@ -1,53 +1,62 @@
 import type {
+  FileRange,
   HlsPlainPlan,
-  HlsKeyDeclaration,
-  HlsKeyPlan,
+  JobError,
   StreamDescriptor,
   Variant,
 } from "@savemedia/core";
-import { isDecryptableLength, planHlsKeys, segmentIv } from "@savemedia/core";
-import type { JobResult, ProgressFn } from "../job";
+import { BROWSER_OUTPUT_LIMIT_BYTES, isJobError } from "@savemedia/core";
+import { report, type JobResult, type PrepareRequests, type ProgressFn } from "../job";
 import {
+  estimatedTrackBytes,
   parseHlsMediaPlaylistRuntime,
+  type RuntimePlaylist,
   type RuntimeSegment,
-  type RuntimeEncryption,
+  requireSupportedHlsVod,
 } from "../parsers/hls";
 import { fetchWithRetry } from "../net/fetch-with-retry";
-import { HlsKeyring, KeyMaterialError, decryptSegment } from "../crypto/hls-aes";
-import { classifyNetworkFailure } from "../net/error-classification";
+import type { HlsKeyring } from "../crypto/hls-aes";
+import { classifyNetworkFailure, classifyPlaylistReread } from "../net/error-classification";
+import { readManifestText } from "../net/manifest-text";
+import { requireManifestAtSave } from "../manifest-at-save";
 import { InMemorySink, type JobSink } from "../sink";
+import { BlobParts } from "../blob-parts";
+import { refuseMediaInGaps } from "../file-gaps";
+import { TransportStreamInspector, wholePackets } from "../mpeg-ts";
 import { remuxTsToMp4 } from "../remux/ts-to-mp4";
+import { inspectTransportFile, refuseProtectedMp4, validateDirectBlob } from "../verify-direct";
+import { TransferError } from "../net/transfer-error";
+import { AS_THE_PLAYER, plainInitSection, plainSegmentBytes, playerKeyring, readFile, readSegment, refuseDocument } from "../hls-segments";
+
+export interface HlsJobOptions {
+  readonly onProgress: ProgressFn;
+  readonly signal: AbortSignal;
+  readonly sink?: JobSink | undefined;
+  readonly request?: typeof fetchWithRetry | undefined;
+  readonly prepareRequests?: PrepareRequests | undefined;
+}
+
+type Request = typeof fetchWithRetry;
 
 /**
- * Engine-side HLS job runner.
- *
- * **Encryption authority lives at runtime, not at dispatch.** The master
- * playlist (which dispatch saw) usually doesn't carry EXT-X-KEY; the key
- * lives on the media playlist. So the runner:
- *   1. fetches the media playlist
- *   2. requires a fixed VOD playlist (`EXT-X-ENDLIST`)
- *   3. refuses any `EXT-X-KEY` method
- *   4. remuxes MPEG-TS segments to MP4 through mediabunny, or validates and
- *      assembles clear fMP4/CMAF init + media fragments into one MP4
- *
- * This is independent of `plan.kind` so an hls-plain dispatch decision
- * cannot leak ciphertext when the media playlist is actually encrypted.
+ * Resolve the media playlist before choosing an output. Runtime key
+ * declarations govern segment reads. Program tables decide whether the
+ * result can be an MP4 or needs the original transport packets.
  */
 export async function runHlsJob(
   plan: HlsPlainPlan,
   descriptor: StreamDescriptor,
-  onProgress: ProgressFn,
-  signal: AbortSignal,
-  externalSink?: JobSink,
-  request: typeof fetchWithRetry = fetchWithRetry,
+  options: HlsJobOptions,
 ): Promise<JobResult> {
+  const { onProgress, signal } = options;
+  const request = options.request ?? fetchWithRetry;
   const variant = findVariant(descriptor, plan.variantId);
   if (!variant) {
     throw {
-      code: "no_variant_meets_minimum",
+      code: "manifest_malformed",
       severity: "terminal",
-      minHeightRequired: 720,
-      maxAvailableHeight: 0,
+      url: descriptor.source.kind === "hls-manifest" ? descriptor.source.manifestUrl : descriptor.pageUrl,
+      parserError: "selected variant not in manifest",
     };
   }
 
@@ -61,12 +70,15 @@ export async function runHlsJob(
     };
   }
 
-  onProgress(0, null, "fetching-playlist");
-  const playlistResp = await request(playlistUrl, signal, "manifest").catch(err => {
-    throw classifyNetworkFailure(err, "manifest", playlistUrl) ?? err;
+  report(onProgress, { kind: "playlist" }, 0, null);
+  await options.prepareRequests?.([playlistUrl]);
+  const playlistResp = await request(playlistUrl, signal, "manifest", AS_THE_PLAYER).catch(err => {
+    throw classifyPlaylistReread(err, playlistUrl) ?? err;
   });
-  const playlistText = await playlistResp.text();
-  const media = parseHlsMediaPlaylistRuntime(playlistText, playlistUrl);
+  const playlistText = await readManifestText(playlistResp, playlistUrl);
+  // Before the playlist is judged: an answer that is no playlist has no segments and no end tag, and is neither damaged nor live.
+  requireManifestAtSave("hls", playlistText, playlistUrl);
+  const media = parseHlsMediaPlaylistRuntime(playlistText, playlistResp.url || playlistUrl);
 
   if (media.segments.length === 0) {
     throw {
@@ -77,289 +89,236 @@ export async function runHlsJob(
     };
   }
 
-  const keyPlan = assertSupportedVod(media, playlistUrl);
-  const keyring = keyPlan.kind === "aes-128"
-    ? new HlsKeyring(keyUri => fetchKeyBytes(keyUri, signal))
-    : null;
+  requireSupportedHlsVod(media, playlistUrl);
+  // A playlist of byte ranges of one file states the size of the stream: one that will not fit is refused
+  // here, with that size, before the first key or segment is requested. Nothing else states a size. The
+  // master playlist's bit rate is the peak rate, so that rate over the playlist's length leans high: it
+  // tells the progress display what to expect and never refuses a save. The count of received bytes stops
+  // a stream at the limit.
+  const statedBytes = typeof media.ranges === "object" ? media.ranges.bytes : null;
+  if (statedBytes !== null && statedBytes >= BROWSER_OUTPUT_LIMIT_BYTES) {
+    throw { code: "output_too_large_for_browser", severity: "terminal", estimatedBytes: statedBytes, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES } satisfies JobError;
+  }
+  await options.prepareRequests?.(playlistAddresses(media));
+  const keyring = playerKeyring(signal, request);
 
-  return fetchSegments(media, plan, onProgress, signal, externalSink, keyring, request);
+  const estimatedBytes = plan.estimatedBytes ?? statedBytes ?? estimatedTrackBytes(variant.bitrate, media.segments);
+  return fetchSegments(media, { plan, onProgress, signal, sink: options.sink, request, playlistUrl, estimatedBytes }, keyring);
+}
+
+/** Every address the player requests for this playlist: keys, the init segment and the segments. */
+function playlistAddresses(media: RuntimePlaylist): string[] {
+  const keys = media.keyDeclarations.flatMap(key => key.keyUri ? [key.keyUri] : []);
+  return [...keys, ...(media.initSegmentUrl ? [media.initSegmentUrl] : []), ...media.segments.map(s => s.uri)];
+}
+
+type Layout = Extract<JobError, { code: "hls_layout_unsupported" }>["layout"];
+
+/** Bytes that are not the segment the layout needs: a document says what it is, anything else names the layout. */
+function unsupportedLayout(manifestUrl: string, layout: Layout, bytes?: Uint8Array): never {
+  if (bytes) refuseDocument(bytes);
+  throw { code: "hls_layout_unsupported", severity: "terminal", manifestUrl, layout } satisfies JobError;
+}
+
+interface SegmentJob {
+  readonly plan: HlsPlainPlan;
+  readonly onProgress: ProgressFn;
+  readonly signal: AbortSignal;
+  readonly sink?: JobSink | undefined;
+  readonly request: Request;
+  /** The media playlist the segments come from; refusals name it, never a segment address. */
+  readonly playlistUrl: string;
+  /** The size the plan or the media playlist implies, when either does. */
+  readonly estimatedBytes: number | null;
 }
 
 /**
- * Live is refused as before. Encryption is refused only when the key does
- * not reach us in the clear: AES-128 with an identity KEYFORMAT is fetched
- * and used (boundary rule G1), everything else is a CDM key system (R1).
+ * A playlist whose parts are byte ranges of one file: the file is the stream.
+ * It is read once, whole, folded into Blobs as it arrives, and cut where the
+ * ranges end. A fragmented MP4 is saved as it is, after the checks a direct
+ * file gets; a transport stream goes on to the remux like any other.
  */
-function assertSupportedVod(
-  media: {
-    readonly isVod: boolean;
-    readonly encryption: RuntimeEncryption | null;
-    readonly keyDeclarations: readonly HlsKeyDeclaration[];
-  },
-  playlistUrl: string,
-): HlsKeyPlan {
-  if (!media.isVod) {
-    throw {
-      code: "hls_live_unsupported",
-      severity: "terminal",
-      manifestUrl: playlistUrl,
-    };
-  }
-  const plan = planHlsKeys(media.keyDeclarations);
-  if (plan.kind === "drm") {
-    throw {
-      code: "cdm_required",
-      severity: "terminal",
-      keySystem: plan.keySystem,
-    };
-  }
-  return plan;
-}
-
-/**
- * The key is a 16-byte file on the same HTTP the player uses. A server that
- * answers 401/402/403 is handing out licences, not keys: that stream is
- * license bound and stays refused.
- */
-async function fetchKeyBytes(keyUri: string, signal: AbortSignal): Promise<Uint8Array> {
-  try {
-    const resp = await fetchWithRetry(keyUri, signal, "manifest");
-    return new Uint8Array(await resp.arrayBuffer());
-  } catch (err) {
-    if (signal.aborted) throw err;
-    const status = (err as { status?: number | string } | null)?.status;
-    if (typeof status === "number" && [401, 402, 403].includes(status)) {
-      throw {
-        code: "license_bound_stream",
-        severity: "terminal",
-        keyUri,
-        httpStatus: status,
-      };
+async function fetchOneFile(file: { readonly url: string; readonly bytes: number; readonly gaps: readonly FileRange[] }, fragmented: boolean,
+  job: SegmentJob): Promise<JobResult> {
+  const { plan, onProgress, signal, request, playlistUrl } = job;
+  let lastReport = 0;
+  report(onProgress, { kind: "downloading" }, 0, file.bytes);
+  const read = await readFile(file.url, signal, request, head => {
+    // The first bytes say whether this is the kind of file the playlist describes, before the rest is read.
+    if (fragmented ? !(head.length >= 8 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) : head[0] !== 0x47) {
+      unsupportedLayout(playlistUrl, fragmented ? "init-boxes" : "not-transport-stream", head);
     }
-    throw classifyNetworkFailure(err, "manifest", keyUri) ?? {
-      code: "license_bound_stream",
-      severity: "terminal",
-      keyUri,
-      httpStatus: 0,
-    };
-  }
-}
-
-/**
- * Decrypts one segment if a key covers it. A ciphertext that is not whole
- * AES blocks is not an AES-128 segment, and guessing at it would write
- * garbage: refuse instead.
- */
-async function plainSegmentBytes(
-  body: Uint8Array,
-  seg: RuntimeSegment,
-  keyring: HlsKeyring | null,
-  playlistUrl: string,
-): Promise<Uint8Array> {
-  if (!keyring || seg.keyUri === null) return body;
-  if (!isDecryptableLength(body.byteLength)) {
-    throw {
-      code: "hls_encryption_unsupported",
-      severity: "terminal",
-      manifestUrl: playlistUrl,
-      method: "AES-128",
-    };
-  }
-  try {
-    const key = await keyring.keyFor(seg.keyUri);
-    return await decryptSegment(key, segmentIv(seg.iv, seg.mediaSequence), body);
-  } catch (err) {
-    if (err instanceof KeyMaterialError) {
-      throw {
-        code: "license_bound_stream",
-        severity: "terminal",
-        keyUri: err.keyUri,
-        httpStatus: 200,
-      };
+  }, bytes => {
+    if (bytes >= BROWSER_OUTPUT_LIMIT_BYTES) {
+      throw { code: "output_too_large_for_browser", severity: "terminal",
+        estimatedBytes: bytes, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true } satisfies JobError;
     }
+    // A report per chunk would flood the popup.
+    if (performance.now() - lastReport < 250) return;
+    lastReport = performance.now();
+    report(onProgress, { kind: "downloading" }, bytes, file.bytes);
+  }).catch(err => {
+    signal.throwIfAborted();
     if (isTerminalThrown(err)) throw err;
-    throw {
-      code: "hls_encryption_unsupported",
-      severity: "terminal",
-      manifestUrl: playlistUrl,
-      method: "AES-128",
-    };
+    throw classifyNetworkFailure(err, "segment", file.url) ?? {
+      code: "segment_budget_exhausted", severity: "terminal", failedSegments: [0], totalSegments: 1,
+    } satisfies JobError;
+  });
+  if (read.file.size < file.bytes) {
+    throw classifyNetworkFailure(new TransferError("network", { url: file.url, during: "body", received: read.file.size, expected: file.bytes }, false),
+      "segment", file.url)!;
   }
-}
+  // The stream is the bytes the playlist's ranges name, no more.
+  const stream = read.file.size > file.bytes ? read.file.slice(0, file.bytes) : read.file;
+  signal.throwIfAborted();
+  if (!fragmented) return saveTransportStream(stream, await inspectTransportFile(stream, signal), job);
 
-function unsupportedLayout(manifestUrl: string, detail: string): never {
-  throw {
-    code: "hls_layout_unsupported",
-    severity: "terminal",
-    manifestUrl,
-    detail,
-  };
-}
-
-async function fetchSegments(
-  media: { readonly initSegmentUrl: string | null; readonly segments: readonly RuntimeSegment[] },
-  plan: HlsPlainPlan,
-  onProgress: ProgressFn,
-  signal: AbortSignal,
-  externalSink: JobSink | undefined,
-  keyring: HlsKeyring | null,
-  request: typeof fetchWithRetry,
-): Promise<JobResult> {
-  const { initSegmentUrl, segments } = media;
-  if (initSegmentUrl) {
-    return fetchFmp4Segments(initSegmentUrl, segments, plan, onProgress, signal, externalSink, keyring, request);
-  }
-
-  const failed: number[] = [];
-  let bytesWritten = 0;
-  // Sniff the first segment before opening the sink. Unknown bytes are refused
-  // instead of guessed from a URL extension.
-  let firstBytes: Uint8Array | null = null;
-  let sink: JobSink | null = externalSink ?? null;
-  let openedFilename: string | null = null;
-  const writtenParts: Uint8Array[] = [];
-
-  for (let i = 0; i < segments.length; i++) {
-    if (signal.aborted) {
-      if (sink) await sink.abort();
-      throw new DOMException("user-cancelled", "AbortError");
-    }
-    const seg = segments[i]!;
-    try {
-      const resp = await request(seg.uri, signal, "segment");
-      let body: Uint8Array = await plainSegmentBytes(
-        new Uint8Array(await resp.arrayBuffer()),
-        seg,
-        keyring,
-        seg.uri,
-      );
-      if (firstBytes === null) {
-        firstBytes = body;
-        const { mime, filename } = honestOutput(body, seg.uri, plan, false);
-        if (!sink) sink = new InMemorySink(mime);
-        await sink.open(filename, plan.estimatedBytes);
-        openedFilename = filename;
-      }
-      await sink!.write(body);
-      writtenParts.push(body);
-      bytesWritten += body.byteLength;
-      onProgress(bytesWritten, null, `segment ${i + 1}/${segments.length}`);
-    } catch (err) {
-      if (signal.aborted) throw err;
-      if (isTerminalThrown(err)) {
-        if (sink && openedFilename) await sink.abort();
-        throw err;
-      }
-      failed.push(i);
-      if (sink && openedFilename) await sink.abort();
-      throw classifyNetworkFailure(err, "segment", seg.uri) ?? {
-        code: "segment_budget_exhausted",
-        severity: "terminal",
-        failedSegments: failed,
-        totalSegments: segments.length,
-      };
-    }
-  }
-
-  if (signal.aborted) {
-    if (sink && openedFilename) await sink.abort();
-    throw new DOMException("user-cancelled", "AbortError");
-  }
-
-  if (!sink || openedFilename === null || firstBytes === null) {
-    throw {
-      code: "manifest_malformed",
-      severity: "terminal",
-      url: "",
-      parserError: "no segments produced bytes",
-    };
-  }
-
-  // MPEG-TS source + caller wants MP4 → run a real container remux.
-  // Concatenating .ts bytes and calling them .mp4 is a lie that breaks
-  // QuickTime / iOS. mediabunny copies the H.264/AAC packets into an
-  // MP4 box structure (no re-encode) and we ship that instead.
-  const sniff = sniffContainer(firstBytes, initSegmentUrl ?? segments[0]?.uri);
-  if (sniff === "mpegts" && plan.outputContainer === "mp4") {
-    onProgress(bytesWritten, bytesWritten, "remuxing-ts-to-mp4");
-    const tsBytes = concatUint8Arrays(writtenParts);
+  // What the ranges leave out between them must hold no media: then the file is the stream, as it is.
+  await refuseMediaInGaps(stream, file.gaps, playlistUrl, signal);
+  await validateDirectBlob(stream, "mp4", signal);
+  const sink = job.sink ?? new InMemorySink("video/mp4");
+  await sink.open(replaceExt(plan.outputFilename, "mp4"), stream.size);
+  try {
+    await sink.write(stream);
+    signal.throwIfAborted();
+    report(onProgress, { kind: "finalizing" }, stream.size, stream.size);
+    return await sink.close();
+  } catch (err) {
     await sink.abort();
-    const mp4Bytes = await remuxTsToMp4(tsBytes, (fraction) => {
-      onProgress(bytesWritten, bytesWritten, `remuxing ${Math.round(fraction * 100)}%`);
-    });
-    assertMp4Bytes(mp4Bytes);
-    const mp4Blob = new Blob([mp4Bytes as BlobPart], { type: "video/mp4" });
-    onProgress(bytesWritten, bytesWritten, "finalizing");
-    return {
-      blobUrl: URL.createObjectURL(mp4Blob),
-      filename: replaceExt(openedFilename, "mp4"),
-      checksum: "",
-    };
+    throw err;
+  }
+}
+
+async function fetchSegments(media: RuntimePlaylist, job: SegmentJob, keyring: HlsKeyring): Promise<JobResult> {
+  const { onProgress, signal, request, playlistUrl } = job;
+  const { initSegmentUrl, segments } = media;
+  if (media.ranges !== "addresses" && media.ranges !== "scattered") return fetchOneFile(media.ranges, initSegmentUrl !== null, job);
+  if (initSegmentUrl) return fetchFmp4Segments(initSegmentUrl, media, job, keyring);
+
+  // Folded into Blobs as the segments arrive: the engine document holds one segment, never the stream.
+  const parts = new BlobParts();
+  const transport = new TransportStreamInspector();
+  let total = 0;
+  for (const [index, seg] of segments.entries()) {
+    signal.throwIfAborted();
+    try {
+      const body = await readSegment(seg.uri, signal, request, waitMs => report(onProgress, { kind: "reconnecting", waitMs }, total, null));
+      const plain = await plainSegmentBytes(body, seg.key, keyring, playlistUrl);
+      if (plain[0] !== 0x47) unsupportedLayout(playlistUrl, "not-transport-stream", plain);
+      const bytes = wholePackets(plain);
+      total += bytes.byteLength;
+      if (total >= BROWSER_OUTPUT_LIMIT_BYTES) {
+        throw { code: "output_too_large_for_browser", severity: "terminal",
+          estimatedBytes: total, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true } satisfies JobError;
+      }
+      transport.inspect(bytes);
+      parts.append(bytes);
+      report(onProgress, { kind: "segment", index: index + 1, count: segments.length }, total, null);
+    } catch (err) {
+      signal.throwIfAborted();
+      if (isTerminalThrown(err)) throw err;
+      throw classifyNetworkFailure(err, "segment", seg.uri) ?? {
+        code: "segment_budget_exhausted", severity: "terminal",
+        failedSegments: [index], totalSegments: segments.length,
+      } satisfies JobError;
+    }
   }
 
-  onProgress(bytesWritten, bytesWritten, "muxing");
-  const result = await sink.close();
-  onProgress(bytesWritten, bytesWritten, "finalizing");
-  return result;
+  signal.throwIfAborted();
+  const stream = parts.toBlob("video/mp2t");
+  parts.clear();
+  return saveTransportStream(stream, transport, job);
+}
+
+/** A whole transport stream, every packet of it inspected: remuxed to MP4, or kept as it is. */
+async function saveTransportStream(stream: Blob, transport: TransportStreamInspector, job: SegmentJob): Promise<JobResult> {
+  const { plan, onProgress, signal } = job;
+  const total = stream.size;
+  // An MP4 whenever it can carry every audio and video stream; metadata such
+  // as timed ID3 may be left out. Otherwise the original packets are kept.
+  const { keepsTransport } = transport.finish();
+  let mp4: Blob | null = null;
+  if (!keepsTransport) {
+    report(onProgress, { kind: "remuxing", fraction: 0 }, total, total);
+    // The remux reads the stream's Blob in slices and writes the MP4 into
+    // Blobs: neither is held in the engine document's memory.
+    try {
+      mp4 = await remuxTsToMp4(stream, fraction => report(onProgress, { kind: "remuxing", fraction }, total, total), signal);
+      await assertMp4(mp4);
+    } catch {
+      // A transport stream that cannot be put into an MP4 is kept as it is. A clock that starts again
+      // (clips joined in on the server) is known before the remux (TransportStreamInspector); this is for
+      // whatever else the muxer does not accept. Every packet of the stream was inspected, so the original
+      // packets are a file that plays, and the same save again would stop the same way: nothing to retry.
+      signal.throwIfAborted();
+      mp4 = null;
+    }
+  }
+  const filename = replaceExt(plan.outputFilename, mp4 ? "mp4" : "ts");
+  const sink = job.sink ?? new InMemorySink(mp4 ? "video/mp4" : "video/mp2t");
+  await sink.open(filename, total);
+  try {
+    await sink.write(mp4 ?? stream);
+    signal.throwIfAborted();
+    report(onProgress, { kind: "finalizing" }, total, total);
+    return await sink.close();
+  } catch (err) {
+    await sink.abort();
+    throw err;
+  }
 }
 
 async function fetchFmp4Segments(
   initSegmentUrl: string,
-  segments: readonly RuntimeSegment[],
-  plan: HlsPlainPlan,
-  onProgress: ProgressFn,
-  signal: AbortSignal,
-  externalSink: JobSink | undefined,
-  keyring: HlsKeyring | null,
-  request: typeof fetchWithRetry,
+  media: RuntimePlaylist,
+  job: SegmentJob,
+  keyring: HlsKeyring,
 ): Promise<JobResult> {
+  const { plan, onProgress, signal, request, playlistUrl } = job;
+  const segments: readonly RuntimeSegment[] = media.segments;
   const failed: number[] = [];
   let bytesWritten = 0;
-  let sink: JobSink | null = externalSink ?? null;
+  let sink: JobSink | null = job.sink ?? null;
   let opened = false;
   let currentUrl = initSegmentUrl;
   let currentIndex = -1;
 
   try {
-    if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
-
-    onProgress(0, null, "fetching-init-segment");
-    const initResp = await request(initSegmentUrl, signal, "segment");
-    const initBytes = new Uint8Array(await initResp.arrayBuffer());
-    assertFmp4InitSegment(initBytes, initSegmentUrl);
+    signal.throwIfAborted();
+    report(onProgress, { kind: "downloading" }, 0, null);
+    // The parts already written to the sink stay there while a reconnect waits.
+    const reconnecting = (waitMs: number): void => report(onProgress, { kind: "reconnecting", waitMs }, bytesWritten, null);
+    const initBytes = await plainInitSection(await readSegment(initSegmentUrl, signal, request, reconnecting), media.initKey, keyring, playlistUrl);
+    assertFmp4InitSegment(initBytes, playlistUrl);
 
     const filename = replaceExt(plan.outputFilename, "mp4");
     if (!sink) sink = new InMemorySink("video/mp4");
-    await sink.open(filename, plan.estimatedBytes);
+    await sink.open(filename, job.estimatedBytes);
     opened = true;
     await sink.write(initBytes);
     bytesWritten += initBytes.byteLength;
-    onProgress(bytesWritten, null, "init-segment");
+    report(onProgress, { kind: "downloading" }, bytesWritten, null);
 
     for (let i = 0; i < segments.length; i++) {
-      if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
+      signal.throwIfAborted();
       const seg = segments[i]!;
       currentUrl = seg.uri;
       currentIndex = i;
-      const resp = await request(seg.uri, signal, "segment");
-      const body = await plainSegmentBytes(
-        new Uint8Array(await resp.arrayBuffer()),
-        seg,
-        keyring,
-        seg.uri,
-      );
-      assertFmp4MediaSegment(body, seg.uri);
+      const body = await plainSegmentBytes(await readSegment(seg.uri, signal, request, reconnecting), seg.key, keyring, playlistUrl);
+      assertFmp4MediaSegment(body, playlistUrl);
       await sink.write(body);
       bytesWritten += body.byteLength;
-      onProgress(bytesWritten, null, `segment ${i + 1}/${segments.length}`);
+      // The playlist rarely states sizes, so the bytes in hand are counted as they arrive.
+      if (bytesWritten >= BROWSER_OUTPUT_LIMIT_BYTES) {
+        throw { code: "output_too_large_for_browser", severity: "terminal",
+          estimatedBytes: bytesWritten, limitBytes: BROWSER_OUTPUT_LIMIT_BYTES, measured: true } satisfies JobError;
+      }
+      report(onProgress, { kind: "segment", index: i + 1, count: segments.length }, bytesWritten, null);
     }
 
-    if (signal.aborted) throw new DOMException("user-cancelled", "AbortError");
-
-    onProgress(bytesWritten, bytesWritten, "muxing");
-    const result = await sink.close();
-    onProgress(bytesWritten, bytesWritten, "finalizing");
-    return result;
+    signal.throwIfAborted();
+    report(onProgress, { kind: "finalizing" }, bytesWritten, bytesWritten);
+    return await sink.close();
   } catch (err) {
     if (sink && opened) await sink.abort();
     if (signal.aborted) throw err;
@@ -374,19 +333,8 @@ async function fetchFmp4Segments(
   }
 }
 
-function concatUint8Arrays(parts: readonly Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const p of parts) total += p.byteLength;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const u of parts) {
-    out.set(u, off);
-    off += u.byteLength;
-  }
-  return out;
-}
-
-function assertMp4Bytes(bytes: Uint8Array): void {
+async function assertMp4(file: Blob): Promise<void> {
+  const bytes = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   if (bytes.length < 8 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
     throw {
       code: "verification_container",
@@ -396,25 +344,27 @@ function assertMp4Bytes(bytes: Uint8Array): void {
   }
 }
 
-function assertFmp4InitSegment(bytes: Uint8Array, url: string): void {
-  const boxes = readIsoBmffBoxes(bytes, url);
+/** The init segment holds the movie box: clear, or declaring Common Encryption that is never touched. */
+function assertFmp4InitSegment(bytes: Uint8Array, playlistUrl: string): void {
+  const boxes = readIsoBmffBoxes(bytes, playlistUrl);
   const missing = ["ftyp", "moov"].filter(type => !boxes.includes(type));
   if (missing.length > 0) {
-    unsupportedLayout(url, `HLS fMP4 init segment is missing required MP4 box(es): ${missing.join(", ")}.`);
+    unsupportedLayout(playlistUrl, "init-boxes", bytes);
   }
+  refuseProtectedMp4(bytes);
 }
 
-function assertFmp4MediaSegment(bytes: Uint8Array, url: string): void {
-  const boxes = readIsoBmffBoxes(bytes, url);
+function assertFmp4MediaSegment(bytes: Uint8Array, playlistUrl: string): void {
+  const boxes = readIsoBmffBoxes(bytes, playlistUrl);
   const missing = ["moof", "mdat"].filter(type => !boxes.includes(type));
   if (missing.length > 0) {
-    unsupportedLayout(url, `HLS fMP4 media segment is missing required MP4 box(es): ${missing.join(", ")}.`);
+    unsupportedLayout(playlistUrl, "fragment-boxes", bytes);
   }
 }
 
 function readIsoBmffBoxes(bytes: Uint8Array, url: string): string[] {
   if (bytes.byteLength < 8) {
-    unsupportedLayout(url, "HLS fMP4 segment is too small to contain an MP4 box header.");
+    unsupportedLayout(url, "box-structure", bytes);
   }
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -422,20 +372,20 @@ function readIsoBmffBoxes(bytes: Uint8Array, url: string): string[] {
   let offset = 0;
   while (offset < bytes.byteLength) {
     if (offset + 8 > bytes.byteLength) {
-      unsupportedLayout(url, "HLS fMP4 segment ends with a truncated MP4 box header.");
+      unsupportedLayout(url, "box-structure", bytes);
     }
 
     let size = view.getUint32(offset);
     let headerSize = 8;
     if (size === 1) {
       if (offset + 16 > bytes.byteLength) {
-        unsupportedLayout(url, "HLS fMP4 segment has a truncated 64-bit MP4 box size.");
+        unsupportedLayout(url, "box-structure", bytes);
       }
       const high = view.getUint32(offset + 8);
       const low = view.getUint32(offset + 12);
       const largeSize = high * 2 ** 32 + low;
       if (!Number.isSafeInteger(largeSize)) {
-        unsupportedLayout(url, "HLS fMP4 segment has an unsafe 64-bit MP4 box size.");
+        unsupportedLayout(url, "box-structure", bytes);
       }
       size = largeSize;
       headerSize = 16;
@@ -444,7 +394,7 @@ function readIsoBmffBoxes(bytes: Uint8Array, url: string): string[] {
     }
 
     if (size < headerSize || offset + size > bytes.byteLength) {
-      unsupportedLayout(url, "HLS fMP4 segment has an invalid MP4 box size.");
+      unsupportedLayout(url, "box-structure", bytes);
     }
 
     boxes.push(String.fromCharCode(
@@ -459,17 +409,7 @@ function readIsoBmffBoxes(bytes: Uint8Array, url: string): string[] {
 }
 
 function isTerminalThrown(err: unknown): boolean {
-  if (!err || typeof err !== "object" || !("code" in err)) return false;
-  const code = (err as { code: string }).code;
-  return code === "cdm_required"
-    || code === "manifest_malformed"
-    || code === "encrypted_media_detected"
-    || code === "clear_segments_unavailable"
-    || code === "license_bound_stream"
-    || code === "clearkey_deferred"
-    || code === "hls_encryption_unsupported"
-    || code === "hls_live_unsupported"
-    || code === "hls_layout_unsupported";
+  return isJobError(err) && err.severity === "terminal";
 }
 
 function findVariant(d: StreamDescriptor, variantId: string): Variant | null {
@@ -480,48 +420,6 @@ function findVariant(d: StreamDescriptor, variantId: string): Variant | null {
 function playlistUrlOf(v: Variant): string | null {
   if (v.segmentRef.kind === "hls-segments") return v.segmentRef.playlistUrl;
   return null;
-}
-
-/**
- * Sniff the first bytes to decide the real on-disk container, then
- * rename the output filename to match. The plan's outputContainer is the
- * requested target — when our concatenation-only path can't satisfy it
- * we either take a real remux path (MPEG-TS → MP4) or fail before a
- * misleading file reaches disk.
- */
-function honestOutput(
-  firstSegment: Uint8Array,
-  firstSegmentUri: string | undefined,
-  plan: HlsPlainPlan,
-  _hasInitSegment: boolean,
-): { mime: string; filename: string } {
-  const sniff = sniffContainer(firstSegment, firstSegmentUri);
-  if (sniff === "mpegts") {
-    return { mime: "video/mp2t", filename: replaceExt(plan.outputFilename, "ts") };
-  }
-  return unsupportedLayout(
-    firstSegmentUri ?? "",
-    `The first HLS segment did not look like MPEG-TS (${sniff}).`,
-  );
-}
-
-type ContainerSniff = "fmp4" | "fmp4-fragment" | "mpegts" | "webm" | "unknown";
-
-function sniffContainer(bytes: Uint8Array | undefined, segmentUri: string | undefined): ContainerSniff {
-  if (bytes && bytes.length > 0) {
-    if (bytes.length >= 8 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return "fmp4"; // ftyp
-    if (bytes.length >= 8 && bytes[4] === 0x6D && bytes[5] === 0x6F && bytes[6] === 0x6F && bytes[7] === 0x66) return "fmp4-fragment"; // moof
-    if (bytes[0] === 0x47) return "mpegts"; // TS sync byte
-    if (bytes.length >= 4 && bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) return "webm"; // EBML
-    // Bytes were present but didn't match a known magic — trust the
-    // request rather than guessing from the URL extension (which may lie).
-    return "unknown";
-  }
-  if (segmentUri) {
-    if (/\.(ts|mpegts)(\?|#|$)/i.test(segmentUri)) return "mpegts";
-    if (/\.(m4s|mp4|m4v)(\?|#|$)/i.test(segmentUri)) return "fmp4";
-  }
-  return "unknown";
 }
 
 function replaceExt(filename: string, ext: string): string {

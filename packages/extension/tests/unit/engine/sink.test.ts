@@ -30,3 +30,18 @@ describe("InMemorySink", () => {
     expect(sink.byteLength()).toBe(0);
   });
 });
+
+describe("InMemorySink memory", () => {
+  it("hands the browser one Blob with every write in order, Blobs included", async () => {
+    let saved: Blob | undefined;
+    URL.createObjectURL = vi.fn((blob: Blob | MediaSource) => { saved = blob as Blob; return "blob:fake"; });
+    const sink = new InMemorySink("video/mp4");
+    await sink.open("out.mp4", null);
+    await sink.write(new Uint8Array([1, 2]));
+    await sink.write(new Blob([new Uint8Array([3, 4])]));
+    await sink.write(new Uint8Array([5]));
+    await sink.close();
+    expect(saved?.type).toBe("video/mp4");
+    expect(saved?.size).toBe(5);
+  });
+});

@@ -1,112 +1,77 @@
-# savemedia Privacy Policy
+# savemedia privacy policy
 
-Effective date: 2026-11-21
+Effective date: 2026-11-23
 
-savemedia is a browser extension that runs locally on the user's computer. It
-detects browser-visible video candidates, lets the user choose a supported
-candidate, and asks the browser to save the resulting file.
+savemedia runs in your browser. It has no account, no server, no analytics and no ads. It does not sell or share data.
 
-## Data Handled Locally
+## What savemedia reads
 
-savemedia may process the following data inside the browser:
+On the pages you visit, only to find, check and save media:
 
-- page URLs for tabs where the extension is active;
-- candidate media request URLs;
-- response headers for candidate media requests;
-- manifest text for candidate HLS or DASH manifests;
-- the first bytes of candidate direct media files, used only to verify the
-  container before offering a download;
-- temporary in-memory descriptors and job progress for the current browser
-  session.
+- the page address and title, and the media the page declares: video and source elements, links to media files, and player data in the page's own markup;
+- the addresses and response headers of the page's media requests and of the requests its scripts make for data (fetch and XHR), as your browser reports them, to find the media among them, and the network address of the server that answered;
+- for the page itself and its frames: only whether the server that answered them is inside your own network. Nothing else of them is read this way;
+- the first bytes of a candidate file, or the text of a playlist, to check what it is;
+- inside the page, the content of ad descriptions and playlists the page itself loads, only to recognise ads so they are never offered as the page's video. A script of savemedia that runs in the page reads these answers as the page receives them. It requests nothing and changes nothing;
+- on the pages of two sites (three in builds made from the source code), the site's own player answers, read the same way, to find the page's video files;
+- whether the page's player uses protected playback (DRM), only so savemedia can refuse it;
+- a small frame of each video on the page, shown as a thumbnail in the popup;
+- the pointer position when you press Alt+S, to find the video or image under it;
+- for its own requests: the browser's error code, the server's network address and a redirect to another server, to explain a failed save;
+- whether the page your tab last opened failed to load, so savemedia can say so and offer to reload it;
+- when you save a file a page links to: your browser's list of interrupted downloads for that file, so your browser can continue it.
 
-This data is used only to provide the extension's single purpose: saving
-verified direct video files and unprotected HLS and DASH streams when the
-browser can fetch every required byte and produce one playable final file.
-AES-128 HLS is decrypted locally with the browser's own WebCrypto, and only
-when the server hands the key to the page in the clear; the key is used in
-memory for that download and is never stored or transmitted.
+Thumbnails, pointer positions and file contents stay in memory and are discarded after use. A key for standard HLS AES-128 is used in memory for that save and is never stored.
 
-## Repeat downloads
+## What savemedia stores, and for how long
 
-After the browser confirms a SaveMedia download, the extension keeps a local
-fingerprint for the rest of that browser session. It uses this fingerprint to
-ask before saving another copy. The receipt contains a hash and a success
-flag. Closing the browser or reloading the extension clears it. SaveMedia
-checks the status of its own download by ID. Duplicate detection requires
-no folder scan, cookies or access to other downloads.
+| What | Where | How long |
+| --- | --- | --- |
+| Media found on each tab: addresses, response headers, the server's network address, what the page's players last reported (source addresses, sizes, play state, page title) and the state of running saves | memory and browser session storage | until the tab navigates or closes, or the browser closes |
+| For up to four earlier pages of a tab: the media addresses and server network addresses the page received, the addresses of video answers its scripts fetched, and the servers inside your own network that your browser loaded something from for it, so going back shows the same list | memory and browser session storage | until the tab closes or the browser closes |
+| For the page that is open: the servers inside your own network (scheme, host and port) that your browser itself loaded the page, a frame, media or data from, up to 64 per page | memory and browser session storage | until the tab navigates or closes, or the browser closes. After the tab navigates, they are kept as the row above says |
+| Referer rules for savemedia's own requests: the media server's host name and the page's origin | browser session storage and the browser's session rules | while a save or check uses them. Up to 64 unused rules are kept for the next check of the same server, until the browser closes |
+| A download your browser is continuing for savemedia: the page address, the file name and the browser's download number | browser session storage | until that download ends or the tab closes |
+| A receipt for each saved file or image: a hash, without address or name | browser session storage | until the browser closes |
+| An open question about saving a file a second time: the file name and the page address, and for an image its address | browser session storage | until you answer, or the tab navigates or closes |
+| Parts of an interrupted file, so Retry save can continue | memory | up to 10 minutes, or until the extension reloads |
+| What the browser reported about savemedia's own requests: server host names, network addresses, error codes | memory | not used after 10 minutes, and gone when savemedia's background worker stops |
+| Diagnostic events for the current page, up to 128 per tab: times, server host names, kinds of network address, numeric HTTP data and error codes | browser session storage | until the tab reloads, navigates or closes |
+| Local downloader settings | extension storage, readable only by savemedia's own pages | until you change them or remove savemedia |
 
-After a temporary transfer failure, SaveMedia can hold completed parts of one
-file in browser memory for up to ten minutes so a retry can resume. Reloading
-the extension or closing the browser clears these parts.
+Browser session storage is kept in memory by your browser and is cleared when the browser closes or the extension is updated, reloaded or turned off.
 
-## Optional Local Downloader
+savemedia cannot be turned on in private (incognito) windows. An extension that runs there makes its own requests with the cookies of your normal windows and lists its saves among their downloads, so savemedia stays out of private windows altogether.
 
-The extension includes an optional feature that is off by default. When the
-user switches it on, the browser asks for the `nativeMessaging` permission and
-the extension may pass the current page URL and the user's quality preference
-to a separate program the user installed on their own computer
-(`packages/native-host`). That program runs the user's own copies of yt-dlp and
-ffmpeg and writes files to the user's Downloads folder. This download mode sends the page address and selected settings. The program
-may, at the user's explicit setting, read the browser's cookie store locally to
-act with the user's own session; those cookies never leave the user's computer
-and are never logged.
+## What leaves your device
 
-### Optional local connection
+- Nothing goes to the developer.
+- To check and save media, savemedia requests the media addresses your browser loaded for the page, the way the page's own player does. When you open the popup or press Alt+S, it also requests the media addresses the page declares (in its video elements, its player data and its file links), the way the page's player would when you press Play. Such an address can be on a server your browser has not contacted for that page yet. These requests carry your browser's cookies for that server and the page's origin (its scheme and host, without the path) as Referer and Origin. They use your browser's own network settings: its DNS, proxy and certificate checks.
+- For a page on the internet, savemedia requests a server inside your own network only when your browser itself loaded something from that same server for that page. A local server a page only names is not requested. savemedia knows such a server by its address, or by a name that only your own network answers (one word such as "nas", or a name ending in .local, .localhost, .home.arpa or .internal). One limit: a public name that leads into your network on savemedia's own request is requested once, because only the answer shows where the name led, and that answer is not used.
+- An ad is requested by savemedia only when you press Save on it in the Ads list. Otherwise savemedia lists an ad your browser loaded from what your browser received, and requests nothing.
+- Local downloader (optional, off by default): when you turn it on, your browser asks for permission to talk to the savemedia helper, a program you install yourself. savemedia then sends it the page address and your settings (quality and cookie source). The helper runs your own yt-dlp and ffmpeg, which contact the site directly. Unless you choose No cookies, yt-dlp reads the cookies of this browser, or of the browser you pick under Cookies, on your computer. yt-dlp also applies your own yt-dlp configuration. The helper keeps a log of its jobs without page addresses, and yt-dlp's download archive with the site and video ID of each video it saved. Both stay on your computer.
+- Diagnostic export: Export diagnostic log saves a file to your Downloads folder. It contains no URL paths, query strings, file names, cookies, authorization headers or response bodies. Servers and pages appear by host name, and a server's network address only as its kind (such as local network or internet). A server or page that is addressed by a number instead of a name, such as a device on your network, appears with that address. You decide whether to share it.
 
-**Use local connection** enables a separate recovery option for file saves.
-The standard extension requests Chrome’s native messaging permission when
-this option is selected. The dedicated desktop preview declares it at install
-time. Both require the user to enable the local connection before using it.
-When a media connection fails, the extension can send the publisher-issued
-HTTPS file address, the referring page’s origin and byte-range information to
-that helper on the same computer. The address may include a temporary download
-token. The helper sends the file hostname to Cloudflare’s DNS-over-HTTPS resolver.
-It connects directly to the publisher’s server, verifies its TLS certificate and
-returns bytes to Chrome for verification and saving. File contents and signed
-links are kept out of DNS queries and diagnostic logs. This mode uses no browser
-cookies and saves no list of file addresses. Turn it off in **Local downloader**.
+## Permissions
 
-The `storage` permission holds these local settings and the browser-session download receipts described above.
+- Access to the sites you visit: to see the media pages load and to request it for saving.
+- downloads: to save verified files, to confirm a save finished, and to continue an interrupted download of the same file.
+- tabs: to know which page a video belongs to, and to follow the active tab in the savemedia window.
+- webRequest: to see which of a page's media and data requests carry media, whether a page or frame was answered from inside your own network, and the error code and server address of savemedia's own requests. savemedia only reads these events. It never blocks or changes a request with them.
+- webNavigation: to know which frames a tab has, when one shows a new page, and when a page failed to load, so media is listed for the page that is open now.
+- declarativeNetRequestWithHostAccess: to give savemedia's own requests the page's origin as Referer and Origin, as the browser does for the page. It never changes your own browsing. A rule is held while a save or check uses it, and every rule ends with the browser session.
+- offscreen (Chrome and Edge): to assemble streams into one file in a hidden extension page.
+- storage: for the items in the table above.
+- nativeMessaging (optional): only after you turn on the Local downloader.
 
-The `declarativeNetRequestWithHostAccess` permission lets the extension's own
-requests for a detected video carry the page's origin as Referer, as the
-browser does by default when the page loads that video. Many video servers
-refuse requests without it. The rule applies only to requests the extension
-itself makes, never to the user's own browsing, and ends with the browser
-session.
+## Protected media and access
 
-## Data Sharing
+savemedia never saves DRM-protected media. It saves only what your browser already receives, so it adds no access: a server that wants a sign-in, a purchase or a region still decides what it sends. savemedia never operates a site's controls.
 
-savemedia does not send browsing activity, media URLs, headers, manifests,
-download history, analytics, telemetry, or personal data to the developer or to
-any developer-operated server. It does not sell data, use data for advertising,
-or share data with data brokers.
+## Chrome Web Store Limited Use
 
-When the user starts a download, the browser may request media bytes from the
-original website or media host that the page already referenced. For plain HLS
-VOD, savemedia fetches the playlist and segments from those original URLs in the
-browser, then remuxes clear MPEG-TS segments or assembles validated clear
-fMP4/CMAF fragments locally.
-
-## Credentials, Protected Media, and Access Control
-
-savemedia does not collect usernames, passwords, payment details, cookies, or
-license keys. A site’s own download control can issue a fresh link when its
-previous link expires. The extension respects server access restrictions,
-including sign-in, payment and geographic restrictions. If DRM, a key held by a protected media module, a
-live or still-growing presentation, or DASH addressed by byte ranges is
-detected, savemedia refuses the download instead of attempting a workaround.
-
-## Browser Store Limited Use Statement
-
-savemedia's use of information received from browser extension APIs adheres to
-the Chrome Web Store User Data Policy, including the Limited Use requirements.
-The extension uses data only for its disclosed single purpose and does not
-transfer, sell, or use user data for unrelated purposes.
+savemedia's use of information received from browser extension APIs adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements. It uses data only for its single purpose and does not transfer, sell or use it for anything else.
 
 ## Contact
 
-For review, privacy, support, or security questions, use the browser store
-developer contact or the repository support guidance:
-
-https://github.com/ANcpLua/save-media
+Use the store's developer contact or https://github.com/ANcpLua/save-media.

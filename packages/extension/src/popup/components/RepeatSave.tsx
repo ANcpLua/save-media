@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
+import type { RepeatPromptView } from "../../types/messages";
+import { ask, fromBackground, request } from "../request";
+import { REPEAT } from "../../ui/text";
+import { useAnnounce } from "./Announcer";
 
-interface Prompt {id: string; filename: string; tabId: number; pageUrl: string}
+type Prompt = RepeatPromptView;
 
 export function useRepeatPrompt(tabId: number | null, pageUrl: string | null) {
   const [prompt, setPrompt] = useState<Prompt | null>(null);
@@ -9,15 +13,14 @@ export function useRepeatPrompt(tabId: number | null, pageUrl: string | null) {
     if (tabId === null || !pageUrl) return;
     let revision = 0;
     function refresh() {
-      const request = ++revision;
-      chrome.runtime.sendMessage({type: "current-save-state", tabId, pageUrl}, state => {
-        void chrome.runtime.lastError;
-        if (request === revision) setPrompt(state?.prompt ?? null);
+      const asked = ++revision;
+      ask({type: "current-save-state", tabId: tabId!, pageUrl: pageUrl!}, state => {
+        if (asked === revision) setPrompt(state?.prompt ?? null);
       });
     }
-    function changed(msg: {type?: string; tabId?: number; pageUrl?: string}, _sender: chrome.runtime.MessageSender,
+    function changed(msg: {type?: string; tabId?: number; pageUrl?: string}, sender: chrome.runtime.MessageSender,
       respond: (shown: boolean) => void) {
-      if (msg?.type === "repeat-save-changed" && msg.tabId === tabId && msg.pageUrl === pageUrl) {
+      if (fromBackground(sender) && msg?.type === "repeat-save-changed" && msg.tabId === tabId && msg.pageUrl === pageUrl) {
         refresh();
         respond(true);
       }
@@ -30,15 +33,17 @@ export function useRepeatPrompt(tabId: number | null, pageUrl: string | null) {
   return prompt?.tabId === tabId && prompt?.pageUrl === pageUrl ? prompt : null;
 }
 
+/** The one question before a file is saved a second time. Focus starts on the answer that goes on. */
 export function RepeatSave({prompt}: {prompt: Prompt}) {
-  const answer = (allow: boolean) => chrome.runtime.sendMessage({type: "answer-repeat-save", id: prompt.id, allow},
-    () => void chrome.runtime.lastError);
-  return <div className="mx-2 mb-2 rounded-lg border border-line bg-surface p-3 text-xs">
+  const announce = useAnnounce();
+  useEffect(() => { announce(REPEAT.question); }, [announce, prompt.id]);
+  const answer = (allow: boolean) => void request({type: "answer-repeat-save", id: prompt.id, allow});
+  return <div className="mx-2 mb-2 rounded-lg border border-line bg-surface p-3 text-xs" data-testid="repeat-save">
     <p className="break-words font-semibold">{prompt.filename}</p>
-    <p className="mt-2" role="status">SaveMedia already saved this file in this browser session. Save another copy?</p>
+    <p className="mt-2">{REPEAT.question}</p>
     <div className="mt-3 flex justify-end gap-2">
-      <button className="rounded border border-line px-2 py-1" onClick={() => answer(false)}>Cancel</button>
-      <button className="rounded bg-surface-2 px-2 py-1 font-medium" onClick={() => answer(true)}>Save another copy</button>
+      <button type="button" className="rounded border border-line px-2 py-1" onClick={() => answer(false)}>{REPEAT.cancel}</button>
+      <button type="button" autoFocus className="rounded bg-surface-2 px-2 py-1 font-medium" onClick={() => answer(true)}>{REPEAT.confirm}</button>
     </div>
   </div>;
 }

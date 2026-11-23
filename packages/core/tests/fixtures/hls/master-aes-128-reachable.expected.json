@@ -1,3 +1,0 @@
-{
-  "encryption": { "method": "AES-128", "keyUri": "https://keys.test/aes.key", "treatedAs": "decryptable" }
-}

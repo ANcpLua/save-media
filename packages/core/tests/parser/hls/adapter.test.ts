@@ -24,7 +24,7 @@ describe("parseHlsMaster", () => {
     };
 
     expect(r.variants).toHaveLength(exp.variantCount);
-    expect(r.encryption).toBeNull();
+    expect(r.sessionKeys).toEqual([]);
 
     for (let i = 0; i < exp.variants.length; i++) {
       const e = exp.variants[i];
@@ -89,5 +89,34 @@ describe("parseHlsMaster — EXT-X-MEDIA audio groups", () => {
     const v480 = r.variants.find(v => v.height === 480);
     expect(v480?.audioRenditionId).toBeNull();
     expect(r.audioRenditions.some(a => String(a.audioRenditionId).startsWith("aud-muxed:"))).toBe(false);
+  });
+
+  // RFC 8216 4.3.4.2.1: a rendition without a URI is carried in the variant's own playlist.
+  const mixed = (english: string, german: string): string => [
+    "#EXTM3U",
+    ...[english, german].sort((a, b) => Number(b.startsWith("first:")) - Number(a.startsWith("first:"))).map(line => line.replace("first:", "")),
+    '#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="aud"',
+    "main/prog.m3u8",
+  ].join("\n");
+  const ENGLISH_MUXED = '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en"';
+  const GERMAN_APART = '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Deutsch",LANGUAGE="de",URI="de/prog.m3u8"';
+
+  it("leaves a variant unlinked when its group's DEFAULT audio is muxed in and another language has a URI", () => {
+    const r = parseHlsMaster(mixed(`${GERMAN_APART},DEFAULT=NO`, `${ENGLISH_MUXED},DEFAULT=YES`), "https://m.example/master.m3u8");
+    // The variant is saved as it plays, with its own English audio; German stays listed as a rendition.
+    expect(r.variants[0]?.audioRenditionId).toBeNull();
+    expect(r.audioRenditions.map(a => a.audioRenditionId)).toEqual(["aud:Deutsch"]);
+  });
+
+  it("without a DEFAULT, the first listed rendition is the played one, with a URI or without", () => {
+    const muxedFirst = parseHlsMaster(mixed(`first:${ENGLISH_MUXED}`, GERMAN_APART), "https://m.example/master.m3u8");
+    expect(muxedFirst.variants[0]?.audioRenditionId).toBeNull();
+    const apartFirst = parseHlsMaster(mixed(ENGLISH_MUXED, `first:${GERMAN_APART}`), "https://m.example/master.m3u8");
+    expect(apartFirst.variants[0]?.audioRenditionId).toBe("aud:Deutsch");
+  });
+
+  it("links the DEFAULT rendition with a URI although a muxed rendition is listed first", () => {
+    const r = parseHlsMaster(mixed(`first:${ENGLISH_MUXED},DEFAULT=NO`, `${GERMAN_APART},DEFAULT=YES`), "https://m.example/master.m3u8");
+    expect(r.variants[0]?.audioRenditionId).toBe("aud:Deutsch");
   });
 });

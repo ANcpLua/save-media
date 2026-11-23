@@ -14,7 +14,7 @@ export type Container =
   | "mpegts" | "fmp4" | "cmaf"
   | "unknown";
 
-export type OutputContainer = "mp4" | "mov" | "webm" | "mkv";
+export type OutputContainer = "mp4" | "mov" | "webm" | "mkv" | "mpegts";
 
 export type ConfidenceLevel = "guessed" | "probable" | "confirmed";
 
@@ -27,21 +27,18 @@ export interface Confidence {
 export interface OutputCapabilities {
   readonly directDownload: boolean;
   readonly remuxableTo: readonly OutputContainer[];
-  readonly drmBlocked: boolean;
 }
 
-export type DrmReason =
-  | "encrypted_media_detected"
-  | "cdm_required"
-  | "clear_segments_unavailable"
-  | "license_bound_stream"
-  | "clearkey_deferred";
+export type DrmReason = "cdm_required" | "clearkey_deferred";
 
 export type DrmSignalSource =
   | "eme-hook"
-  | "mediasource-probe"
   | "hls-ext-x-key"
+  | "mpeg-ts"
   | "dash-content-protection"
+  | "mp4-protection"
+  /** ContentEncryption declared in a WebM or Matroska track. */
+  | "matroska-protection"
   | "clearkey-detector";
 
 export type DrmStatus =
@@ -65,6 +62,15 @@ export type StreamSource =
   | { readonly kind: "media-element"; readonly element: "video" | "audio"; readonly elementSrc: string };
 
 import type { CodecSet, Variant } from "./codec";
+
+/** What a playlist or manifest states about its timeline. */
+export interface Presentation {
+  /** The stream is still being produced: its playlist has no end yet. */
+  readonly live: boolean;
+  readonly durationSeconds: number | null;
+  /** The longest segment the manifest states, the bound for matching a player's duration. */
+  readonly maxSegmentSeconds: number | null;
+}
 
 export interface StreamDescriptor {
   readonly id: StreamId;
@@ -93,4 +99,12 @@ export interface StreamDescriptor {
   readonly drm: DrmStatus;
   readonly capabilities: OutputCapabilities;
   readonly confidence: Confidence;
+  /** Set for media playlists and DASH manifests. A master playlist states no timeline of its own. */
+  readonly presentation?: Presentation;
+  /**
+   * Listed from the answer the browser itself received, without a request by savemedia: an address a
+   * page's ad response named. What it is, is taken from that answer's headers alone. Its bytes are
+   * checked when the user saves it, and never before.
+   */
+  readonly unchecked?: true;
 }

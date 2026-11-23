@@ -1,10 +1,15 @@
+// Retry transient HTTP responses, including origin-connectivity failures
+// returned by a reverse proxy. Certificate and protocol failures are terminal.
+const TRANSIENT_HTTP_STATUSES: readonly number[] = [408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524];
+export const MAX_AUTOMATIC_WAIT_MS = 30_000;
+
 export const RETRY_POLICY = {
   segment: {
     maxAttempts: 5,
     baseMs: 250,
     maxBackoffMs: 4000,
     jitterFraction: 0.2,
-    retryableStatuses: [408, 425, 429, 500, 502, 503, 504] as readonly number[],
+    retryableStatuses: TRANSIENT_HTTP_STATUSES,
   },
   job: {
     maxFailedSegmentRatio: 0.05,
@@ -15,7 +20,7 @@ export const RETRY_POLICY = {
     baseMs: 500,
     maxBackoffMs: 4000,
     jitterFraction: 0.2,
-    retryableStatuses: [408, 425, 429, 500, 502, 503, 504] as readonly number[],
+    retryableStatuses: TRANSIENT_HTTP_STATUSES,
   },
 } as const;
 
@@ -41,4 +46,14 @@ export function computeBackoffMs(cls: RetryClass, attempt: number, jitterSeed: n
 export function isRetryableStatus(cls: RetryClass, status: number): boolean {
   if (!isClassWithBackoff(cls)) return false;
   return RETRY_POLICY[cls].retryableStatuses.includes(status);
+}
+
+export function retryAfterMs(value: string | null | undefined, now = Date.now()): number | undefined {
+  if (!value?.trim()) return undefined;
+  const field = value.trim();
+  if (/^\d+$/.test(field)) return Number(field) * 1000;
+  // Date.parse also accepts inputs such as "-1" and "1.5" as calendar dates.
+  if (!/[a-z]/i.test(field)) return undefined;
+  const date = Date.parse(field);
+  return Number.isFinite(date) ? Math.max(0, date - now) : undefined;
 }
