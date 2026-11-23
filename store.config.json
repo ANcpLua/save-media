@@ -75,7 +75,7 @@
         "EDGE_API_KEY",
         "EDGE_CLIENT_ID"
       ],
-      "expires": "2026-11-29",
+      "expires": "2027-02-03",
       "notes": "Renew at https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi, then update the local copy and both repositories' EDGE_API_KEY and EDGE_CLIENT_ID secrets"
     },
     "firefox": {
