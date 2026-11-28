@@ -12,8 +12,8 @@ already holds and continues on its own: savemedia lets the browser finish it
 and cannot read its content. DRM is never touched, and live streams are not
 saved. Apart from the optional Local downloader, which runs the yt-dlp and
 ffmpeg you install, everything runs in the browser. There is no telemetry, no
-account and no server. Chrome and Edge come first; the Firefox build is kept
-compiling.
+account and no server. Chrome comes first; Edge ships the same build, and the
+Firefox build is kept compiling.
 
 What savemedia does and does not do is in
 [`docs/boundary-rules.md`](docs/boundary-rules.md), the owner's policy. It

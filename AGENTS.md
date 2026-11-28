@@ -9,6 +9,23 @@ decisions, observed results, and remaining uncertainty. Ask only about a real
 trade-off between outcomes, an irreversible choice outside the request, or
 access only the owner can provide.
 
+- Chrome is the default browser for new work. As of 2026-11-28 the owner's
+  work focuses on Chrome, and Edge and Firefox are out of scope until the owner
+  brings them back. They stay shipped and supported: design, build and verify a
+  change in Chrome unless the task names Edge or Firefox, and leave their code,
+  `build:firefox`, smoke scripts, store workflows and credentials in place.
+  Keep CI's Firefox build and `firefox-fixtures` job green. Edge ships the
+  Chrome build.
+- The end-to-end tests run on the Chromium that Playwright downloads
+  (`channel: "chromium"` in `packages/extension/tests/e2e/extension-browser.ts`),
+  not on the installed Google Chrome. As of 2026-11-28 Playwright's
+  [Chrome extensions guide](https://playwright.dev/docs/chrome-extensions)
+  says Google Chrome and Microsoft Edge removed the command-line flags that
+  side-load an unpacked extension, and that the `chromium` channel runs
+  extensions headless. From `packages/extension`, run
+  `bunx --bun playwright install chromium`; add `firefox` only for
+  `test:e2e:firefox-fixtures`. On macOS the browsers live in
+  `~/Library/Caches/ms-playwright`.
 - Read [Development](README.md#development) and the [policy](docs/boundary-rules.md)
   before changing capture, parsing, download behaviour or user-facing text.
   `docs/boundary-rules.md` is the owner's policy and overrides other docs.
